@@ -1,0 +1,18 @@
+FROM public.ecr.aws/lambda/python:3.10
+
+# Install dependencies
+COPY requirements-lock.txt requirements.txt requirements-lambda.txt* ./
+RUN pip install --upgrade pip && \
+    if [ -f requirements-lambda.txt ]; then \
+        pip install -r requirements-lambda.txt; \
+    elif [ -f requirements-lock.txt ]; then \
+        pip install -r requirements-lock.txt; \
+    else \
+        pip install -r requirements.txt; \
+    fi
+
+# Copy application
+COPY . /var/task
+
+# Set the CMD to your handler (file.handler)
+CMD ["lambda_handler.lambda_handler"]

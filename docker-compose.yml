@@ -1,0 +1,22 @@
+version: '3.8'
+services:
+  app:
+    build: .
+    volumes:
+      - ./:/app
+      - ./chroma_db:/app/chroma_db
+    environment:
+      - OPENAI_API_KEY
+      - LLAMA_CLOUD_API_KEY
+    command: ["python", "app.py"]
+    ports:
+      - "8000:8000"
+  chroma:
+    image: chroma/chroma:latest
+    restart: unless-stopped
+    environment:
+      - CHROMA_SERVER_ENABLE_ANONYMOUS_ACCESS=true
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./chroma_db:/data

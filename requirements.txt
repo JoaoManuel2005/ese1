@@ -1,3 +1,11 @@
+nest_asyncio
+PyPDF2
+beautifulsoup4
+llama-index
+chromadb
+openai
+json-log-formatter
+keyring
 fastapi
 uvicorn
 llama-index

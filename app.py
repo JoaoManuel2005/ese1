@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 """
 advanced_rag.py
@@ -22,6 +21,8 @@ import http.server
 import socketserver
 from pathlib import Path
 from typing import Optional, List
+import subprocess
+import sys
 
 try:
     import nest_asyncio
@@ -568,6 +569,30 @@ def run_cli():
         except KeyboardInterrupt:
             logging.info("Exiting after keyboard interrupt")
 
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: python app.py <file_path> <query>")
+        sys.exit(1)
+    file_path = sys.argv[1]
+    query = sys.argv[2]
+    subprocess.run([sys.executable, "pipeline.py", file_path, query], check=True)
+
+from fastapi import FastAPI, UploadFile, Form
+
+app = FastAPI()
+
+@app.post("/run-pipeline")
+async def run_pipeline_api(file: UploadFile, query: str = Form(...)):
+    file_path = f"data/{file.filename}"
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+    result = subprocess.run(
+        [sys.executable, "pipeline.py", file_path, query],
+        capture_output=True,
+        text=True
+    )
+    return {"output": result.stdout}
 
 if __name__ == "__main__":
     # Prompt for OpenAI API key interactively if not set

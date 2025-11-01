@@ -21,13 +21,13 @@ export default async function handler(req, res) {
     await new Promise(resolve => req.on('end', resolve));
     const data = JSON.parse(body);
     if (data.step === 'chunk' && data.fileName) {
-      // Run chunking logic (call Python ingestion script)
+      // Run chunking logic (call industry-standard chunking script)
       const filePath = path.join(process.cwd(), '..', 'data', data.fileName);
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({ step: 'chunk', message: 'File not found for chunking.' });
       }
-      // Call Python ingestion/ingest.py with filePath
-      const result = spawnSync('python3', ['ingestion/ingest.py', filePath], { encoding: 'utf-8' });
+      // Call Python scripts/chunk_doc.py with filePath
+      const result = spawnSync('python3', ['scripts/chunk_doc.py', filePath], { encoding: 'utf-8' });
       if (result.error) {
         return res.status(500).json({ step: 'chunk', message: 'Chunking failed.', error: result.error.message });
       }

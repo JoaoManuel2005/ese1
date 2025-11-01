@@ -25,8 +25,13 @@ import Confetti from 'react-confetti';
 const TUSSHAR_NAME = 'Tusshar Lingagiri';
 
 function HomePage() {
+  const [vectorDbDocs, setVectorDbDocs] = useState([]);
+  const [showVectorDb, setShowVectorDb] = useState(false);
+  const [vectorDbLoading, setVectorDbLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [answer, setAnswer] = useState('');
+  const [ragSteps, setRagSteps] = useState([]);
+  const [activeStep, setActiveStep] = useState(-1);
   const [loading, setLoading] = useState(false);
   const [engagement, setEngagement] = useState(false);
   // Upload UI state
@@ -106,20 +111,39 @@ function HomePage() {
     setEmbedding(false);
   };
 
+  const handleViewVectorDb = async () => {
+    setVectorDbLoading(true);
+    setShowVectorDb(true);
+    try {
+      const res = await axios.get('/api/vector-db', { params: { fileName: uploadedFileName } });
+      setVectorDbDocs(res.data.docs || []);
+    } catch (err) {
+      setVectorDbDocs([{ error: 'Failed to fetch vector DB docs.' }]);
+    }
+    setVectorDbLoading(false);
+  };
+
   const handleQuery = async () => {
-    setLoading(true);
-    setEngagement(true);
-    setAnswer('');
+  setLoading(true);
+  setEngagement(true);
+  setAnswer('');
+  setRagSteps([]);
+  setActiveStep(-1);
     // Simulate magical engagement
     setTimeout(async () => {
-      // Replace with actual backend call
       const response = await fetch('/api/rag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query }),
       });
       const data = await response.json();
-      setAnswer(data.answer);
+      if (data.steps) {
+        setRagSteps(data.steps);
+        setAnswer(data.answer);
+        setActiveStep(data.steps.length - 1);
+      } else {
+        setAnswer(data.answer || 'No answer returned.');
+      }
       setLoading(false);
       setTimeout(() => setEngagement(false), 2000);
     }, 1200);
@@ -168,7 +192,45 @@ function HomePage() {
                   <CircularProgress color="secondary" size={48} />
                 </Box>
               </Fade>
-              {answer && (
+              {ragSteps.length > 0 && (
+                <Box mt={5}>
+                  <Stack direction="row" spacing={2} justifyContent="center" mb={3}>
+                    {ragSteps.map((step, idx) => (
+                      <Chip
+                        key={idx}
+                        label={step.title || `Step ${idx + 1}`}
+                        color={activeStep === idx ? 'primary' : 'default'}
+                        variant={activeStep === idx ? 'filled' : 'outlined'}
+                        sx={{ fontWeight: 700, fontSize: 16, px: 2, py: 1 }}
+                      />
+                    ))}
+                  </Stack>
+                  {ragSteps.map((step, idx) => (
+                    <Card key={idx} sx={{ mb: 3, bgcolor: activeStep === idx ? '#e3f2fd' : '#f9fafb', borderRadius: 3, boxShadow: activeStep === idx ? 8 : 2 }}>
+                      <CardHeader title={step.title || `Step ${idx + 1}`} sx={{ bgcolor: activeStep === idx ? '#bbdefb' : '#e3f2fd' }} />
+                      <CardContent>
+                        <Typography variant="body2" color="text.secondary" mb={1}>{step.description}</Typography>
+                        {step.value && (
+                          <Typography variant="body1" color="text.primary" sx={{ fontSize: 16 }}>
+                            {typeof step.value === 'object' ? <pre style={{ fontSize: 14, background: '#f5f5f5', padding: 8, borderRadius: 4 }}>{JSON.stringify(step.value, null, 2)}</pre> : step.value}
+                          </Typography>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                  {answer && (
+                    <Box p={3} bgcolor="#e8f5e9" borderRadius={3} boxShadow={6}>
+                      <Typography variant="h5" color="primary" fontWeight={700} mb={2}>
+                        Augmented Answer
+                      </Typography>
+                      <Typography variant="body1" color="text.primary" sx={{ fontSize: 20 }}>
+                        {answer}
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+              )}
+              {answer && ragSteps.length === 0 && (
                 <Box mt={5} p={3} bgcolor="#f9fafb" borderRadius={3}>
                   <Typography variant="h6" color="primary" fontWeight={700} mb={2}>
                     Augmented Answer
@@ -228,6 +290,26 @@ function HomePage() {
                   <Button variant="contained" color="success" onClick={handleEmbedStep} sx={{ fontWeight: 700, fontSize: 16 }} disabled={!uploadedFileName || embedding}>
                     3. Embed Chunks
                   </Button>
+                  <Button variant="outlined" color="info" onClick={handleViewVectorDb} sx={{ fontWeight: 700, fontSize: 16, ml: 2 }} disabled={!uploadedFileName || embedding || vectorDbLoading}>
+                    View Embeddings & Vector DB Docs
+                  </Button>
+              {showVectorDb && (
+                <Box mt={3} p={2} bgcolor="#f0f4c3" borderRadius={2}>
+                  <Typography variant="h6" color="info.main" mb={2}>Vector DB Contents</Typography>
+                  {vectorDbLoading ? (
+                    <CircularProgress color="info" size={32} />
+                  ) : (
+                    <Box>
+                      {vectorDbDocs.length === 0 && <Typography>No docs found.</Typography>}
+                      {vectorDbDocs.map((doc, idx) => (
+                        <Paper key={idx} sx={{ p: 2, mb: 2 }}>
+                          <Typography variant="body2" color="text.secondary">{typeof doc === 'object' ? JSON.stringify(doc, null, 2) : doc}</Typography>
+                        </Paper>
+                      ))}
+                    </Box>
+                  )}
+                </Box>
+              )}
                   <TextField
                     select
                     label="Model"

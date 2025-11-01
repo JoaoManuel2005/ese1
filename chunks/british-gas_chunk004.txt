@@ -1,0 +1,6 @@
+{
+  "text": " Find out more at\nscottishgas.co.uk/psr\nMeter emergency?\nT:\n \n0333\n \n009\n \n6135\nSmell gas?\nT:\n \n0800\n \n111\n \n999\nNo electricity? Power\n \ncut?\nT:\n \n105\nPlease let us know if you've got feedback on our\nservice at\nl\nscottishgas.co.uk/energycomplaints\nl\ncall us on \n0333\n \n202\n \n9532\n or\nl\nwrite to us at: \nPO Box 226,\nRotherham S98 1PB\nIf you have a complaint that we haven't been able to\nresolve \nwithin\n \n8 weeks\n, you can contact the\nombudsman:\nenergyombudsman.org\nT: 0330\n \n440\n \n1624\n \nFor independent advice through Advice Direct\nScotland Call 0808\n \n196\n \n8660 or go to\nenergyadvice.scot\nYour electricity supply delivery\nnetwork\n SSE Power Distribution\nT: 0800 048 3516\nYour electricity supply number\nS\n01\n827\n100\n17\n0006 0096\n811\nScan this on a\nprice comparison\napp \nto compare\nyour tariff with\nothers on the\nmarket\nScottish Gas is a trading name of British Gas Trading Limited.",
+  "metadata": {
+    "file_name": "british-gas.pdf"
+  }
+}

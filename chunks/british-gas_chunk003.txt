@@ -1,0 +1,6 @@
+{
+  "text": "ives you helpful\nservices like planned power cut\nwarnings, bills and statements in\ndifferent formats and free gas\nsafety checks. Find out more at\nscottishgas.co.uk/psr\nMeter emergency?\nT:\n \n0333\n \n009\n \n6135\nSmell gas?\nT:\n \n0800\n \n111\n \n999\nNo electricity?",
+  "metadata": {
+    "file_name": "british-gas.pdf"
+  }
+}

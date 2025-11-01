@@ -1,0 +1,6 @@
+{
+  "text": " comparison\napp \nto compare\nyour tariff with\nothers on the\nmarket\nScottish Gas is a trading name of British Gas Trading Limited. Registered in England and Wales (No. 03078711). Registered Office: Millstream, Maidenhead Road,\nWindsor, Berkshire SL4 5GD.",
+  "metadata": {
+    "file_name": "british-gas.pdf"
+  }
+}

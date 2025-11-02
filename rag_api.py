@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from rag_pipeline import RAGPipeline
 from pathlib import Path
 import os
+import stat
 import logging
 import chromadb
 import httpx
@@ -17,6 +18,34 @@ app.add_middleware(
 )
 
 rag_pipeline = RAGPipeline()
+
+def ensure_chroma_db_writable():
+    """Ensure ChromaDB directory has proper write permissions."""
+    db_path = Path("./chroma_db").absolute()
+    db_path.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        # Set directory permissions to 755 (rwxr-xr-x)
+        os.chmod(db_path, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+        
+        # Set all files and subdirectories to writable
+        for root, dirs, files in os.walk(db_path):
+            for d in dirs:
+                dir_path = Path(root) / d
+                try:
+                    os.chmod(dir_path, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+                except:
+                    pass
+            for f in files:
+                file_path = Path(root) / f
+                try:
+                    os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+                except:
+                    pass
+    except Exception as e:
+        logging.warning(f"Could not set ChromaDB permissions: {e}")
+    
+    return db_path
 
 @app.post("/upload")
 async def upload_endpoint(file: UploadFile = File(...)):
@@ -188,8 +217,11 @@ async def embed_endpoint(request: Request):
         # Build vector index with ChromaDB persistence directly
         import chromadb
         
+        # Ensure chroma_db directory is writable
+        db_path = ensure_chroma_db_writable()
+        
         # Initialize ChromaDB
-        chroma_client = chromadb.PersistentClient(path="./chroma_db")
+        chroma_client = chromadb.PersistentClient(path=str(db_path))
         chroma_collection = chroma_client.get_or_create_collection("rag_collection")
         
         # Generate embeddings for each document and store in ChromaDB
@@ -255,29 +287,60 @@ async def validate_endpoint():
                 })
         
         # Get embeddings from ChromaDB
-        chroma_client = chromadb.PersistentClient(path="./chroma_db")
-        collection = chroma_client.get_collection(name="rag_collection")
-        
-        # Get all items from collection
-        results = collection.get(include=["embeddings", "documents", "metadatas"])
-        
-        # Match embeddings to chunks
-        for i, chunk in enumerate(chunks_data):
-            # Find matching embedding by document content
-            for j, doc in enumerate(results['documents']):
-                if doc == chunk['content']:
-                    # Convert numpy array to list for JSON serialization
-                    embedding_vec = results['embeddings'][j]
-                    chunk['embedding'] = [float(x) for x in embedding_vec[:10]]  # First 10 dims for display
-                    chunk['embedding_dim'] = len(embedding_vec)
-                    chunk['metadata'] = results['metadatas'][j] if results['metadatas'] else {}
-                    break
-        
-        return {
-            "message": f"✅ Validation successful: {len(chunks_data)} chunks with embeddings",
-            "chunks_count": len(chunks_data),
-            "chunks": chunks_data
-        }
+        try:
+            # Ensure database is readable
+            db_path = ensure_chroma_db_writable()
+            chroma_client = chromadb.PersistentClient(path=str(db_path))
+            
+            # Try to get collection, if it doesn't exist, return chunks without embeddings
+            try:
+                collection = chroma_client.get_collection(name="rag_collection")
+                
+                # Get all items from collection
+                results = collection.get(include=["embeddings", "documents", "metadatas"])
+                
+                # Check if collection is empty
+                if not results['ids'] or len(results['ids']) == 0:
+                    logging.warning("ChromaDB collection exists but is empty")
+                    return {
+                        "message": f"⚠️ Found {len(chunks_data)} chunks but no embeddings yet. Run embedding step first.",
+                        "chunks_count": len(chunks_data),
+                        "chunks": chunks_data
+                    }
+                
+                # Match embeddings to chunks
+                for i, chunk in enumerate(chunks_data):
+                    # Find matching embedding by document content
+                    for j, doc in enumerate(results['documents']):
+                        if doc and doc.strip() == chunk['content'].strip():
+                            # Convert to list for JSON serialization
+                            embedding_vec = results['embeddings'][j]
+                            chunk['embedding'] = [float(x) for x in embedding_vec[:10]]  # First 10 dims for display
+                            chunk['embedding_dim'] = len(embedding_vec)
+                            chunk['metadata'] = results['metadatas'][j] if results['metadatas'] else {}
+                            break
+                
+                return {
+                    "message": f"✅ Validation successful: {len(chunks_data)} chunks with embeddings",
+                    "chunks_count": len(chunks_data),
+                    "chunks": chunks_data
+                }
+                
+            except Exception as collection_error:
+                logging.warning(f"Collection not found or empty: {collection_error}")
+                return {
+                    "message": f"⚠️ Found {len(chunks_data)} chunks but no embeddings yet. Run embedding step first.",
+                    "chunks_count": len(chunks_data),
+                    "chunks": chunks_data
+                }
+                
+        except Exception as db_error:
+            logging.error(f"ChromaDB error: {db_error}")
+            return {
+                "message": f"⚠️ Found {len(chunks_data)} chunks but could not access embeddings database.",
+                "chunks_count": len(chunks_data),
+                "chunks": chunks_data
+            }
     except Exception as e:
         logging.error(f"Validation error: {e}")
         return {"message": f"❌ Error during validation: {str(e)}", "error": True}

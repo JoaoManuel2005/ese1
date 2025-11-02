@@ -6,6 +6,7 @@ import EmojiObjectsIcon from '@mui/icons-material/EmojiObjects';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import PsychologyIcon from '@mui/icons-material/Psychology';
+import ExpandMore from '@mui/icons-material/ExpandMore';
 import {
   Box,
   Button,
@@ -23,7 +24,10 @@ import {
   Fade,
   Grow,
   Chip,
-  Paper
+  Paper,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails
 } from '@mui/material';
 import CircularProgress from '@mui/material/CircularProgress';
 import Confetti from 'react-confetti';
@@ -745,7 +749,37 @@ export default function Home() {
                         >
                           {loadingIngest ? <CircularProgress size={20} sx={{ color: 'white' }} /> : '🧠 Generate Embeddings'}
                         </Button>
-                        {embeddingStatus && <Alert severity="success" sx={{ mt: 1, py: 0.5 }}>{embeddingStatus}</Alert>}
+                        {embeddingStatus && (
+                          <>
+                            <Alert severity="success" sx={{ mt: 1, py: 0.5 }}>{embeddingStatus}</Alert>
+                            <Button 
+                              variant="outlined" 
+                              fullWidth
+                              sx={{ 
+                                mt: 1.5, 
+                                py: 1.5, 
+                                borderColor: accentColor,
+                                color: accentColor,
+                                fontWeight: 700,
+                                '&:hover': {
+                                  borderColor: accentHover,
+                                  bgcolor: `${accentColor}15`
+                                }
+                              }} 
+                              onClick={() => {
+                                setIngestionStep(0);
+                                setFile(null);
+                                setFileName('');
+                                setUploadedFile(null);
+                                setChunksCount(0);
+                                setEmbeddingStatus('');
+                                setIngestStatus('');
+                              }}
+                            >
+                              📄 Upload Another Document
+                            </Button>
+                          </>
+                        )}
                       </Box>
                     </Fade>
                   )}
@@ -1120,94 +1154,229 @@ export default function Home() {
                     </Button>
                   </Box>
                   
-                  {/* Answer Display Area with Sections */}
+                  {/* Answer Display Area - Redesigned with Answer as Focal Point */}
                   {typingText && parsedAnswer && (
                     <Fade in timeout={500}>
-                      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, gap: 1 }}>
-                        {/* AI Answer Section */}
-                        <Box sx={{ bgcolor: `${bgColor}80`, border: `2px solid ${warningColor}40`, borderRadius: 2, overflow: 'hidden' }}>
-                          <Box sx={{ p: 1.5, borderBottom: `1px solid ${borderColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Typography variant="subtitle2" sx={{ color: warningColor, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              🤖 AI-Augmented Answer
-                              <Chip label={parsedAnswer.model} size="small" sx={{ ml: 1, height: 20, fontSize: '0.65rem', bgcolor: `${warningColor}20`, color: warningColor }} />
-                            </Typography>
+                      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, gap: 1.5 }}>
+                        {/* AI Answer Section - FOCAL POINT */}
+                        <Box sx={{ 
+                          bgcolor: `${bgColor}80`, 
+                          border: `3px solid ${warningColor}`,
+                          borderRadius: 3, 
+                          overflow: 'hidden',
+                          boxShadow: `0 0 30px ${warningColor}50, 0 0 60px ${warningColor}20`,
+                          position: 'relative',
+                          '&::before': {
+                            content: '""',
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            height: 4,
+                            background: `linear-gradient(90deg, ${warningColor}, ${accentColor}, ${successColor}, ${warningColor})`,
+                            backgroundSize: '200% 100%',
+                            animation: 'shimmer 3s linear infinite',
+                            '@keyframes shimmer': {
+                              '0%': { backgroundPosition: '0% 0%' },
+                              '100%': { backgroundPosition: '200% 0%' }
+                            }
+                          }
+                        }}>
+                          <Box sx={{ 
+                            p: 2, 
+                            background: `linear-gradient(135deg, ${warningColor}15 0%, transparent 100%)`,
+                            borderBottom: `1px solid ${borderColor}`, 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center' 
+                          }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <Box sx={{
+                                width: 36,
+                                height: 36,
+                                borderRadius: '50%',
+                                background: `linear-gradient(135deg, ${warningColor}, ${accentColor})`,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                boxShadow: `0 0 20px ${warningColor}60`,
+                                animation: 'pulse 2s ease-in-out infinite',
+                                '@keyframes pulse': {
+                                  '0%, 100%': { transform: 'scale(1)' },
+                                  '50%': { transform: 'scale(1.1)' }
+                                }
+                              }}>
+                                <PsychologyIcon sx={{ fontSize: 20, color: textPrimary }} />
+                              </Box>
+                              <Box>
+                                <Typography variant="h6" sx={{ color: warningColor, fontWeight: 700, lineHeight: 1.2 }}>
+                                  AI-Augmented Answer
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: textSecondary, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                  <Chip 
+                                    label={parsedAnswer.model} 
+                                    size="small" 
+                                    sx={{ 
+                                      height: 18, 
+                                      fontSize: '0.65rem', 
+                                      bgcolor: `${warningColor}20`, 
+                                      color: warningColor,
+                                      fontWeight: 600
+                                    }} 
+                                  />
+                                  • RAG Enhanced
+                                </Typography>
+                              </Box>
+                            </Box>
                             <Button
                               size="small"
                               onClick={() => {
-                                navigator.clipboard.writeText(typingText);
+                                navigator.clipboard.writeText(parsedAnswer.answer);
                                 setCopied(true);
                                 setTimeout(() => setCopied(false), 2000);
                               }}
                               sx={{
-                                minWidth: 'auto',
-                                px: 1,
-                                py: 0.3,
-                                fontSize: '0.7rem',
-                                color: copied ? successColor : textSecondary,
-                                border: `1px solid ${copied ? successColor : borderColor}`,
-                                borderRadius: 1,
-                                textTransform: 'none'
+                                px: 1.5,
+                                py: 0.5,
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                                color: copied ? textPrimary : warningColor,
+                                bgcolor: copied ? successColor : `${warningColor}20`,
+                                border: `1px solid ${copied ? successColor : warningColor}`,
+                                borderRadius: 1.5,
+                                textTransform: 'none',
+                                transition: 'all 0.3s',
+                                '&:hover': {
+                                  bgcolor: copied ? successColor : warningColor,
+                                  color: textPrimary,
+                                  transform: 'translateY(-1px)',
+                                  boxShadow: `0 4px 12px ${copied ? successColor : warningColor}40`
+                                }
                               }}
                             >
-                              {copied ? '✓ Copied!' : '📋 Copy'}
+                              {copied ? '✓ Copied!' : '📋 Copy Answer'}
                             </Button>
                           </Box>
-                          <Box sx={{ p: 2, maxHeight: 250, overflow: 'auto' }}>
-                            <Typography variant="body2" sx={{ color: textPrimary, fontSize: '0.9rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                          <Box sx={{ p: 3, maxHeight: 300, overflow: 'auto' }}>
+                            <Typography variant="body1" sx={{ 
+                              color: textPrimary, 
+                              fontSize: '1rem', 
+                              lineHeight: 1.8, 
+                              whiteSpace: 'pre-wrap',
+                              fontWeight: 500
+                            }}>
                               {parsedAnswer.answer}
                             </Typography>
                           </Box>
                         </Box>
 
-                        {/* Retrieved Context Section */}
-                        <Box sx={{ bgcolor: `${bgColor}80`, border: `2px solid ${accentColor}40`, borderRadius: 2, overflow: 'hidden' }}>
-                          <Box 
-                            onClick={() => setExpandContext(!expandContext)}
-                            sx={{ p: 1.5, borderBottom: expandContext ? `1px solid ${borderColor}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', '&:hover': { bgcolor: `${accentColor}10` } }}
-                          >
-                            <Typography variant="subtitle2" sx={{ color: accentColor, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              📚 Retrieved Context
-                              <Chip label={`${parsedAnswer.chunks?.length || 0} chunks`} size="small" sx={{ ml: 1, height: 20, fontSize: '0.65rem', bgcolor: `${accentColor}20`, color: accentColor }} />
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: textSecondary }}>{expandContext ? '▲' : '▼'}</Typography>
-                          </Box>
-                          {expandContext && (
-                            <Box sx={{ p: 2, maxHeight: 200, overflow: 'auto' }}>
-                              <Typography variant="body2" sx={{ color: textSecondary, fontSize: '0.85rem', lineHeight: 1.5, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
-                                {parsedAnswer.context}
-                              </Typography>
-                            </Box>
-                          )}
-                        </Box>
-
-                        {/* Citations Section */}
-                        {parsedAnswer.chunks && parsedAnswer.chunks.length > 0 && (
-                          <Box sx={{ bgcolor: `${bgColor}80`, border: `2px solid ${successColor}40`, borderRadius: 2, overflow: 'hidden' }}>
+                        {/* Compact Collapsible Sections Below */}
+                        <Box sx={{ display: 'flex', gap: 1 }}>
+                          {/* Retrieved Context Section - Compact */}
+                          <Box sx={{ 
+                            flex: 1,
+                            bgcolor: `${bgColor}80`, 
+                            border: `1px solid ${accentColor}40`, 
+                            borderRadius: 2, 
+                            overflow: 'hidden',
+                            transition: 'all 0.3s',
+                            '&:hover': {
+                              borderColor: accentColor,
+                              boxShadow: `0 0 15px ${accentColor}30`
+                            }
+                          }}>
                             <Box 
-                              onClick={() => setExpandCitations(!expandCitations)}
-                              sx={{ p: 1.5, borderBottom: expandCitations ? `1px solid ${borderColor}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', '&:hover': { bgcolor: `${successColor}10` } }}
+                              onClick={() => setExpandContext(!expandContext)}
+                              sx={{ 
+                                p: 1.5, 
+                                borderBottom: expandContext ? `1px solid ${borderColor}` : 'none', 
+                                display: 'flex', 
+                                justifyContent: 'space-between', 
+                                alignItems: 'center', 
+                                cursor: 'pointer',
+                                bgcolor: expandContext ? `${accentColor}10` : 'transparent',
+                                '&:hover': { bgcolor: `${accentColor}10` } 
+                              }}
                             >
-                              <Typography variant="subtitle2" sx={{ color: successColor, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                📖 Citations & Sources
+                              <Typography variant="caption" sx={{ color: accentColor, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.8rem' }}>
+                                📚 Context
+                                <Chip label={`${parsedAnswer.chunks?.length || 0}`} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: `${accentColor}20`, color: accentColor, fontWeight: 600 }} />
                               </Typography>
-                              <Typography variant="caption" sx={{ color: textSecondary }}>{expandCitations ? '▲' : '▼'}</Typography>
+                              <Typography variant="caption" sx={{ color: textSecondary, fontSize: '0.75rem' }}>{expandContext ? '▲' : '▼'}</Typography>
                             </Box>
-                            {expandCitations && (
-                              <Box sx={{ p: 2, maxHeight: 200, overflow: 'auto' }}>
-                                {parsedAnswer.chunks.map((chunk, idx) => (
-                                  <Box key={idx} sx={{ mb: 1.5, pb: 1.5, borderBottom: idx < parsedAnswer.chunks.length - 1 ? `1px solid ${borderColor}` : 'none' }}>
-                                    <Typography variant="caption" sx={{ color: successColor, fontWeight: 700, display: 'block', mb: 0.5 }}>
-                                      [{chunk.chunk_id}] {chunk.metadata?.filename || 'Document Chunk'}
-                                    </Typography>
-                                    <Typography variant="caption" sx={{ color: textSecondary, fontSize: '0.75rem', display: 'block' }}>
-                                      {chunk.content.substring(0, 150)}...
-                                    </Typography>
-                                  </Box>
-                                ))}
+                            {expandContext && (
+                              <Box sx={{ 
+                                p: 1.5, 
+                                maxHeight: 400, 
+                                overflow: 'auto',
+                                '&::-webkit-scrollbar': { width: '6px' },
+                                '&::-webkit-scrollbar-track': { background: 'rgba(255,255,255,0.05)' },
+                                '&::-webkit-scrollbar-thumb': { background: accentColor, borderRadius: '3px' }
+                              }}>
+                                <Typography variant="caption" sx={{ color: textSecondary, fontSize: '0.8rem', lineHeight: 1.5, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+                                  {parsedAnswer.context}
+                                </Typography>
                               </Box>
                             )}
                           </Box>
-                        )}
+
+                          {/* Citations Section - Compact */}
+                          {parsedAnswer.chunks && parsedAnswer.chunks.length > 0 && (
+                            <Box sx={{ 
+                              flex: 1,
+                              bgcolor: `${bgColor}80`, 
+                              border: `1px solid ${successColor}40`, 
+                              borderRadius: 2, 
+                              overflow: 'hidden',
+                              transition: 'all 0.3s',
+                              '&:hover': {
+                                borderColor: successColor,
+                                boxShadow: `0 0 15px ${successColor}30`
+                              }
+                            }}>
+                              <Box 
+                                onClick={() => setExpandCitations(!expandCitations)}
+                                sx={{ 
+                                  p: 1.5, 
+                                  borderBottom: expandCitations ? `1px solid ${borderColor}` : 'none', 
+                                  display: 'flex', 
+                                  justifyContent: 'space-between', 
+                                  alignItems: 'center', 
+                                  cursor: 'pointer',
+                                  bgcolor: expandCitations ? `${successColor}10` : 'transparent',
+                                  '&:hover': { bgcolor: `${successColor}10` } 
+                                }}
+                              >
+                                <Typography variant="caption" sx={{ color: successColor, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.8rem' }}>
+                                  📖 Citations
+                                  <Chip label={parsedAnswer.chunks.length} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: `${successColor}20`, color: successColor, fontWeight: 600 }} />
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: textSecondary, fontSize: '0.75rem' }}>{expandCitations ? '▲' : '▼'}</Typography>
+                              </Box>
+                              {expandCitations && (
+                                <Box sx={{ 
+                                  p: 1.5, 
+                                  maxHeight: 400, 
+                                  overflow: 'auto',
+                                  '&::-webkit-scrollbar': { width: '6px' },
+                                  '&::-webkit-scrollbar-track': { background: 'rgba(255,255,255,0.05)' },
+                                  '&::-webkit-scrollbar-thumb': { background: successColor, borderRadius: '3px' }
+                                }}>
+                                  {parsedAnswer.chunks.map((chunk, idx) => (
+                                    <Box key={idx} sx={{ mb: 1, pb: 1, borderBottom: idx < parsedAnswer.chunks.length - 1 ? `1px solid ${borderColor}` : 'none' }}>
+                                      <Typography variant="caption" sx={{ color: successColor, fontWeight: 700, display: 'block', mb: 0.3, fontSize: '0.75rem' }}>
+                                        [{chunk.chunk_id}] {chunk.metadata?.filename || 'Document'}
+                                      </Typography>
+                                      <Typography variant="caption" sx={{ color: textSecondary, fontSize: '0.7rem', display: 'block', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                        {chunk.content}
+                                      </Typography>
+                                    </Box>
+                                  ))}
+                                </Box>
+                              )}
+                            </Box>
+                          )}
+                        </Box>
                       </Box>
                     </Fade>
                   )}

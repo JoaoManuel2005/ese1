@@ -1,6 +1,0 @@
-{
-  "text": "ted. Registered in England and Wales (No. 03078711). Registered Office: Millstream, Maidenhead Road,\nWindsor, Berkshire SL4 5GD. British Gas is a mandatory FiT Licensee. VAT Registered Number 6849667 62. Bill date and tax point 16th August 2024.",
-  "metadata": {
-    "file_name": "british-gas.pdf"
-  }
-}

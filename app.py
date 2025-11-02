@@ -570,7 +570,7 @@ def run_cli():
             logging.info("Exiting after keyboard interrupt")
 
 
-def main():
+def legacy_main():
     if len(sys.argv) < 3:
         print("Usage: python app.py <file_path> <query>")
         sys.exit(1)

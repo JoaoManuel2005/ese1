@@ -53,6 +53,26 @@ export default function Home() {
   const [progress, setProgress] = useState(0);
   const [typingText, setTypingText] = useState('');
   const [completedSteps, setCompletedSteps] = useState([]);
+  
+  // Ingestion pipeline states
+  const [ingestionStep, setIngestionStep] = useState(0); // 0=Upload, 1=Chunk, 2=Embed
+  const [uploadedFile, setUploadedFile] = useState(null);
+  const [chunksCount, setChunksCount] = useState(0);
+  const [selectedModel, setSelectedModel] = useState('sentence-transformers'); // Free model by default
+  const [embeddingStatus, setEmbeddingStatus] = useState('');
+  
+  // Validation states
+  const [validationData, setValidationData] = useState(null);
+  const [expandedChunk, setExpandedChunk] = useState(null);
+  
+  // Inference states
+  const [inferenceModel, setInferenceModel] = useState('llama3'); // Free model by default
+  const [openaiApiKey, setOpenaiApiKey] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [parsedAnswer, setParsedAnswer] = useState(null);
+  const [expandContext, setExpandContext] = useState(true);
+  const [expandCitations, setExpandCitations] = useState(false);
 
   const handleTabChange = (event, newValue) => {
     setTab(newValue);
@@ -92,44 +112,152 @@ export default function Home() {
     setFileName(selectedFile ? selectedFile.name : '');
   };
 
-  const handleIngest = async () => {
+  // Step 1: Upload Document
+  const handleUpload = async () => {
     if (!file) return;
     setLoadingIngest(true);
     setIngestStatus('📤 Uploading document...');
-    setTimeout(() => {
-      setIngestStatus('✂️ Chunking document...');
-      setTimeout(() => {
-        setIngestStatus('✅ File ingested and chunks saved in /chunks.');
-        setLoadingIngest(false);
-        setCompletedSteps([...completedSteps, 0]);
-      }, 800);
-    }, 800);
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const response = await fetch('http://localhost:8000/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      const data = await response.json();
+      setIngestStatus(data.message || '✅ Document uploaded successfully.');
+      setUploadedFile(data.filename);
+      setIngestionStep(1); // Move to chunk step
+    } catch (error) {
+      setIngestStatus('❌ Error: ' + error.message);
+    } finally {
+      setLoadingIngest(false);
+    }
+  };
+
+  // Step 2: Chunk Document
+  const handleChunk = async () => {
+    setLoadingIngest(true);
+    setIngestStatus('✂️ Chunking document...');
+    
+    try {
+      const response = await fetch('http://localhost:8000/chunk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: uploadedFile }),
+      });
+      
+      const data = await response.json();
+      setIngestStatus(data.message || '✅ Document chunked successfully.');
+      setChunksCount(data.chunks_count || 0);
+      setIngestionStep(2); // Move to embed step
+    } catch (error) {
+      setIngestStatus('❌ Error: ' + error.message);
+    } finally {
+      setLoadingIngest(false);
+    }
+  };
+
+  // Step 3: Embed Chunks
+  const handleEmbed = async () => {
+    setLoadingIngest(true);
+    setEmbeddingStatus('🧠 Generating embeddings...');
+    
+    try {
+      const response = await fetch('http://localhost:8000/embed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: selectedModel }),
+      });
+      
+      const data = await response.json();
+      setEmbeddingStatus(data.message || '✅ Embeddings generated successfully.');
+      setCompletedSteps([...completedSteps, 0]);
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 3000);
+    } catch (error) {
+      setEmbeddingStatus('❌ Error: ' + error.message);
+    } finally {
+      setLoadingIngest(false);
+    }
   };
 
   const handleValidate = async () => {
     setLoadingValidate(true);
-    setValidateStatus('🔍 Scanning chunks...');
-    setTimeout(() => {
-      setValidateStatus('📊 Analyzing structure...');
-      setTimeout(() => {
-        setValidateStatus('✅ Chunks validated successfully.');
-        setLoadingValidate(false);
-        setCompletedSteps([...completedSteps, 1]);
-      }, 600);
-    }, 600);
+    setValidateStatus('🔍 Scanning chunks and embeddings...');
+    setValidationData(null);
+    
+    try {
+      setValidateStatus('📊 Loading from ChromaDB...');
+      const response = await fetch('http://localhost:8000/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      
+      const data = await response.json();
+      setValidateStatus(data.message || '✅ Chunks validated successfully.');
+      setValidationData(data);
+      setCompletedSteps([...completedSteps, 1]);
+    } catch (error) {
+      setValidateStatus('❌ Error: ' + error.message);
+      setValidationData(null);
+    } finally {
+      setLoadingValidate(false);
+    }
   };
 
   const handleAsk = async () => {
+    if (!question.trim()) return;
+    
+    // Validate API key for OpenAI
+    if (inferenceModel === 'openai' && !openaiApiKey.trim()) {
+      setAnswer('❌ Please provide OpenAI API key for GPT-4 model.');
+      return;
+    }
+    
     setLoadingAsk(true);
     setAnswer('');
     setTypingText('');
-    setTimeout(() => {
-      setAnswer('✨ Augmented answer for: ' + question + ' | This is a powerful RAG-generated response leveraging vector embeddings and semantic search for precision answers.');
-      setLoadingAsk(false);
+    
+    try {
+      const response = await fetch('http://localhost:8000/rag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          query: question,
+          model: inferenceModel,
+          openai_api_key: inferenceModel === 'openai' ? openaiApiKey : null
+        }),
+      });
+      
+      const data = await response.json();
+      
+      // Store structured data if available
+      if (data.ai_mode !== undefined && data.retrieved_chunks !== undefined) {
+        setParsedAnswer({
+          answer: data.answer || 'No answer received.',
+          mode: data.ai_mode,
+          model: data.model,
+          chunks: data.retrieved_chunks || [],
+          context: data.context || ''
+        });
+      } else {
+        // Fallback to old format
+        setParsedAnswer(null);
+      }
+      
+      setAnswer(data.answer || 'No answer received.');
       setShowConfetti(true);
       setCompletedSteps([...completedSteps, 2]);
       setTimeout(() => setShowConfetti(false), 3000);
-    }, 1500);
+    } catch (error) {
+      setAnswer('❌ Error: ' + error.message);
+    } finally {
+      setLoadingAsk(false);
+    }
   };
 
   return (
@@ -141,19 +269,66 @@ export default function Home() {
           <meta name="description" content="Experience the future of document intelligence with RAG" />
         </Head>
         
-        {/* Compact Header */}
+        {/* Compact Header with Sparkle Effect */}
         <Fade in timeout={800}>
-          <Box sx={{ textAlign: 'center', mb: 2 }}>
-            <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+          <Box sx={{ textAlign: 'center', mb: 2, position: 'relative' }}>
+            <Box sx={{ 
+              display: 'inline-flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              gap: 2,
+              position: 'relative',
+              '&::before': {
+                content: '"✨"',
+                position: 'absolute',
+                left: -20,
+                top: -5,
+                fontSize: '1.2rem',
+                animation: 'sparkle 2s ease-in-out infinite',
+                '@keyframes sparkle': {
+                  '0%, 100%': { opacity: 0.3, transform: 'rotate(0deg)' },
+                  '50%': { opacity: 1, transform: 'rotate(20deg)' }
+                }
+              },
+              '&::after': {
+                content: '"✨"',
+                position: 'absolute',
+                right: -20,
+                bottom: -5,
+                fontSize: '1.2rem',
+                animation: 'sparkle 2s ease-in-out infinite 1s',
+                '@keyframes sparkle': {
+                  '0%, 100%': { opacity: 0.3, transform: 'rotate(0deg)' },
+                  '50%': { opacity: 1, transform: 'rotate(-20deg)' }
+                }
+              }
+            }}>
               <Avatar sx={{ 
                 bgcolor: accentColor, 
                 width: 48, 
                 height: 48, 
                 boxShadow: `0 0 20px ${accentColor}80`,
                 animation: 'pulse 2s ease-in-out infinite',
+                position: 'relative',
+                '&::before': {
+                  content: '""',
+                  position: 'absolute',
+                  inset: -4,
+                  borderRadius: '50%',
+                  padding: 2,
+                  background: `linear-gradient(45deg, ${accentColor}, ${warningColor}, ${successColor})`,
+                  WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                  WebkitMaskComposite: 'xor',
+                  maskComposite: 'exclude',
+                  animation: 'rotate 3s linear infinite',
+                },
                 '@keyframes pulse': {
                   '0%, 100%': { transform: 'scale(1)' },
                   '50%': { transform: 'scale(1.05)' }
+                },
+                '@keyframes rotate': {
+                  '0%': { transform: 'rotate(0deg)' },
+                  '100%': { transform: 'rotate(360deg)' }
                 }
               }}>
                 <EmojiObjectsIcon sx={{ fontSize: 28 }} />
@@ -164,17 +339,49 @@ export default function Home() {
                   fontWeight={800} 
                   sx={{ 
                     color: textPrimary,
-                    background: `linear-gradient(135deg, ${accentColor} 0%, #8b5cf6 100%)`,
+                    background: `linear-gradient(135deg, ${accentColor} 0%, ${warningColor} 50%, #8b5cf6 100%)`,
+                    backgroundSize: '200% 200%',
                     backgroundClip: 'text',
                     WebkitBackgroundClip: 'text',
                     WebkitTextFillColor: 'transparent',
-                    lineHeight: 1.2
+                    lineHeight: 1.2,
+                    animation: 'gradientShift 3s ease infinite',
+                    '@keyframes gradientShift': {
+                      '0%, 100%': { backgroundPosition: '0% 50%' },
+                      '50%': { backgroundPosition: '100% 50%' }
+                    }
                   }}
                 >
-                  RAG Professional Q&A
+                  AI-Augmented Intelligence Platform
                 </Typography>
-                <Typography variant="caption" sx={{ color: textSecondary, fontWeight: 400 }}>
-                  Powered by Tusshar Lingagiri
+                <Typography 
+                  variant="body1" 
+                  fontWeight={600}
+                  sx={{ 
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.8,
+                    background: `linear-gradient(135deg, ${accentColor} 0%, ${warningColor} 100%)`,
+                    backgroundClip: 'text',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    letterSpacing: '0.5px'
+                  }}
+                >
+                  <Box component="span" sx={{ 
+                    display: 'inline-block',
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    bgcolor: successColor,
+                    boxShadow: `0 0 8px ${successColor}`,
+                    animation: 'blink 2s ease-in-out infinite',
+                    '@keyframes blink': {
+                      '0%, 100%': { opacity: 1 },
+                      '50%': { opacity: 0.3 }
+                    }
+                  }} />
+                  ⚡ Powered by Tusshar Lingagiri
                 </Typography>
               </Box>
             </Box>
@@ -200,7 +407,7 @@ export default function Home() {
           </Box>
         )}
 
-        {/* Compact Status Pills */}
+        {/* Magical Status Pills */}
         <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1.5, mb: 2 }}>
           <Chip
             icon={<CloudUploadIcon sx={{ fontSize: 18 }} />}
@@ -217,11 +424,28 @@ export default function Home() {
               border: `1px solid ${tab === 0 ? accentColor : borderColor}`,
               cursor: 'pointer',
               transition: 'all 0.3s',
-              boxShadow: tab === 0 ? `0 0 15px ${accentColor}60` : 'none',
+              boxShadow: tab === 0 ? `0 0 20px ${accentColor}80, 0 0 40px ${accentColor}40` : 'none',
+              position: 'relative',
+              overflow: 'hidden',
               '&:hover': {
                 bgcolor: tab === 0 ? accentHover : borderColor,
-                transform: 'translateY(-1px)'
-              }
+                transform: 'translateY(-2px) scale(1.05)',
+                boxShadow: `0 0 25px ${accentColor}90`
+              },
+              '&::before': tab === 0 ? {
+                content: '""',
+                position: 'absolute',
+                top: 0,
+                left: '-100%',
+                width: '100%',
+                height: '100%',
+                background: `linear-gradient(90deg, transparent, ${textPrimary}30, transparent)`,
+                animation: 'shimmer 2s infinite',
+                '@keyframes shimmer': {
+                  '0%': { left: '-100%' },
+                  '100%': { left: '200%' }
+                }
+              } : {}
             }}
           />
           <Chip
@@ -239,11 +463,28 @@ export default function Home() {
               border: `1px solid ${tab === 1 ? successColor : borderColor}`,
               cursor: 'pointer',
               transition: 'all 0.3s',
-              boxShadow: tab === 1 ? `0 0 15px ${successColor}60` : 'none',
+              boxShadow: tab === 1 ? `0 0 20px ${successColor}80, 0 0 40px ${successColor}40` : 'none',
+              position: 'relative',
+              overflow: 'hidden',
               '&:hover': {
-                bgcolor: tab === 1 ? successColor : borderColor,
-                transform: 'translateY(-1px)'
-              }
+                bgcolor: tab === 1 ? '#059669' : borderColor,
+                transform: 'translateY(-2px) scale(1.05)',
+                boxShadow: `0 0 25px ${successColor}90`
+              },
+              '&::before': tab === 1 ? {
+                content: '""',
+                position: 'absolute',
+                top: 0,
+                left: '-100%',
+                width: '100%',
+                height: '100%',
+                background: `linear-gradient(90deg, transparent, ${textPrimary}30, transparent)`,
+                animation: 'shimmer 2s infinite',
+                '@keyframes shimmer': {
+                  '0%': { left: '-100%' },
+                  '100%': { left: '200%' }
+                }
+              } : {}
             }}
           />
           <Chip
@@ -261,11 +502,28 @@ export default function Home() {
               border: `1px solid ${tab === 2 ? warningColor : borderColor}`,
               cursor: 'pointer',
               transition: 'all 0.3s',
-              boxShadow: tab === 2 ? `0 0 15px ${warningColor}60` : 'none',
+              boxShadow: tab === 2 ? `0 0 20px ${warningColor}80, 0 0 40px ${warningColor}40` : 'none',
+              position: 'relative',
+              overflow: 'hidden',
               '&:hover': {
-                bgcolor: tab === 2 ? warningColor : borderColor,
-                transform: 'translateY(-1px)'
-              }
+                bgcolor: tab === 2 ? '#d97706' : borderColor,
+                transform: 'translateY(-2px) scale(1.05)',
+                boxShadow: `0 0 25px ${warningColor}90`
+              },
+              '&::before': tab === 2 ? {
+                content: '""',
+                position: 'absolute',
+                top: 0,
+                left: '-100%',
+                width: '100%',
+                height: '100%',
+                background: `linear-gradient(90deg, transparent, ${textPrimary}30, transparent)`,
+                animation: 'shimmer 2s infinite',
+                '@keyframes shimmer': {
+                  '0%': { left: '-100%' },
+                  '100%': { left: '200%' }
+                }
+              } : {}
             }}
           />
         </Box>
@@ -294,99 +552,201 @@ export default function Home() {
                     <CloudUploadIcon sx={{ fontSize: 32, color: accentColor, mr: 1.5 }} />
                     <Box>
                       <Typography variant="h5" fontWeight={700} sx={{ color: textPrimary, lineHeight: 1.2 }}>
-                        Document Ingestion
+                        Document Ingestion Pipeline
                       </Typography>
                       <Typography variant="body2" sx={{ color: textSecondary }}>
-                        Upload and chunk your documents
+                        3-Step RAG Ingestion: Upload → Chunk → Embed
                       </Typography>
                     </Box>
                   </Box>
                   
-                  <Box sx={{ 
-                    border: `2px dashed ${borderColor}`,
-                    borderRadius: 2,
-                    p: 2.5,
-                    textAlign: 'center',
-                    bgcolor: `${bgColor}80`,
-                    transition: 'all 0.3s',
-                    cursor: 'pointer',
-                    flex: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'center',
-                    '&:hover': {
-                      borderColor: accentColor,
-                      bgcolor: `${accentColor}10`
-                    }
-                  }}>
-                    <input 
-                      type="file" 
-                      onChange={handleFileChange} 
-                      style={{ display: 'none' }} 
-                      id="file-upload"
-                    />
-                    <label htmlFor="file-upload" style={{ cursor: 'pointer' }}>
-                      <CloudUploadIcon sx={{ fontSize: 48, color: accentColor, mb: 1 }} />
-                      <Typography variant="body1" sx={{ color: textPrimary, mb: 0.5, fontWeight: 600 }}>
-                        {fileName || 'Click to upload'}
-                      </Typography>
-                      <Typography variant="caption" sx={{ color: textSecondary }}>
-                        PDF, TXT, DOCX, HTML
-                      </Typography>
-                    </label>
-                  </Box>
-
-                  <Button 
-                    variant="contained" 
-                    fullWidth
-                    sx={{ 
-                      mt: 2, 
-                      py: 1.5,
-                      background: `linear-gradient(135deg, ${accentColor} 0%, ${accentHover} 100%)`,
-                      color: textPrimary, 
-                      fontWeight: 700,
-                      boxShadow: `0 4px 15px ${accentColor}60`,
-                      transition: 'all 0.3s',
-                      '&:hover': { 
-                        background: `linear-gradient(135deg, ${accentHover} 0%, #1e40af 100%)`,
-                        transform: 'translateY(-1px)',
-                        boxShadow: `0 6px 20px ${accentColor}80`
-                      },
-                      '&:disabled': {
-                        background: borderColor,
-                        color: textSecondary
-                      }
-                    }} 
-                    onClick={handleIngest} 
-                    disabled={!file || loadingIngest}
-                  >
-                    {loadingIngest ? (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <CircularProgress size={20} sx={{ color: textPrimary }} />
-                        <span>Processing...</span>
-                      </Box>
-                    ) : (
-                      '🚀 Start Ingestion'
-                    )}
-                  </Button>
-                  
-                  {ingestStatus && (
-                    <Fade in timeout={500}>
-                      <Alert 
-                        severity={loadingIngest ? "info" : "success"}
-                        icon={completedSteps.includes(0) ? <CheckCircleIcon /> : undefined}
+                  {/* Step Progress Indicator */}
+                  <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                    {['📄 Upload', '✂️ Chunk', '🧠 Embed'].map((label, idx) => (
+                      <Box 
+                        key={idx}
                         sx={{ 
-                          mt: 2,
-                          bgcolor: `${accentColor}15`,
-                          color: textPrimary,
-                          border: `1px solid ${accentColor}40`,
-                          fontSize: '0.9rem',
-                          py: 0.5,
-                          '& .MuiAlert-icon': { color: accentColor }
+                          flex: 1, 
+                          py: 0.8, 
+                          px: 1.5,
+                          borderRadius: 2,
+                          textAlign: 'center',
+                          fontSize: '0.85rem',
+                          fontWeight: 600,
+                          background: ingestionStep === idx 
+                            ? `linear-gradient(135deg, ${accentColor} 0%, ${accentHover} 100%)`
+                            : ingestionStep > idx 
+                            ? `linear-gradient(135deg, ${successColor} 0%, #059669 100%)`
+                            : borderColor,
+                          color: ingestionStep >= idx ? textPrimary : textSecondary,
+                          border: ingestionStep === idx ? `2px solid ${accentColor}` : 'none',
+                          transition: 'all 0.3s',
+                          boxShadow: ingestionStep === idx ? `0 0 15px ${accentColor}60` : 'none'
                         }}
                       >
-                        {ingestStatus}
-                      </Alert>
+                        {label} {ingestionStep > idx && '✓'}
+                      </Box>
+                    ))}
+                  </Box>
+                  
+                  {/* Step 0: Upload */}
+                  {ingestionStep === 0 && (
+                    <Fade in timeout={400}>
+                      <Box>
+                        <Box sx={{ 
+                          border: `2px dashed ${borderColor}`,
+                          borderRadius: 2,
+                          p: 2.5,
+                          textAlign: 'center',
+                          bgcolor: `${bgColor}80`,
+                          transition: 'all 0.3s',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'center',
+                          minHeight: 140,
+                          position: 'relative',
+                          '&:hover': {
+                            borderColor: accentColor,
+                            bgcolor: `${accentColor}10`
+                          }
+                        }}>
+                          <input 
+                            type="file" 
+                            onChange={handleFileChange} 
+                            style={{ display: 'none' }} 
+                            id="file-upload"
+                          />
+                          <label htmlFor="file-upload" style={{ cursor: 'pointer' }}>
+                            <CloudUploadIcon sx={{ fontSize: 48, color: accentColor, mb: 1 }} />
+                            <Typography variant="body1" sx={{ color: textPrimary, mb: 0.5, fontWeight: 600 }}>
+                              {fileName ? `✓ ${fileName}` : '✨ Drop your file here'}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: textSecondary }}>
+                              PDF • TXT • DOCX • HTML
+                            </Typography>
+                          </label>
+                        </Box>
+                        <Button 
+                          variant="contained" 
+                          fullWidth
+                          sx={{ mt: 2, py: 1.5, background: `linear-gradient(135deg, ${accentColor} 0%, ${accentHover} 100%)`, fontWeight: 700 }} 
+                          onClick={handleUpload} 
+                          disabled={!file || loadingIngest}
+                        >
+                          {loadingIngest ? <CircularProgress size={20} /> : '📤 Upload Document'}
+                        </Button>
+                        {ingestStatus && <Alert severity="info" sx={{ mt: 2 }}>{ingestStatus}</Alert>}
+                      </Box>
+                    </Fade>
+                  )}
+
+                  {/* Step 1: Chunk */}
+                  {ingestionStep === 1 && (
+                    <Fade in timeout={400}>
+                      <Box>
+                        <Typography variant="body1" sx={{ color: textPrimary, mb: 2 }}>
+                          📄 File: <strong>{uploadedFile}</strong>
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: textSecondary, mb: 2 }}>
+                          Split document into semantic chunks for optimal RAG performance
+                        </Typography>
+                        <Button 
+                          variant="contained" 
+                          fullWidth
+                          sx={{ py: 1.5, background: `linear-gradient(135deg, ${warningColor} 0%, #f59e0b 100%)`, fontWeight: 700 }} 
+                          onClick={handleChunk} 
+                          disabled={loadingIngest}
+                        >
+                          {loadingIngest ? <CircularProgress size={20} /> : '✂️ Chunk Document'}
+                        </Button>
+                        {ingestStatus && <Alert severity="info" sx={{ mt: 2 }}>{ingestStatus}</Alert>}
+                      </Box>
+                    </Fade>
+                  )}
+
+                  {/* Step 2: Embed */}
+                  {ingestionStep === 2 && (
+                    <Fade in timeout={400}>
+                      <Box>
+                        <Box sx={{ maxHeight: '280px', overflowY: 'auto', pr: 1 }}>
+                          <Typography variant="body2" sx={{ color: textPrimary, mb: 1 }}>
+                            ✂️ <strong>{chunksCount}</strong> chunks ready for embedding
+                          </Typography>
+                          
+                          <Typography variant="caption" sx={{ color: accentColor, fontWeight: 600, mb: 0.5, display: 'block', fontSize: '0.7rem' }}>
+                            💰 PAID (API Key)
+                          </Typography>
+                          <Box sx={{ display: 'flex', gap: 0.5, mb: 1 }}>
+                            {[
+                              { id: 'openai', label: 'OpenAI', icon: '🤖' },
+                              { id: 'bedrock', label: 'Bedrock', icon: '🌩️' },
+                            ].map((model) => (
+                              <Box 
+                                key={model.id}
+                                onClick={() => setSelectedModel(model.id)}
+                                sx={{ 
+                                  flex: 1,
+                                  p: 1,
+                                  border: `2px solid ${selectedModel === model.id ? accentColor : borderColor}`,
+                                  borderRadius: 1.5,
+                                  cursor: 'pointer',
+                                  bgcolor: selectedModel === model.id ? `${accentColor}15` : 'transparent',
+                                  textAlign: 'center',
+                                  transition: 'all 0.2s',
+                                  '&:hover': { borderColor: accentColor }
+                                }}
+                              >
+                                <Typography variant="body2" sx={{ color: textPrimary, fontSize: '0.75rem' }}>
+                                  {model.icon} {model.label}
+                                </Typography>
+                              </Box>
+                            ))}
+                          </Box>
+
+                          <Typography variant="caption" sx={{ color: successColor, fontWeight: 600, mb: 0.5, display: 'block', fontSize: '0.7rem' }}>
+                            ✨ FREE (No API Key)
+                          </Typography>
+                          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5, mb: 1 }}>
+                            {[
+                              { id: 'sentence-transformers', label: 'Sentence-BERT', icon: '🤗' },
+                              { id: 'bge-small', label: 'BGE-Small', icon: '🇨🇳' },
+                              { id: 'instructor', label: 'Instructor', icon: '🎓' },
+                              { id: 'e5-small', label: 'E5-Small', icon: '🔬' }
+                            ].map((model) => (
+                              <Box 
+                                key={model.id}
+                                onClick={() => setSelectedModel(model.id)}
+                                sx={{ 
+                                  p: 1,
+                                  border: `2px solid ${selectedModel === model.id ? successColor : borderColor}`,
+                                  borderRadius: 1.5,
+                                  cursor: 'pointer',
+                                  bgcolor: selectedModel === model.id ? `${successColor}15` : 'transparent',
+                                  textAlign: 'center',
+                                  transition: 'all 0.2s',
+                                  '&:hover': { borderColor: successColor }
+                                }}
+                              >
+                                <Typography variant="body2" sx={{ color: textPrimary, fontSize: '0.75rem' }}>
+                                  {model.icon} {model.label}
+                                </Typography>
+                              </Box>
+                            ))}
+                          </Box>
+                        </Box>
+
+                        <Button 
+                          variant="contained" 
+                          fullWidth
+                          sx={{ mt: 1, py: 1.5, background: `linear-gradient(135deg, ${successColor} 0%, #059669 100%)`, fontWeight: 700 }} 
+                          onClick={handleEmbed} 
+                          disabled={loadingIngest}
+                        >
+                          {loadingIngest ? <CircularProgress size={20} sx={{ color: 'white' }} /> : '🧠 Generate Embeddings'}
+                        </Button>
+                        {embeddingStatus && <Alert severity="success" sx={{ mt: 1, py: 0.5 }}>{embeddingStatus}</Alert>}
+                      </Box>
                     </Fade>
                   )}
                 </Box>
@@ -447,17 +807,17 @@ export default function Home() {
                     {loadingValidate ? (
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                         <CircularProgress size={20} sx={{ color: textPrimary }} />
-                        <span>Validating...</span>
+                        <span>Loading...</span>
                       </Box>
                     ) : (
-                      '✓ Run Validation'
+                      '✓ Load Chunks & Embeddings'
                     )}
                   </Button>
                   
                   {validateStatus && (
                     <Fade in timeout={500}>
                       <Alert 
-                        severity={loadingValidate ? "info" : "success"}
+                        severity={loadingValidate ? "info" : (validateStatus.includes('❌') ? "error" : "success")}
                         icon={completedSteps.includes(1) ? <CheckCircleIcon /> : undefined}
                         sx={{ 
                           mt: 2,
@@ -472,6 +832,100 @@ export default function Home() {
                         {validateStatus}
                       </Alert>
                     </Fade>
+                  )}
+                  
+                  {validationData && validationData.chunks && (
+                    <Box sx={{ mt: 3, maxHeight: 500, overflowY: 'auto', pr: 1 }}>
+                      <Typography variant="h6" sx={{ color: textPrimary, mb: 2, fontWeight: 600 }}>
+                        📚 Chunks ({validationData.chunks_count})
+                      </Typography>
+                      
+                      {validationData.chunks.map((chunk, index) => (
+                        <Card key={index} sx={{ 
+                          mb: 2,
+                          bgcolor: bgColor,
+                          border: `1px solid ${borderColor}`,
+                          borderRadius: 2,
+                          overflow: 'hidden',
+                          transition: 'all 0.3s',
+                          '&:hover': {
+                            borderColor: successColor,
+                            boxShadow: `0 0 15px ${successColor}40`
+                          }
+                        }}>
+                          <CardContent sx={{ p: 2 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+                              <Typography variant="subtitle2" sx={{ color: successColor, fontWeight: 700 }}>
+                                {chunk.filename}
+                              </Typography>
+                              <Chip 
+                                label={`${chunk.size} chars`} 
+                                size="small" 
+                                sx={{ 
+                                  bgcolor: `${successColor}20`,
+                                  color: successColor,
+                                  fontWeight: 600,
+                                  fontSize: '0.75rem'
+                                }} 
+                              />
+                            </Box>
+                            
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                color: textSecondary,
+                                mb: 1.5,
+                                maxHeight: expandedChunk === index ? 'none' : 100,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: expandedChunk === index ? 'pre-wrap' : 'nowrap',
+                                fontFamily: 'monospace',
+                                fontSize: '0.85rem',
+                                lineHeight: 1.6
+                              }}
+                            >
+                              {chunk.content}
+                            </Typography>
+                            
+                            <Button 
+                              size="small" 
+                              onClick={() => setExpandedChunk(expandedChunk === index ? null : index)}
+                              sx={{ 
+                                color: accentColor, 
+                                textTransform: 'none',
+                                fontSize: '0.8rem',
+                                fontWeight: 600,
+                                mb: 1
+                              }}
+                            >
+                              {expandedChunk === index ? '▲ Show Less' : '▼ Show More'}
+                            </Button>
+                            
+                            {chunk.embedding && (
+                              <Box sx={{ 
+                                mt: 2, 
+                                p: 1.5,
+                                bgcolor: `${accentColor}10`,
+                                borderRadius: 1.5,
+                                border: `1px solid ${accentColor}30`
+                              }}>
+                                <Typography variant="caption" sx={{ color: accentColor, fontWeight: 700, display: 'block', mb: 0.5 }}>
+                                  🧠 Embedding Vector ({chunk.embedding_dim} dimensions)
+                                </Typography>
+                                <Typography variant="caption" sx={{ 
+                                  color: textSecondary,
+                                  fontFamily: 'monospace',
+                                  fontSize: '0.7rem',
+                                  display: 'block'
+                                }}>
+                                  [{chunk.embedding.map(v => v.toFixed(4)).join(', ')}...]
+                                </Typography>
+                              </Box>
+                            )}
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </Box>
                   )}
                 </Box>
               </Paper>
@@ -494,7 +948,9 @@ export default function Home() {
                   p: 2.5,
                   flex: 1,
                   display: 'flex',
-                  flexDirection: 'column'
+                  flexDirection: 'column',
+                  maxHeight: '85vh',
+                  overflow: 'hidden'
                 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <PsychologyIcon sx={{ fontSize: 32, color: warningColor, mr: 1.5 }} />
@@ -508,133 +964,290 @@ export default function Home() {
                     </Box>
                   </Box>
 
-                  <TextField
-                    label="💬 Type your question..."
-                    fullWidth
-                    multiline
-                    rows={2}
-                    value={question}
-                    onChange={e => setQuestion(e.target.value)}
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey && question) {
-                        e.preventDefault();
-                        handleAsk();
-                      }
-                    }}
-                    sx={{ 
-                      mb: 2,
-                      '& .MuiOutlinedInput-root': {
-                        color: textPrimary,
-                        bgcolor: `${bgColor}80`,
-                        fontSize: '0.95rem',
-                        '& fieldset': {
-                          borderColor: borderColor,
-                          borderWidth: 2
-                        },
-                        '&:hover fieldset': {
-                          borderColor: warningColor
-                        },
-                        '&.Mui-focused fieldset': {
-                          borderColor: warningColor,
-                          boxShadow: `0 0 10px ${warningColor}40`
-                        }
-                      },
-                      '& .MuiInputLabel-root': {
-                        color: textSecondary
-                      }
-                    }}
-                  />
-
-                  <Button 
-                    variant="contained" 
-                    fullWidth
-                    sx={{ 
-                      py: 1.5,
-                      background: `linear-gradient(135deg, ${warningColor} 0%, #d97706 100%)`,
-                      color: textPrimary, 
-                      fontWeight: 700,
-                      boxShadow: `0 4px 15px ${warningColor}60`,
-                      transition: 'all 0.3s',
-                      '&:hover': { 
-                        background: `linear-gradient(135deg, #d97706 0%, #b45309 100%)`,
-                        transform: 'translateY(-1px)',
-                        boxShadow: `0 6px 20px ${warningColor}80`
-                      },
-                      '&:disabled': {
-                        background: borderColor,
-                        color: textSecondary
-                      }
-                    }} 
-                    onClick={handleAsk} 
-                    disabled={!question || loadingAsk}
-                  >
-                    {loadingAsk ? (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <CircularProgress size={20} sx={{ color: textPrimary }} />
-                        <span>Thinking...</span>
-                      </Box>
-                    ) : (
-                      '✨ Get Answer'
-                    )}
-                  </Button>
-                  
-                  {typingText && (
-                    <Fade in timeout={500}>
-                      <Paper 
-                        elevation={4}
-                        sx={{ 
-                          mt: 2,
-                          p: 2,
-                          bgcolor: `${bgColor}80`,
-                          border: `2px solid ${warningColor}40`,
-                          borderRadius: 2,
-                          position: 'relative',
-                          overflow: 'auto',
-                          maxHeight: '200px'
-                        }}
-                      >
-                        <Box sx={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          height: 3,
-                          background: `linear-gradient(90deg, ${warningColor} 0%, ${accentColor} 100%)`,
-                          animation: completedSteps.includes(2) ? 'none' : 'shimmer 2s infinite',
-                          '@keyframes shimmer': {
-                            '0%': { transform: 'translateX(-100%)' },
-                            '100%': { transform: 'translateX(100%)' }
+                  {/* Compact Model Selection */}
+                  <Box sx={{ mb: 1.5, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                    <Typography variant="caption" sx={{ color: textSecondary, fontWeight: 600, mr: 0.5 }}>
+                      🤖 Model:
+                    </Typography>
+                    {[
+                      { id: 'llama3', name: '🦙 Llama3', free: true },
+                      { id: 'mistral', name: '🌊 Mistral', free: true },
+                      { id: 'gemma', name: '💎 Gemma', free: true },
+                      { id: 'openai', name: '⚡ GPT-4', free: false }
+                    ].map(model => (
+                      <Chip
+                        key={model.id}
+                        label={model.name}
+                        onClick={() => setInferenceModel(model.id)}
+                        sx={{
+                          bgcolor: inferenceModel === model.id ? `${warningColor}` : `${bgColor}80`,
+                          color: inferenceModel === model.id ? textPrimary : textSecondary,
+                          border: `1px solid ${inferenceModel === model.id ? warningColor : borderColor}`,
+                          fontWeight: inferenceModel === model.id ? 700 : 500,
+                          fontSize: '0.75rem',
+                          height: 28,
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          '&:hover': {
+                            bgcolor: inferenceModel === model.id ? warningColor : `${warningColor}30`,
+                            borderColor: warningColor,
+                            transform: 'scale(1.05)'
                           }
-                        }} />
-                        <Typography 
-                          variant="body2" 
-                          sx={{ 
+                        }}
+                      />
+                    ))}
+                  </Box>
+
+                  {/* Compact OpenAI API Key Input */}
+                  {inferenceModel === 'openai' && (
+                    <Fade in timeout={300}>
+                      <TextField
+                        label="🔑 API Key"
+                        fullWidth
+                        size="small"
+                        type={showApiKey ? 'text' : 'password'}
+                        value={openaiApiKey}
+                        onChange={e => setOpenaiApiKey(e.target.value)}
+                        placeholder="sk-..."
+                        sx={{ 
+                          mb: 1.5,
+                          '& .MuiOutlinedInput-root': {
                             color: textPrimary,
-                            fontSize: '0.9rem',
-                            lineHeight: 1.6,
-                            whiteSpace: 'pre-wrap'
-                          }}
-                        >
-                          {typingText}
-                          {!completedSteps.includes(2) && (
-                            <Box 
-                              component="span" 
+                            bgcolor: `${bgColor}80`,
+                            fontSize: '0.85rem',
+                            fontFamily: 'monospace',
+                            '& fieldset': {
+                              borderColor: borderColor
+                            },
+                            '&:hover fieldset': {
+                              borderColor: warningColor
+                            },
+                            '&.Mui-focused fieldset': {
+                              borderColor: warningColor
+                            }
+                          },
+                          '& .MuiInputLabel-root': {
+                            color: textSecondary,
+                            fontSize: '0.85rem'
+                          }
+                        }}
+                        InputProps={{
+                          endAdornment: (
+                            <Button
+                              size="small"
+                              onClick={() => setShowApiKey(!showApiKey)}
                               sx={{ 
-                                display: 'inline-block',
-                                width: 6,
-                                height: 16,
-                                bgcolor: warningColor,
-                                ml: 0.5,
-                                animation: 'blink 1s infinite',
-                                '@keyframes blink': {
-                                  '0%, 49%': { opacity: 1 },
-                                  '50%, 100%': { opacity: 0 }
-                                }
-                              }} 
-                            />
+                                minWidth: 'auto',
+                                color: textSecondary,
+                                fontSize: '0.7rem',
+                                textTransform: 'none',
+                                p: 0.5
+                              }}
+                            >
+                              {showApiKey ? '�️' : '👁️‍🗨️'}
+                            </Button>
+                          )
+                        }}
+                      />
+                    </Fade>
+                  )}
+
+                  {/* Question Input and Button in one row */}
+                  <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
+                    <TextField
+                      label="💬 Ask your question"
+                      fullWidth
+                      size="small"
+                      value={question}
+                      onChange={e => setQuestion(e.target.value)}
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter' && question) {
+                          e.preventDefault();
+                          handleAsk();
+                        }
+                      }}
+                      sx={{ 
+                        flex: 1,
+                        '& .MuiOutlinedInput-root': {
+                          color: textPrimary,
+                          bgcolor: `${bgColor}80`,
+                          fontSize: '0.9rem',
+                          '& fieldset': {
+                            borderColor: borderColor
+                          },
+                          '&:hover fieldset': {
+                            borderColor: warningColor
+                          },
+                          '&.Mui-focused fieldset': {
+                            borderColor: warningColor
+                          }
+                        },
+                        '& .MuiInputLabel-root': {
+                          color: textSecondary,
+                          fontSize: '0.9rem'
+                        }
+                      }}
+                    />
+
+                    <Button 
+                      variant="contained"
+                      sx={{ 
+                        px: 3,
+                        background: `linear-gradient(135deg, ${warningColor} 0%, #d97706 100%)`,
+                        color: textPrimary, 
+                        fontWeight: 700,
+                        fontSize: '0.85rem',
+                        boxShadow: `0 4px 15px ${warningColor}60`,
+                        transition: 'all 0.3s',
+                        '&:hover': { 
+                          background: `linear-gradient(135deg, #d97706 0%, #b45309 100%)`,
+                          transform: 'translateY(-1px)',
+                          boxShadow: `0 6px 20px ${warningColor}80`
+                        },
+                        '&:disabled': {
+                          background: borderColor,
+                          color: textSecondary
+                        }
+                      }} 
+                      onClick={handleAsk} 
+                      disabled={!question || loadingAsk}
+                    >
+                      {loadingAsk ? (
+                        <CircularProgress size={18} sx={{ color: textPrimary }} />
+                      ) : (
+                        '✨ Ask'
+                      )}
+                    </Button>
+                  </Box>
+                  
+                  {/* Answer Display Area with Sections */}
+                  {typingText && parsedAnswer && (
+                    <Fade in timeout={500}>
+                      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, gap: 1 }}>
+                        {/* AI Answer Section */}
+                        <Box sx={{ bgcolor: `${bgColor}80`, border: `2px solid ${warningColor}40`, borderRadius: 2, overflow: 'hidden' }}>
+                          <Box sx={{ p: 1.5, borderBottom: `1px solid ${borderColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Typography variant="subtitle2" sx={{ color: warningColor, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              🤖 AI-Augmented Answer
+                              <Chip label={parsedAnswer.model} size="small" sx={{ ml: 1, height: 20, fontSize: '0.65rem', bgcolor: `${warningColor}20`, color: warningColor }} />
+                            </Typography>
+                            <Button
+                              size="small"
+                              onClick={() => {
+                                navigator.clipboard.writeText(typingText);
+                                setCopied(true);
+                                setTimeout(() => setCopied(false), 2000);
+                              }}
+                              sx={{
+                                minWidth: 'auto',
+                                px: 1,
+                                py: 0.3,
+                                fontSize: '0.7rem',
+                                color: copied ? successColor : textSecondary,
+                                border: `1px solid ${copied ? successColor : borderColor}`,
+                                borderRadius: 1,
+                                textTransform: 'none'
+                              }}
+                            >
+                              {copied ? '✓ Copied!' : '📋 Copy'}
+                            </Button>
+                          </Box>
+                          <Box sx={{ p: 2, maxHeight: 250, overflow: 'auto' }}>
+                            <Typography variant="body2" sx={{ color: textPrimary, fontSize: '0.9rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                              {parsedAnswer.answer}
+                            </Typography>
+                          </Box>
+                        </Box>
+
+                        {/* Retrieved Context Section */}
+                        <Box sx={{ bgcolor: `${bgColor}80`, border: `2px solid ${accentColor}40`, borderRadius: 2, overflow: 'hidden' }}>
+                          <Box 
+                            onClick={() => setExpandContext(!expandContext)}
+                            sx={{ p: 1.5, borderBottom: expandContext ? `1px solid ${borderColor}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', '&:hover': { bgcolor: `${accentColor}10` } }}
+                          >
+                            <Typography variant="subtitle2" sx={{ color: accentColor, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              📚 Retrieved Context
+                              <Chip label={`${parsedAnswer.chunks?.length || 0} chunks`} size="small" sx={{ ml: 1, height: 20, fontSize: '0.65rem', bgcolor: `${accentColor}20`, color: accentColor }} />
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: textSecondary }}>{expandContext ? '▲' : '▼'}</Typography>
+                          </Box>
+                          {expandContext && (
+                            <Box sx={{ p: 2, maxHeight: 200, overflow: 'auto' }}>
+                              <Typography variant="body2" sx={{ color: textSecondary, fontSize: '0.85rem', lineHeight: 1.5, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+                                {parsedAnswer.context}
+                              </Typography>
+                            </Box>
                           )}
-                        </Typography>
-                      </Paper>
+                        </Box>
+
+                        {/* Citations Section */}
+                        {parsedAnswer.chunks && parsedAnswer.chunks.length > 0 && (
+                          <Box sx={{ bgcolor: `${bgColor}80`, border: `2px solid ${successColor}40`, borderRadius: 2, overflow: 'hidden' }}>
+                            <Box 
+                              onClick={() => setExpandCitations(!expandCitations)}
+                              sx={{ p: 1.5, borderBottom: expandCitations ? `1px solid ${borderColor}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', '&:hover': { bgcolor: `${successColor}10` } }}
+                            >
+                              <Typography variant="subtitle2" sx={{ color: successColor, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                📖 Citations & Sources
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: textSecondary }}>{expandCitations ? '▲' : '▼'}</Typography>
+                            </Box>
+                            {expandCitations && (
+                              <Box sx={{ p: 2, maxHeight: 200, overflow: 'auto' }}>
+                                {parsedAnswer.chunks.map((chunk, idx) => (
+                                  <Box key={idx} sx={{ mb: 1.5, pb: 1.5, borderBottom: idx < parsedAnswer.chunks.length - 1 ? `1px solid ${borderColor}` : 'none' }}>
+                                    <Typography variant="caption" sx={{ color: successColor, fontWeight: 700, display: 'block', mb: 0.5 }}>
+                                      [{chunk.chunk_id}] {chunk.metadata?.filename || 'Document Chunk'}
+                                    </Typography>
+                                    <Typography variant="caption" sx={{ color: textSecondary, fontSize: '0.75rem', display: 'block' }}>
+                                      {chunk.content.substring(0, 150)}...
+                                    </Typography>
+                                  </Box>
+                                ))}
+                              </Box>
+                            )}
+                          </Box>
+                        )}
+                      </Box>
+                    </Fade>
+                  )}
+
+                  {/* Fallback for old format */}
+                  {typingText && !parsedAnswer && (
+                    <Fade in timeout={500}>
+                      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                          <Typography variant="caption" sx={{ color: successColor, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            <CheckCircleIcon sx={{ fontSize: 14 }} />
+                            Answer
+                          </Typography>
+                          <Button
+                            size="small"
+                            onClick={() => {
+                              navigator.clipboard.writeText(typingText);
+                              setCopied(true);
+                              setTimeout(() => setCopied(false), 2000);
+                            }}
+                            sx={{
+                              minWidth: 'auto',
+                              px: 1,
+                              py: 0.5,
+                              fontSize: '0.7rem',
+                              color: copied ? successColor : textSecondary,
+                              border: `1px solid ${copied ? successColor : borderColor}`,
+                              borderRadius: 1,
+                              textTransform: 'none'
+                            }}
+                          >
+                            {copied ? '✓ Copied!' : '📋 Copy'}
+                          </Button>
+                        </Box>
+                        <Paper elevation={4} sx={{ flex: 1, p: 2.5, bgcolor: `${bgColor}80`, border: `2px solid ${warningColor}40`, borderRadius: 2, overflow: 'auto', minHeight: 0 }}>
+                          <Typography variant="body2" sx={{ color: textPrimary, fontSize: '0.9rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                            {typingText}
+                          </Typography>
+                        </Paper>
+                      </Box>
                     </Fade>
                   )}
                 </Box>
@@ -644,21 +1257,24 @@ export default function Home() {
         </Box>
 
         {/* Compelling Footer CTA */}
-        <Box sx={{ textAlign: 'center', py: 1.5, borderTop: `1px solid ${borderColor}` }}>
-          <Typography variant="body2" sx={{ color: textPrimary, fontSize: '0.85rem', fontWeight: 600, mb: 0.5 }}>
-            🚀 Elite-Tier AI Engineering
-          </Typography>
-          <Typography variant="caption" sx={{ color: textSecondary, fontSize: '0.75rem', display: 'block', mb: 0.5 }}>
-            Custom LLM Fine-tuning • RLHF Pipelines • Distributed Training • GPU Optimization • Trillion-Token Scale
-          </Typography>
-          <Typography variant="caption" sx={{ 
-            color: accentColor, 
-            fontSize: '0.8rem', 
-            fontWeight: 700,
-            cursor: 'pointer',
-            '&:hover': { color: warningColor, textDecoration: 'underline' }
-          }}>
-            💬 Message on LinkedIn • Research Engineer • Foundation Models • Inference at Scale • OpenAI•Anthropic•Google•Meta•xAI•NVIDIA
+        <Box sx={{ 
+          textAlign: 'center', 
+          py: 1.5, 
+          borderTop: `1px solid ${borderColor}`,
+          background: `linear-gradient(180deg, transparent 0%, ${borderColor}15 100%)`
+        }}>
+          <Typography 
+            variant="body1" 
+            fontWeight={700}
+            sx={{ 
+              color: textPrimary,
+              background: `linear-gradient(135deg, ${accentColor} 0%, ${warningColor} 100%)`,
+              backgroundClip: 'text',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+            }}
+          >
+            🚀 Foundation Models • LLM Fine-tuning • RLHF • Trillion-Token Scale
           </Typography>
         </Box>
       </Container>

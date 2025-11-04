@@ -180,6 +180,7 @@ export default function Home() {
       const data = await response.json();
       setEmbeddingStatus(data.message || '✅ Embeddings generated successfully.');
       setCompletedSteps([...completedSteps, 0]);
+      setIngestionStep(3); // Move past embed step to mark it as complete (green)
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3000);
     } catch (error) {
@@ -385,7 +386,7 @@ export default function Home() {
                       '50%': { opacity: 0.3 }
                     }
                   }} />
-                  ⚡ Powered by Tusshar Lingagiri
+                  ⚡ Powered by ESE1
                 </Typography>
               </Box>
             </Box>

@@ -240,7 +240,7 @@ markupsafe==3.0.3
     # via jinja2
 marshmallow==3.26.1
     # via dataclasses-json
-matplotlib==3.10.7
+matplotlib==3.9.4
     # via -r requirements.txt
 mdurl==0.1.2
     # via markdown-it-py

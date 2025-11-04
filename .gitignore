@@ -6,6 +6,17 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# RAG Runtime Data (generated during operation)
+chroma_db/
+chunks/
+data/
+*.sqlite3
+
+# Next.js build output
+frontend/.next/
+frontend/out/
+frontend/build/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

@@ -1,35 +1,116 @@
-#
-# Project Structure
-#
-# - `ingestion/ingest.py`: Run this to ingest documents and build the Chroma index.
-# - `inference/api.py`: Run this to start the FastAPI inference server for RAG Q&A.
-# - `app.py`: Shared pipeline logic and utilities.
-# - `frontend/`: Next.js frontend for user Q&A.
-#
-# Usage
-#
-# 1. **Ingestion**
-#    ```sh
-#    source .venv/bin/activate
-#    python ingestion/ingest.py
-#    ```
-#    This will parse all supported files in `./data` and build the Chroma index in `./chroma_db`.
-#
-# 2. **Inference**
-#    ```sh
-#    python inference/api.py
-#    ```
-#    This will start the FastAPI backend for Q&A using the persisted index.
-#
-# 3. **Frontend**
-#    ```sh
-#    cd frontend
-#    npm run dev
-#    ```
-#    Access the UI at `http://localhost:3000`.
-# Rag-Financial (advanced_rag)
+# ESE1 
 
-This repository contains `advanced_rag.py` — a refactored, non-Colab version of a Retrieval-Augmented Generation (RAG) script originally developed in Colab.
+# Power Platform Documentation Generator
+
+## 1. Objective
+
+Build an application that automatically generates high-quality technical documentation from Microsoft Power Platform solution files, powered by a **Retrieval-Augmented Generation (RAG) pipeline** for backend processing and **Open WebUI** as the user-facing interface
+
+The solution aims to simplify documentation production for consultants, developers, and business users by analysing solution components and producing structured, import-ready outputs
+
+---
+
+## 2. Core Features & Requirements
+
+### Must Haves
+
+| Requirement | Description |
+|-------------|-------------|
+| **Power Platform Solution Analysis** | Extract and document key artefacts from Solution Files, initially focusing on: <br>• Power Apps <br>• Power Automate <br>• Dataverse <br>• SharePoint |
+| **Tech Documentation Generation** | Automatically create structured technical documentation using a RAG pipeline and generative AI |
+| **Entity Relationship Diagram (ERD)** | Generate ERDs based on Dataverse/SharePoint/solution data |
+| **Solution Overview / Architecture Diagram** | Auto-generate architecture diagrams from solution metadata and user inputs |
+| **Export to WM Reply – Replybrary** | Output must be compatible with Replybary import format (defined template) |
+| **Tech Stack Alignment** | Backend & processing must use WM Reply-friendly stack: <br>• C# <br>• NodeJS <br>• JavaScript <br>• .NET |
+| **User-Friendly Frontend** | UI/UX must support non-technical users via **Open WebUI** |
+
+---
+
+### Should Haves
+
+| Requirement |
+|-------------|
+| Use additional existing project documentation as context for better output |
+| Process project requirement docs to enhance generated documentation |
+| Expand support for more Power Platform components: <br>• CoPilot Studio <br>• Power BI |
+| Support Microsoft OAuth 2.0 for authentication & security |
+
+---
+
+### Could Haves
+
+| Requirement | 
+|-------------|
+| Direct API integration with Replybrary system for auto-upload |
+| Conversational AI Agent UI to guide users through documentation creation |
+
+---
+
+### Won’t Haves (Out of Scope)
+
+| Excluded Feature | Reason |
+|------------------|--------|
+| Analysis of non-Power Platform Microsoft tools | Not required for MVP |
+| Deployment as a Power Apps Canvas App | Application will run standalone (Web UI only) |
+
+---
+
+## 3. High-Level Architecture
+
+```
+
+User (Open WebUI) ─▶ API Layer (.NET / NodeJS)
+│
+▼
+File Upload / Inputs
+│
+▼
+Solution File Parser (C#)
+│
+▼
+RAG Pipeline (LLM + Vector DB)
+│
+├─► Technical Documentation Generator
+├─► ERD Generator
+└─► Architecture Diagram Generator
+│
+▼
+Export + Replybrary-formatted Output
+
+```
+
+---
+
+
+## 4. Target Users
+
+- Power Platform Developers & Consultants  
+- Solution Architects  
+- Presales / Documentation Teams  
+- Business Analysts  
+- Non-technical stakeholders needing fast documentation
+
+---
+
+## 5. Success Criteria
+
+- Generates technical documentation from solution files with minimal user interaction
+- Outputs valid ERD and architecture diagrams  
+- Output importable into Replybrary  
+- Works with selected WM Reply tech stack  
+- UI usable without technical training  
+
+---
+
+
+# RAG demo
+
+As part of Sprint 2, to address project level uncertainty on what tools we should use, we developed a RAG demo which takes input files, chunks the files, creates embeddings, stores them in a vecttor database and allows users to use a chatbot to query them to get insights on the files 
+
+This was very helpful in our process of choosing an architecture to tackle the project
+
+![Demo](images/demo.jpeg)
+
 
 ## Quick start
 
@@ -192,3 +273,58 @@ pytest -q
 ```
 
 Note: CI is configured to pin `pip==25.2` and `pip-tools==7.5.1` so please use the same versions above when regenerating the lockfile.
+
+
+# User Stories 
+
+**User Stories**
+
+**WMReply Developer**
+
+```
+• The WMReply Developer would need to design future WMReply applications to work easily alongside
+ the documentation generator. Therefore the documentation generator must be adaptable to different
+ technologies and allow for modifications.
+  
+• If at some point in the future WMReply wanted to integrate our documentation generator into
+ their core workflow the Developer would need to access and understand the fundamental workings
+ and source code from our application.
+```
+
+_“As a WMReply Developer I want to use the documentation generator to quickly provide concise
+ documentation from existing power platform solutions so that I can save time and focus on 
+development”_
+
+**WMReply Solution Architect**
+
+```
+• The WMReply Solution Architect will be the primary user of our Application. They will be 
+responsible for providing clients with detailed advice and solutions, and can use the 
+documentation generator to help them in this process.
+
+• They would want the generator to generate high-level documentation architecture showing apps,
+ flows, and integrations.
+```
+
+_“As a Solution Architect at WMReply I want the Documentation generator to produce high-level 
+system architecture and ER diagrams so that I can quickly access solution design, validate 
+component relationships, and guide the development team efficiently”_
+
+**WMReply CEO**
+
+```
+• The CEO of WMReply will have to become familiar with the application to ensure that it is 
+functioning properly and is still fit to use within the company.
+  
+• The CEO cannot be expected to have advanced technical knowledge so the documentation must be 
+easy to digest and the UI must be intuitive.
+  
+• The CEO should have a general understanding of all technologies used within the company. The 
+application must be efficient and easy to Understand.
+```
+
+_“As the CEO of WMReply I want the documentation generator to produce summarized reports and key insights from power platform solutions so that I can quickly understand project scope and business impact, and assure alignment with company strategy without delving into technical details”_
+
+# Wireframes
+
+![Demo](images/Wireframe.jpeg)

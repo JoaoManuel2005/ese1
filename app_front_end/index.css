@@ -24,10 +24,12 @@ button {
 textarea {
     background-color: white;
     color: black;
-    height: auto;
-    width : auto;
-    columns: auto;
-    white-space: nowrap;
     resize: none;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
+    white-space: nowrap;
+    font-family: monospace;
+    line-height: 1.2em;
+    min-height: calc(1.2em * 6);
+    max-height: calc(1.2em * 6);
 }

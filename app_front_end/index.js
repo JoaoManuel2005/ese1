@@ -15,3 +15,18 @@ function import_file() {
         auto_resize();
     };
 }
+
+function auto_resize() {
+    const ta = document.getElementById("fileList");
+    if (!ta) return;
+
+    ta.style.width = "auto";
+
+    const scrollbarBuffer = 20;
+    const newWidth = ta.scrollWidth + scrollbarBuffer;
+
+    ta.style.width = newWidth + "px";
+
+    ta.style.height = "auto";
+    ta.style.height = ta.scrollHeight + "px";
+}

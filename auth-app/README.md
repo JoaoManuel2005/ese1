@@ -1,36 +1,89 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## Application Architecture
 
-## Getting Started
+### Technology Stack
+- Framework: Next.js 15.5.9 (Pages Router)
+- Authentication: NextAuth.js v4.24.13
+- UI: React 19.1.0 with Tailwind CSS 4
+- Language: TypeScript 5
+- Microsoft Integration: @microsoft/microsoft-graph-client v3.0.7 (installed but not actively used in current code)
 
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+### Project Structure
+```
+auth-app/
+├── pages/
+│   ├── _app.tsx              # App wrapper with SessionProvider
+│   ├── index.tsx             # Home page
+│   └── api/
+│       └── auth/
+│           └── [...nextauth].ts  # NextAuth API route handler
+├── components/
+│   └── Header/               # Authentication UI component
+├── api/examples/             # Example API routes for session handling
+└── styles/                   # Global styles
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Authentication Architecture
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 1. NextAuth.js Configuration (`pages/api/auth/[...nextauth].ts`)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Uses the Azure AD provider with:
+- Client ID: `AZURE_AD_CLIENT_ID`
+- Client Secret: `AZURE_AD_CLIENT_SECRET`
+- Tenant ID: `AZURE_AD_TENANT_ID`
 
-## Learn More
+The `[...nextauth].ts` catch-all route handles:
+- `/api/auth/signin`
+- `/api/auth/signout`
+- `/api/auth/callback`
+- `/api/auth/session`
 
-To learn more about Next.js, take a look at the following resources:
+### 2. Session Management
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Client-side (`pages/_app.tsx`):
+- Wraps the app with `SessionProvider` to provide session context
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Server-side (example routes):
+- `api/examples/session.ts`: Retrieves session data
+- `api/examples/admin-protected.ts`: Protects routes by checking session
 
-## Deploy on Vercel
+### 3. Authentication Flow
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. User clicks "Sign in" → triggers `signIn()` from `next-auth/react`
+2. Redirect to Azure Entra ID → user authenticates
+3. Azure callback → NextAuth processes the OAuth response
+4. Session creation → NextAuth creates a session (stored server-side)
+5. Client receives session → `useSession()` hook provides session data
+6. UI updates → Header shows user info (email/name, avatar)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 4. User Interface
+
+The `Header` component (`components/Header/header.tsx`):
+- Shows "Sign in" when unauthenticated
+- Shows user info (email/name, avatar) and "Sign out" when authenticated
+- Uses `useSession()` to read session state
+
+## Azure Entra ID Integration
+
+### Required Environment Variables
+```env
+AZURE_AD_CLIENT_ID=        # From Azure registration
+AZURE_AD_CLIENT_SECRET=    # From Azure registration
+AZURE_AD_TENANT_ID=        # From Azure registration
+NEXTAUTH_SECRET=           # Random secret for JWT encryption
+```
+
+### Azure App Registration Requirements
+
+In Azure Entra ID, configure:
+1. Redirect URI: `https://your-domain.com/api/auth/callback/azure-ad` (or `http://localhost:3000/api/auth/callback/azure-ad` for dev)
+2. API permissions: Basic profile and email (usually included by default)
+3. Authentication: Enable implicit grant if needed (NextAuth typically uses authorization code flow)
+
+## Security Features
+
+1. Server-side session validation: API routes use `unstable_getServerSession()` to verify authentication
+2. Protected routes: Example shows how to restrict access to authenticated users
+3. Secure token handling: NextAuth manages OAuth tokens securely
+4. CSRF protection: Built into NextAuth
+
+The app provides a foundation for Azure Entra ID authentication with NextAuth.js, with examples for session handling and route protection.

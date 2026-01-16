@@ -1,27 +1,46 @@
 import { NextResponse } from "next/server";
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const res = await fetch(`${process.env.OLLAMA_BASE_URL}/api/tags`);
+    // Get API key from header or environment
+    const apiKey = req.headers.get("x-openai-api-key") || process.env.OPENAI_API_KEY;
+    
+    if (!apiKey) {
+      // Return default models if no API key
+      return NextResponse.json({ 
+        models: ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"],
+        message: "Using default models. Add API key for full list."
+      });
+    }
+
+    const res = await fetch("https://api.openai.com/v1/models", {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+      },
+    });
 
     if (!res.ok) {
       const text = await res.text();
       return NextResponse.json(
-        { models: [], error: text || "Failed to fetch models" },
-        { status: 500 }
+        { models: ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"], error: text || "Failed to fetch models" },
+        { status: 200 }
       );
     }
 
     const data = await res.json();
-    const models = Array.isArray(data?.models)
-      ? data.models.map((m: any) => m?.name).filter(Boolean)
-      : [];
+    // Filter to only show GPT models
+    const models = Array.isArray(data?.data)
+      ? data.data
+          .map((m: any) => m?.id)
+          .filter((id: string) => id && (id.startsWith("gpt-") || id.startsWith("o1") || id.startsWith("o3")))
+          .sort()
+      : ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"];
 
     return NextResponse.json({ models });
   } catch (e: any) {
     return NextResponse.json(
-      { models: [], error: e?.message ?? "Failed to fetch models" },
-      { status: 500 }
+      { models: ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"], error: e?.message ?? "Failed to fetch models" },
+      { status: 200 }
     );
   }
 }

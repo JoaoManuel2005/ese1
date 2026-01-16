@@ -1,6 +1,7 @@
 *.pyc
 __pycache__/
 .env
+.env.local
 .venv/
 .vscode/
 dist/
@@ -9,14 +10,21 @@ build/
 
 # RAG Runtime Data (generated during operation)
 chroma_db/
+rag-backend/rag_chroma_db/
 chunks/
 data/
+work/
 *.sqlite3
 
 # Next.js build output
+.next/
 frontend/.next/
 frontend/out/
 frontend/build/
+doc-gen-prototype/.next/
+
+# Old/unused scripts
+start.sh
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

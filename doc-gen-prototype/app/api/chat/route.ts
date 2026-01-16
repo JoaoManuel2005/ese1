@@ -55,8 +55,13 @@ function buildFileContext(files: IncomingFile[] = []) {
 export async function POST(req: Request) {
   const { message, model, systemPrompt, temperature, files } = await req.json();
 
-  const modelToUse = model || process.env.OLLAMA_MODEL;
-  const tempValue = typeof temperature === "number" ? temperature : undefined;
+  const modelToUse = model || process.env.OPENAI_MODEL || "gpt-4";
+  const tempValue = typeof temperature === "number" ? temperature : 0.7;
+  const apiKey = req.headers.get("x-openai-api-key") || process.env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    return new Response("OpenAI API key is required. Please add it in Advanced options.", { status: 401 });
+  }
 
   const fileContext = buildFileContext(files);
 
@@ -69,20 +74,23 @@ export async function POST(req: Request) {
   }
   messages.push({ role: "user", content: message });
 
-  const ollamaRes = await fetch(`${process.env.OLLAMA_BASE_URL}/api/chat`, {
+  const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { 
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
     body: JSON.stringify({
       model: modelToUse,
       messages,
-      options: tempValue !== undefined ? { temperature: tempValue } : undefined,
+      temperature: tempValue,
       stream: true,
     }),
   });
 
-  if (!ollamaRes.ok || !ollamaRes.body) {
-    const text = await ollamaRes.text();
-    return new Response(text, { status: 500 });
+  if (!openaiRes.ok || !openaiRes.body) {
+    const text = await openaiRes.text();
+    return new Response(text || "OpenAI API request failed", { status: openaiRes.status });
   }
 
   const encoder = new TextEncoder();
@@ -93,7 +101,7 @@ export async function POST(req: Request) {
 
   const stream = new ReadableStream({
     async start(controller) {
-      const reader = ollamaRes.body!.getReader();
+      const reader = openaiRes.body!.getReader();
 
       try {
         while (true) {
@@ -102,31 +110,38 @@ export async function POST(req: Request) {
 
           buffer += decoder.decode(value, { stream: true });
 
-          // Ollama streams JSON lines (NDJSON)
+          // OpenAI streams SSE format: "data: {...}\n\n"
           const lines = buffer.split("\n");
           buffer = lines.pop() ?? "";
 
           for (const line of lines) {
-            if (!line.trim()) continue;
+            const trimmed = line.trim();
+            if (!trimmed || trimmed === "data: [DONE]") continue;
+            if (!trimmed.startsWith("data: ")) continue;
 
-            const obj = JSON.parse(line);
+            try {
+              const json = trimmed.slice(6); // Remove "data: " prefix
+              const obj = JSON.parse(json);
 
-            const chunk = obj?.message?.content ?? "";
-            if (chunk) {
-              full += chunk;
+              const chunk = obj?.choices?.[0]?.delta?.content ?? "";
+              if (chunk) {
+                full += chunk;
 
-              // strip <think> on the fly so UI stays clean
-              const cleaned = chunk.replace(/<think>[\s\S]*?<\/think>/gi, "");
+                // strip <think> on the fly so UI stays clean
+                const cleaned = chunk.replace(/<think>[\s\S]*?<\/think>/gi, "");
 
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify({ delta: cleaned })}\n\n`)
-              );
-            }
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify({ delta: cleaned })}\n\n`)
+                );
+              }
 
-            if (obj?.done) {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));
-              controller.close();
-              return;
+              if (obj?.choices?.[0]?.finish_reason === "stop") {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));
+                controller.close();
+                return;
+              }
+            } catch {
+              // Skip invalid JSON lines
             }
           }
         }

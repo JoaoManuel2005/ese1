@@ -7,9 +7,14 @@ export async function POST(req: Request) {
     // Get the form data with the ZIP file
     const formData = await req.formData();
     const file = formData.get("file") as File;
+    const datasetId = formData.get("dataset_id") as string | null;
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    }
+
+    if (!datasetId) {
+      return NextResponse.json({ error: "dataset_id is required" }, { status: 400 });
     }
 
     if (!file.name.toLowerCase().endsWith(".zip")) {
@@ -20,6 +25,9 @@ export async function POST(req: Request) {
     // This will parse ALL files in the ZIP and create embeddings (FREE with Sentence-BERT)
     const backendFormData = new FormData();
     backendFormData.append("file", file);
+    if (datasetId) {
+      backendFormData.append("dataset_id", datasetId);
+    }
 
     const response = await fetch(`${RAG_BACKEND_URL}/rag/ingest-solution`, {
       method: "POST",

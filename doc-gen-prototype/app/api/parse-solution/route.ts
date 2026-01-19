@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { validateSolutionZip } from "../../../lib/validateSolutionZip";
 
 const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8000";
 
@@ -8,7 +9,28 @@ export async function POST(req: Request) {
     const file = formData.get("file") as File;
 
     if (!file) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 });
+      return jsonError(
+        "INVALID_INPUT",
+        "This action requires a Power Platform solution (.zip).",
+        "Upload solution.zip or switch to Chat/RAG mode."
+      );
+    }
+
+    if (!file.name.toLowerCase().endsWith(".zip")) {
+      return jsonError(
+        "INVALID_INPUT",
+        "This action requires a Power Platform solution (.zip).",
+        "Upload solution.zip or switch to Chat/RAG mode."
+      );
+    }
+
+    const zipCheck = await validateSolutionZip(file);
+    if (!zipCheck.ok) {
+      return jsonError(
+        "INVALID_SOLUTION_ZIP",
+        "Zip does not look like a Power Platform solution export.",
+        "Export a solution from Power Platform and upload the .zip."
+      );
     }
 
     // Forward to Python backend
@@ -23,18 +45,35 @@ export async function POST(req: Request) {
     if (!response.ok) {
       const errorText = await response.text();
       return NextResponse.json(
-        { error: errorText || "Failed to parse solution" },
+        {
+          ok: false,
+          error: {
+            code: "PARSE_FAILED",
+            message: errorText || "Failed to parse solution",
+          },
+        },
         { status: response.status }
       );
     }
 
     const data = await response.json();
-    return NextResponse.json(data);
+    return NextResponse.json({ ok: true, data });
   } catch (error: any) {
     console.error("Parse solution error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Internal server error" },
-      { status: 500 }
-    );
+    return jsonError("SERVER_ERROR", error?.message || "Internal server error", undefined, 500);
   }
+}
+
+function jsonError(code: string, message: string, hint?: string, status = 400) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: {
+        code,
+        message,
+        ...(hint ? { hint } : {}),
+      },
+    },
+    { status }
+  );
 }

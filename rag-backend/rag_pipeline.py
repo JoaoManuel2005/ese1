@@ -1,34 +1,46 @@
 import os
-from openai import OpenAI
-from typing import Any
+from typing import Any, Optional
+
 from dotenv import load_dotenv
+
+from llm_client import chat_complete, resolve_model, resolve_provider
 
 load_dotenv()
 
+
 class RAGPipeline:
     """RAG Pipeline for generating Power Platform documentation"""
-    
+
     def __init__(self):
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.model = os.getenv("OPENAI_MODEL", "gpt-4")
-    
-    async def generate(self, solution: Any, doc_type: str = "markdown") -> str:
-        """Generate documentation for a parsed solution (uses API key from .env)"""
-        
+        self.default_provider = resolve_provider()
+        self.model = resolve_model(self.default_provider)
+
+    async def generate(
+        self,
+        solution: Any,
+        doc_type: str = "markdown",
+        provider_override: Optional[str] = None,
+        model_override: Optional[str] = None,
+    ) -> str:
+        """Generate documentation for a parsed solution using configured provider"""
+
         context = self._build_context(solution)
         prompt = self._build_prompt(solution, context, doc_type)
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": self._get_system_prompt()},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_tokens=4000
+        provider = resolve_provider(provider_override or self.default_provider)
+        model_to_use = model_override
+        if not model_to_use:
+            if provider != self.default_provider:
+                model_to_use = resolve_model(provider)
+            else:
+                model_to_use = self.model
+
+        return chat_complete(
+            system=self._get_system_prompt(),
+            user=prompt,
+            provider_override=provider,
+            model_override=model_to_use,
         )
-        
-        return response.choices[0].message.content
+
     
     def _get_system_prompt(self) -> str:
         return """You are a technical documentation expert for Microsoft Power Platform solutions.

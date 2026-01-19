@@ -16,8 +16,15 @@ export async function POST(req: Request) {
 
     if (!response.ok) {
       const errorText = await response.text();
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(errorText);
+      } catch {
+        parsed = {};
+      }
+      const message = parsed?.error || parsed?.detail?.message || parsed?.detail || errorText || "Failed to generate documentation";
       return NextResponse.json(
-        { error: errorText || "Failed to generate documentation" },
+        { error: message },
         { status: response.status }
       );
     }

@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useEffect, useRef, useState } from "react";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { classifyUploads, UploadClassification } from "../lib/classifyUploads";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -29,6 +30,19 @@ type OutputFile = {
   htmlPreview?: string;
 };
 
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources?: { label: string; path: string }[];
+};
+
+type GenerateError = {
+  message: string;
+  code?: string;
+  hint?: string;
+};
+
 const MAX_TEXT_CHARS = 200 * 1024; // ~200KB cap for in-memory text
 const TEXT_EXTS = ["txt", "md", "json", "csv", "js", "ts", "py"];
 const SOLUTION_EXT = "zip"; // Power Platform solution files
@@ -41,26 +55,117 @@ export default function Page() {
   const [outputs, setOutputs] = useState<OutputFile[]>([]);
   const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generateError, setGenerateError] = useState<GenerateError | null>(null);
   const [pdfRenderError, setPdfRenderError] = useState<string | null>(null);
-  const [chat, setChat] = useState<{ role: string; content: string }[]>([]);
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
+  const [provider, setProvider] = useState<"cloud" | "local">("cloud");
+  const [localModel, setLocalModel] = useState("llama3.1:8b");
+  const [localModels, setLocalModels] = useState<string[]>([]);
+  const [localModelsLoading, setLocalModelsLoading] = useState(false);
+  const [localModelsError, setLocalModelsError] = useState<string | null>(null);
+  const [useCustomLocalModel, setUseCustomLocalModel] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number } | null>(null);
+  const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number; provider?: string; model?: string; backend_online?: boolean } | null>(null);
+  const [corpusType, setCorpusType] = useState<"solution_zip" | "docs" | "unknown" | null>(null);
+  const [corpusReason, setCorpusReason] = useState<string | null>(null);
+  const [uploadClassification, setUploadClassification] = useState<UploadClassification | null>(null);
+  const [docsIngestSignature, setDocsIngestSignature] = useState<string | null>(null);
+  const [solutionIngestSignature, setSolutionIngestSignature] = useState<string | null>(null);
+  const [datasetId, setDatasetId] = useState("");
+  const [isClient, setIsClient] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
+
+  function mapProviderError(msg: string, status?: number) {
+    const lower = msg.toLowerCase();
+    if (
+      status === 401 ||
+      lower.includes("invalid api key") ||
+      (lower.includes("api key") && (lower.includes("missing") || lower.includes("invalid")))
+    ) {
+      return "Cloud unavailable (invalid API key/billing). Switch to Local or set OPENAI_API_KEY.";
+    }
+    if (status === 429 || lower.includes("insufficient_quota") || lower.includes("quota") || lower.includes("billing")) {
+      return "Cloud quota/billing required. Switch to Local or enable billing.";
+    }
+    if (lower.includes("model_not_found") || lower.includes("model not found")) {
+      return "Cloud model not available. Choose a different model.";
+    }
+    const localMatch = msg.match(/local llm not reachable at ([^ ]+)/i);
+    if (localMatch?.[1]) {
+      return `Local LLM not reachable at ${localMatch[1]}. Start Ollama or update LOCAL_LLM_BASE_URL.`;
+    }
+    if (lower.includes("local llm not reachable")) {
+      return "Local LLM not reachable. Start Ollama or update LOCAL_LLM_BASE_URL.";
+    }
+    return msg;
+  }
+
+  function createDatasetId() {
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+      return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  function createMessageId() {
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function parseApiError(payload: any, fallback: string): GenerateError {
+    if (payload?.error?.message) {
+      return { message: payload.error.message, code: payload.error.code, hint: payload.error.hint };
+    }
+    if (payload?.error) {
+      return { message: payload.error };
+    }
+    if (payload?.detail?.message) {
+      return { message: payload.detail.message };
+    }
+    if (payload?.detail) {
+      return { message: payload.detail };
+    }
+    return { message: fallback };
+  }
+
+  function getFocusFiles(question: string, attached: AttachedFile[]) {
+    const names = attached.map((f) => f.name);
+    const lower = question.toLowerCase();
+    const matches = names.filter((name) => {
+      if (name.toLowerCase().endsWith(".zip")) {
+        return false;
+      }
+      return lower.includes(name.toLowerCase());
+    });
+    const byBase: Record<string, string> = {};
+    for (const name of names) {
+      const base = name.replace(/\.[^.]+$/, "").toLowerCase();
+      if (base && !byBase[base]) {
+        byBase[base] = name;
+      }
+    }
+    for (const base of Object.keys(byBase)) {
+      if (lower.includes(base)) {
+        matches.push(byBase[base]);
+      }
+    }
+    return Array.from(new Set(matches));
+  }
 
   // Fetch RAG status on mount and periodically
   useEffect(() => {
     async function fetchRagStatus() {
       try {
-        const res = await fetch("/api/rag-status");
+        if (!datasetId) return;
+        const res = await fetch(`/api/rag-status?dataset_id=${encodeURIComponent(datasetId)}`);
         if (res.ok) {
           const data = await res.json();
           setRagStatus(data);
@@ -72,18 +177,38 @@ export default function Page() {
     fetchRagStatus();
     const interval = setInterval(fetchRagStatus, 30000); // Refresh every 30s
     return () => clearInterval(interval);
-  }, []);
+  }, [datasetId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat, loading]);
 
   useEffect(() => {
+    setIsClient(true);
     const storedModel = localStorage.getItem("selectedModel");
+    const storedProvider = localStorage.getItem("llmProvider");
+    const storedLocalModel = localStorage.getItem("localModel");
+    const storedDatasetId = localStorage.getItem("datasetId");
     if (storedModel) setSelectedModel(storedModel);
+    if (storedProvider === "local" || storedProvider === "cloud") {
+      setProvider(storedProvider);
+    }
+    if (storedLocalModel) setLocalModel(storedLocalModel);
     // Clear any old API key from localStorage for security
     localStorage.removeItem("openaiApiKey");
+    if (storedDatasetId) {
+      setDatasetId(storedDatasetId);
+    } else {
+      const newId = createDatasetId();
+      setDatasetId(newId);
+      localStorage.setItem("datasetId", newId);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!isClient || !datasetId) return;
+    localStorage.setItem("datasetId", datasetId);
+  }, [datasetId, isClient]);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,6 +242,9 @@ export default function Page() {
     }
 
     fetchModels();
+    if (provider === "local") {
+      fetchLocalModels();
+    }
     return () => {
       cancelled = true;
     };
@@ -127,6 +255,184 @@ export default function Page() {
       localStorage.setItem("selectedModel", selectedModel);
     }
   }, [selectedModel]);
+
+  useEffect(() => {
+    localStorage.setItem("llmProvider", provider);
+    if (provider === "local" && !localModels.length) {
+      void fetchLocalModels();
+    }
+  }, [provider]);
+
+  useEffect(() => {
+    if (localModel) {
+      localStorage.setItem("localModel", localModel);
+    }
+  }, [localModel]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function runClassification() {
+      if (!files.length) {
+        setUploadClassification(null);
+        return;
+      }
+      const fileList = files.map((f) => f.file).filter(Boolean) as File[];
+      if (!fileList.length) {
+        setUploadClassification({ type: "unsupported", reason: "No readable files" });
+        return;
+      }
+      const result = await classifyUploads(fileList);
+      if (!cancelled) {
+        setUploadClassification(result);
+      }
+    }
+
+    void runClassification();
+    return () => {
+      cancelled = true;
+    };
+  }, [files]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function ingestDocs() {
+      const textFiles = files.filter((f) => f.isText && typeof f.text === "string");
+      if (!textFiles.length) return;
+      const activeDatasetId = datasetId || createDatasetId();
+      if (!datasetId) {
+        setDatasetId(activeDatasetId);
+      }
+
+      const signature = textFiles.map((f) => `${f.name}:${f.size}`).join("|");
+      if (signature === docsIngestSignature) return;
+
+      try {
+        const res = await fetch("/api/rag-ingest-docs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dataset_id: activeDatasetId,
+            files: textFiles.map((f) => ({
+              name: f.name,
+              text: f.text,
+            })),
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const message = data?.error?.message || data?.error || "Failed to ingest documents";
+          setCorpusType("unknown");
+          setCorpusReason(message);
+          return;
+        }
+        if (!cancelled) {
+          setDocsIngestSignature(signature);
+          setCorpusType(data?.corpus_type || "docs");
+          setCorpusReason(data?.corpus_reason || null);
+        }
+      } catch {
+        if (!cancelled) {
+          setCorpusType("unknown");
+          setCorpusReason("Failed to ingest documents");
+        }
+      }
+    }
+
+    void ingestDocs();
+    return () => {
+      cancelled = true;
+    };
+  }, [files, uploadClassification, docsIngestSignature, datasetId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function ingestSolutionZip() {
+      const solutionFile = files.find((f) => f.file && f.name.toLowerCase().endsWith(".zip"));
+      if (!solutionFile?.file) return;
+      const activeDatasetId = datasetId || createDatasetId();
+      if (!datasetId) {
+        setDatasetId(activeDatasetId);
+      }
+
+      const signature = `${solutionFile.name}:${solutionFile.size}`;
+      if (signature === solutionIngestSignature) return;
+
+      const ingestFormData = new FormData();
+      ingestFormData.append("file", solutionFile.file);
+      ingestFormData.append("dataset_id", activeDatasetId);
+
+      try {
+        const res = await fetch("/api/rag-ingest-zip", {
+          method: "POST",
+          body: ingestFormData,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (!cancelled) {
+            setCorpusType("unknown");
+            setCorpusReason(data?.error || "Failed to ingest solution zip.");
+          }
+          return;
+        }
+        if (!cancelled) {
+          setSolutionIngestSignature(signature);
+          setCorpusType(data?.corpus_type || "solution_zip");
+          setCorpusReason(data?.corpus_reason || null);
+        }
+      } catch {
+        if (!cancelled) {
+          setCorpusType("unknown");
+          setCorpusReason("Failed to ingest solution zip.");
+        }
+      }
+    }
+
+    void ingestSolutionZip();
+    return () => {
+      cancelled = true;
+    };
+  }, [files, datasetId, solutionIngestSignature]);
+
+  async function fetchLocalModels() {
+    setLocalModelsLoading(true);
+    setLocalModelsError(null);
+    try {
+      const res = await fetch("/api/local-models");
+      const data = await res.json();
+      if (!data?.ok) {
+        const message = data?.error?.message || "Couldn't detect local models. Ensure Ollama is running.";
+        setLocalModels([]);
+        setUseCustomLocalModel(true);
+        setLocalModelsError(message);
+        return;
+      }
+
+      const models = Array.isArray(data?.models) ? data.models.map((m: any) => m?.name).filter(Boolean) : [];
+      setLocalModels(models);
+
+      // Default selection logic
+      if (models.length > 0) {
+        if (localModel && models.includes(localModel)) {
+          setUseCustomLocalModel(false);
+        } else {
+          setLocalModel(models[0]);
+          setUseCustomLocalModel(false);
+        }
+      } else {
+        setUseCustomLocalModel(true);
+      }
+
+    } catch (err: any) {
+      setLocalModels([]);
+      setUseCustomLocalModel(true);
+      setLocalModelsError("Couldn't detect local models. Ensure Ollama is running.");
+    } finally {
+      setLocalModelsLoading(false);
+    }
+  }
 
   function formatSize(bytes: number) {
     if (bytes < 1024) return `${bytes} B`;
@@ -198,6 +504,10 @@ export default function Page() {
 
   async function addFiles(fileList: FileList | null) {
     if (!fileList) return;
+    if (files.length === 0) {
+      setDatasetId(createDatasetId());
+      setDocsIngestSignature(null);
+    }
     const incoming = Array.from(fileList);
 
     const processed = await Promise.all(
@@ -207,11 +517,12 @@ export default function Page() {
           type: file.type || "unknown",
           size: file.size,
           isText: false,
+          file,
         };
 
         // Handle .zip solution files - keep original File reference
         if (isSolutionFile(file)) {
-          return { ...base, file, text: "[Power Platform Solution - will be parsed with PAC CLI]", isText: false };
+          return { ...base, text: "[Power Platform Solution - will be parsed with PAC CLI]", isText: false };
         }
 
         if (!isTextFile(file)) {
@@ -236,11 +547,58 @@ export default function Page() {
   }
 
   function removeFile(index: number) {
-    setFiles((prev) => prev.filter((_, i) => i !== index));
+    const oldId = datasetId;
+    setFiles((prev) => {
+      const removed = prev[index];
+      const next = prev.filter((_, i) => i !== index);
+      if (next.length === 0) {
+        setDatasetId(createDatasetId());
+        setDocsIngestSignature(null);
+        setSolutionIngestSignature(null);
+        void resetDataset(oldId);
+        return next;
+      }
+
+      if (removed?.name?.toLowerCase().endsWith(".zip")) {
+        setDatasetId(createDatasetId());
+        setDocsIngestSignature(null);
+        setSolutionIngestSignature(null);
+        void resetDataset(oldId);
+        return next;
+      }
+
+      void deleteDatasetFiles(oldId, [removed.name]);
+      return next;
+    });
+  }
+
+  async function resetDataset(oldId: string) {
+    if (!oldId) return;
+    await fetch("/api/rag-reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataset_id: oldId }),
+    }).catch(() => {});
+  }
+
+  async function deleteDatasetFiles(oldId: string, fileNames: string[]) {
+    if (!oldId || !fileNames.length) return;
+    await fetch("/api/rag-delete-docs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataset_id: oldId, file_names: fileNames }),
+    }).catch(() => {});
   }
 
   function clearFiles() {
+    const oldId = datasetId;
     setFiles([]);
+    setCorpusType(null);
+    setCorpusReason(null);
+    setDocsIngestSignature(null);
+    setSolutionIngestSignature(null);
+    setDatasetId(createDatasetId());
+    void resetDataset(oldId);
   }
 
   function upsertOutput(output: OutputFile) {
@@ -257,11 +615,15 @@ export default function Page() {
 
   // Check if any file is a solution (.zip) file
   function hasSolutionFile() {
-    return files.some((f) => f.name.toLowerCase().endsWith(".zip"));
+    return uploadClassification?.type === "power_platform_solution_zip";
   }
 
   // Generate docs for Power Platform solution using PAC CLI + RAG
   async function generateSolutionDocs() {
+    const activeDatasetId = datasetId || createDatasetId();
+    if (!datasetId) {
+      setDatasetId(activeDatasetId);
+    }
     const solutionFile = files.find((f) => f.file && f.name.toLowerCase().endsWith(".zip"));
     if (!solutionFile?.file) {
       throw new Error("No solution file found");
@@ -271,6 +633,7 @@ export default function Page() {
     // This happens BEFORE doc generation so RAG chat can use the full solution content
     const ingestFormData = new FormData();
     ingestFormData.append("file", solutionFile.file);
+    ingestFormData.append("dataset_id", activeDatasetId);
     
     const ingestRes = await fetch("/api/rag-ingest-zip", {
       method: "POST",
@@ -279,6 +642,10 @@ export default function Page() {
     
     if (ingestRes.ok) {
       const ingestData = await ingestRes.json();
+      const type = ingestData?.corpus_type || ingestData?.details?.corpus_type || null;
+      const reason = ingestData?.corpus_reason || ingestData?.details?.corpus_reason || null;
+      setCorpusType(type);
+      setCorpusReason(reason);
       console.log("Solution ingested into ChromaDB:", ingestData);
     } else {
       console.warn("Failed to ingest solution into ChromaDB - continuing with doc generation");
@@ -293,26 +660,38 @@ export default function Page() {
       body: formData,
     });
 
+    const parsePayload = await parseRes.json().catch(() => ({}));
     if (!parseRes.ok) {
-      const errorData = await parseRes.json().catch(() => ({}));
-      throw new Error(errorData.error || "Failed to parse solution with PAC CLI");
+      const parsed = parseApiError(parsePayload, "Failed to parse solution with PAC CLI");
+      const err = new Error(parsed.message);
+      (err as any).code = parsed.code;
+      (err as any).hint = parsed.hint;
+      throw err;
     }
 
-    const parsedSolution = await parseRes.json();
+    const parsedSolution = parsePayload?.data || parsePayload;
 
     // Step 3: Generate documentation with RAG pipeline (API key from backend .env)
+    const modelForProvider = llmSelection.model;
     const genRes = await fetch("/api/generate-solution-docs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         solution: parsedSolution,
         doc_type: "markdown",
+        provider: llmSelection.provider,
+        model: modelForProvider,
       }),
     });
 
     if (!genRes.ok) {
       const errorData = await genRes.json().catch(() => ({}));
-      throw new Error(errorData.error || "Failed to generate documentation");
+      const parsed = parseApiError(errorData, "Failed to generate documentation");
+      const message = mapProviderError(parsed.message, genRes.status);
+      const err = new Error(message);
+      (err as any).code = parsed.code;
+      (err as any).hint = parsed.hint;
+      throw err;
     }
 
     const docResult = await genRes.json();
@@ -452,18 +831,27 @@ export default function Page() {
       }
 
       // Regular file processing (existing flow)
+      const modelForProvider = llmSelection.provider === "cloud" ? llmSelection.model : undefined;
       const res = await fetch("/api/generate-docs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: selectedModel || undefined,
+          model: modelForProvider,
+          provider: llmSelection.provider,
           files: buildFilesPayload(),
         }),
       });
 
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
+        let parsedPayload: any = {};
+        try {
+          parsedPayload = JSON.parse(text);
+        } catch {
+          parsedPayload = {};
+        }
+        const parsed = parseApiError(parsedPayload, text || `HTTP ${res.status}`);
+        throw new Error(mapProviderError(parsed.message, res.status));
       }
 
       const data = await res.json();
@@ -488,7 +876,11 @@ export default function Page() {
         upsertOutput(output);
       });
     } catch (e: any) {
-      setGenerateError(e?.message ?? "Failed to generate documentation");
+      setGenerateError({
+        message: e?.message ?? "Failed to generate documentation",
+        code: e?.code,
+        hint: e?.hint,
+      });
     } finally {
       setGenerating(false);
     }
@@ -534,11 +926,18 @@ export default function Page() {
   async function send() {
     const text = message.trim();
     if (!text || loading) return;
+    const activeDatasetId = datasetId || createDatasetId();
+    if (!datasetId) {
+      setDatasetId(activeDatasetId);
+    }
+
+    const userId = createMessageId();
+    const assistantId = createMessageId();
 
     setChat((c) => [
       ...c,
-      { role: "user", content: text },
-      { role: "assistant", content: "" },
+      { id: userId, role: "user", content: text },
+      { id: assistantId, role: "assistant", content: "" },
     ]);
 
     setMessage("");
@@ -546,72 +945,81 @@ export default function Page() {
 
     try {
       // Always use FREE RAG mode - queries ChromaDB for context
+      const modelForProvider = llmSelection.model;
+      const focusFiles = getFocusFiles(text, files);
       const ragRes = await fetch("/api/rag-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
+          provider: llmSelection.provider,
+          model: modelForProvider,
+          dataset_id: activeDatasetId,
+          focus_files: focusFiles.length ? focusFiles : undefined,
         }),
       });
 
       if (!ragRes.ok) {
-        const errData = await ragRes.json().catch(() => ({}));
-        throw new Error(errData.error || `HTTP ${ragRes.status}`);
+        const errText = await ragRes.text();
+        let parsed: any = {};
+        try {
+          parsed = JSON.parse(errText);
+        } catch {
+          parsed = {};
+        }
+        const message = mapProviderError(
+          parsed?.error || parsed?.detail || errText || `HTTP ${ragRes.status}`,
+          ragRes.status
+        );
+        throw new Error(message);
       }
 
       const ragData = await ragRes.json();
-      
+
+      const sources = Array.isArray(ragData.sources) ? ragData.sources : [];
+
       // Update the assistant message with RAG response
-      setChat((c) => {
-        const copy = [...c];
-        for (let i = copy.length - 1; i >= 0; i--) {
-          if (copy[i].role === "assistant") {
-            let response = ragData.answer || "No response";
-            // Add citation info if available
-            if (ragData.citations?.length > 0) {
-              response += "\n\n---\n**Sources:**\n";
-              ragData.citations.forEach((cite: any, idx: number) => {
-                response += `${idx + 1}. ${cite.metadata?.source || "Document chunk"}\n`;
-              });
-            }
-            copy[i] = { ...copy[i], content: response };
-            break;
-          }
-        }
-        return copy;
-      });
+      setChat((c) =>
+        c.map((m) =>
+          m.id === assistantId
+            ? { ...m, content: ragData.answer || "No response", sources }
+            : m
+        )
+      );
       
     } catch (e: any) {
       const msg = e?.message ?? "Unknown error";
 
       // replace last assistant message with the error
-      setChat((c) => {
-        const copy = [...c];
-        for (let i = copy.length - 1; i >= 0; i--) {
-          if (copy[i].role === "assistant") {
-            copy[i] = { ...copy[i], content: `Error: ${msg}` };
-            break;
-          }
-        }
-        return copy;
-      });
+      setChat((c) =>
+        c.map((m) =>
+          m.id === assistantId ? { ...m, content: `Error: ${msg}`, sources: [] } : m
+        )
+      );
     } finally {
       setLoading(false);
     }
   }
 
+  const statusProvider = provider === "cloud" ? "Cloud" : "Local";
+  const statusModel = provider === "cloud" ? (selectedModel || "default") : (localModel || "default");
+  const llmSelection = {
+    provider,
+    model: provider === "cloud" ? selectedModel || undefined : localModel || undefined,
+  };
+  const hasFiles = files.length > 0;
+  const hasSolution = hasSolutionFile();
+  const hasOnlyNonSolution = hasFiles && !hasSolution;
+  const uploadType = uploadClassification?.type || null;
+  const uploadReason = uploadClassification?.reason || null;
+  const hasInvalidZip = uploadType === "unsupported" && files.some((f) => f.name.toLowerCase().endsWith(".zip"));
+  const displayType = corpusType || uploadType;
+  const displayReason = corpusReason || uploadReason;
+
   return (
-    <main
-      style={{
-        maxWidth: 1400,
-        margin: "30px auto",
-        fontFamily: "system-ui",
-        padding: "0 16px 24px",
-        background: "#f7f7fb",
-      }}
-    >
+    <main className="app-shell" style={{ fontFamily: "system-ui" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation Generator (Prototype)</h1>
+        <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation Generator</h1>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {/* RAG Status Badge */}
           <div style={{
@@ -625,26 +1033,26 @@ export default function Page() {
             {ragStatus ? (
               <>
                 <span style={{ color: ragStatus.status === "ready" ? "#2e7d32" : "#e65100" }}>
-                  {ragStatus.status === "ready" ? "🟢" : "🟡"} ChromaDB: {ragStatus.chunks_indexed} chunks
+                  {ragStatus.status === "ready" ? "Online" : "Degraded"} • ChromaDB: {ragStatus.chunks_indexed} chunks • Provider: {statusProvider} ({statusModel})
                 </span>
               </>
             ) : (
-              <span style={{ color: "#666" }}>⚪ RAG Backend Offline</span>
+              <span style={{ color: "#666" }}>RAG Backend Offline</span>
             )}
           </div>
         </div>
       </div>
+      {isClient && process.env.NODE_ENV === "development" && datasetId && (
+        <div style={{ fontSize: 12, color: "#666", marginBottom: 12 }}>
+          Dataset: {datasetId.slice(0, 8)}
+        </div>
+      )}
       
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1.2fr 1fr 1.3fr",
-          gap: 12,
-        }}
-      >
-        <section style={panelStyle}>
-          <div style={panelHeaderStyle}>Input Files</div>
+      {/* Responsive grid: 4 columns desktop, 2 columns medium, 1 column small */}
+      <div className="app-grid">
+        <section className="panel">
+          <div className="panel-header">Input Files</div>
           <div
             className={`dropzone${isDragging ? " dragging" : ""}`}
             onClick={() => fileInputRef.current?.click()}
@@ -767,14 +1175,28 @@ export default function Page() {
                 {files.length} file{files.length !== 1 ? "s" : ""} •{" "}
                 {formatSize(files.reduce((sum, f) => sum + f.size, 0))}
               </div>
+              {displayType && (
+                <div style={{ marginTop: 6, fontSize: 12, color: "#333" }}>
+                  <span style={{ padding: "2px 6px", borderRadius: 6, background: "#eef2ff", border: "1px solid #c7d2fe" }}>
+                    {displayType === "solution_zip" || displayType === "power_platform_solution_zip"
+                      ? "Detected: Power Platform solution"
+                      : displayType === "docs" || displayType === "generic_docs"
+                      ? "Detected: Documents"
+                      : "Detected: Unknown"}
+                  </span>
+                  {displayReason && (
+                    <span style={{ marginLeft: 6, color: "#666" }}>{displayReason}</span>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <div style={{ ...placeholderBox, marginTop: 12 }}>No files selected yet.</div>
           )}
         </section>
 
-        <section style={panelStyle}>
-          <div style={panelHeaderStyle}>Chat</div>
+        <section className="panel">
+          <div className="panel-header">Chat</div>
 
           <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
             <div style={{ display: "grid", gap: 6 }}>
@@ -796,34 +1218,105 @@ export default function Page() {
               >
                 Advanced options
                 <span style={{ fontSize: 12, color: "#555" }}>
-                  {showAdvanced ? "▲" : `Model: ${selectedModel || "default"}`}
+                  {showAdvanced ? "▲" : `Provider: ${provider === "cloud" ? "Cloud" : "Local"}`}
                 </span>
               </button>
               {showAdvanced && (
                 <div style={{ display: "grid", gap: 10, paddingTop: 4 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <label htmlFor="model-select" style={{ fontWeight: 600 }}>Model</label>
+                    <label htmlFor="provider-select" style={{ fontWeight: 600 }}>Provider</label>
                     <select
-                      id="model-select"
-                      value={selectedModel}
-                      onChange={(e) => setSelectedModel(e.target.value)}
-                      disabled={modelsLoading || (!models.length && !selectedModel)}
-                      style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", minWidth: 180, background: "#fff" }}
+                      id="provider-select"
+                      value={provider}
+                      onChange={(e) => setProvider(e.target.value === "local" ? "local" : "cloud")}
+                      style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", minWidth: 200, background: "#fff" }}
                     >
-                      {modelsLoading && <option>Loading models...</option>}
-                      {!modelsLoading && models.map((m) => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                      {!modelsLoading && models.length === 0 && (
-                        <option value={selectedModel || ""}>{selectedModel || "Default (env)"}</option>
-                      )}
+                      <option value="cloud">Cloud (OpenAI API)</option>
+                      <option value="local">Local (Ollama API)</option>
                     </select>
-                    {modelsError && (
-                      <span style={{ fontSize: 12, color: "#a00" }}>
-                        Model list unavailable. Using default.
-                      </span>
-                    )}
                   </div>
+
+                  {provider === "cloud" ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <label htmlFor="model-select" style={{ fontWeight: 600 }}>Model</label>
+                      <select
+                        id="model-select"
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        disabled={modelsLoading || (!models.length && !selectedModel)}
+                        style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", minWidth: 180, background: "#fff" }}
+                      >
+                        {modelsLoading && <option>Loading models...</option>}
+                        {!modelsLoading && models.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                        {!modelsLoading && models.length === 0 && (
+                          <option value={selectedModel || ""}>{selectedModel || "Default (env)"}</option>
+                        )}
+                      </select>
+                      {modelsError && (
+                        <span style={{ fontSize: 12, color: "#a00" }}>
+                          Model list unavailable. Using default.
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <label htmlFor="local-model-select" style={{ fontWeight: 600 }}>Local model</label>
+                        <select
+                          id="local-model-select"
+                          value={useCustomLocalModel ? "custom" : localModel}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === "custom") {
+                              setUseCustomLocalModel(true);
+                            } else {
+                              setUseCustomLocalModel(false);
+                              setLocalModel(val);
+                            }
+                          }}
+                          disabled={localModelsLoading}
+                          style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", minWidth: 200, background: "#fff" }}
+                        >
+                          {localModelsLoading && <option>Loading local models...</option>}
+                          {!localModelsLoading && localModels.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                          <option value="custom">Custom model...</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => fetchLocalModels()}
+                          aria-label="Refresh local models"
+                          style={{
+                            border: "1px solid #ddd",
+                            background: "#fff",
+                            padding: "6px 8px",
+                            borderRadius: 8,
+                            cursor: "pointer",
+                            fontSize: 12,
+                          }}
+                        >
+                          ⟳
+                        </button>
+                      </div>
+                      {localModelsError && (
+                        <span style={{ fontSize: 12, color: "#a00" }}>
+                          Couldn't detect local models. Ensure Ollama is running.
+                        </span>
+                      )}
+                      {useCustomLocalModel && (
+                        <input
+                          id="local-model"
+                          value={localModel}
+                          onChange={(e) => setLocalModel(e.target.value)}
+                          placeholder="llama3.1:8b"
+                          style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", minWidth: 180, background: "#fff" }}
+                        />
+                      )}
+                    </div>
+                  )}
 
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid #e0e0e0" }}>
                     <div style={{ fontWeight: 600, color: "#0a6b3d" }}>
@@ -847,15 +1340,57 @@ export default function Page() {
             </div>
           </div>
 
-          <div style={{ border: "1px solid #e0e0e5", borderRadius: 12, padding: 12, minHeight: 260, maxHeight: 360, overflowY: "auto", background: "#fff" }}>
-            {chat.map((m, i) => (
-              <div key={i} style={{ margin: "12px 0" }}>
+          {/* Chat history scrolls inside the panel to avoid page overflow */}
+          <div className="panel-scroll" style={{ border: "1px solid #e0e0e5", borderRadius: 12, padding: 12, background: "#fff" }}>
+            <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
+              {displayType === "docs" || displayType === "generic_docs"
+                ? "Chat answers from your uploaded documents (general mode)."
+                : displayType === "solution_zip" || displayType === "power_platform_solution_zip"
+                ? "Chat answers from solution components (Power Platform mode)."
+                : "Chat answers from the knowledge base once files are ingested."}
+            </div>
+            {chat.map((m) => (
+              <div key={m.id} style={{ margin: "12px 0" }}>
                 <b>{m.role}:</b>
                 <div style={{ marginTop: 6 }}>
                   {m.role === "assistant" ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <div className="chat-message">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                      </div>
+                      {m.sources && m.sources.length > 0 && (
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedSources((prev) => ({
+                                ...prev,
+                                [m.id]: !prev[m.id],
+                              }))
+                            }
+                            style={{
+                              border: "1px solid #d0d0d7",
+                              background: "#fff",
+                              padding: "4px 8px",
+                              borderRadius: 8,
+                              cursor: "pointer",
+                              fontSize: 12,
+                            }}
+                          >
+                            {expandedSources[m.id] ? "Hide sources" : `Sources (${m.sources.length})`}
+                          </button>
+                          {expandedSources[m.id] && (
+                            <ul style={{ marginTop: 8, paddingLeft: 18, fontSize: 12, color: "#444" }}>
+                              {m.sources.map((source, idx) => (
+                                <li key={`${m.id}-source-${idx}`}>{source.label}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   ) : (
-                    m.content
+                    <div className="chat-message">{m.content}</div>
                   )}
                 </div>
               </div>
@@ -908,35 +1443,56 @@ export default function Page() {
           </div>
         </section>
 
-        <section style={panelStyle}>
-          <div style={panelHeaderStyle}>Output Files</div>
+        <section className="panel">
+          <div className="panel-header">Output Files</div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
             <button
               onClick={generateDocs}
-              disabled={files.length === 0 || generating}
+              disabled={!hasFiles || generating}
               style={{
                 padding: "8px 12px",
                 borderRadius: 8,
-                border: hasSolutionFile() ? "1px solid #0a6b3d" : "1px solid #1f7aec",
-                background: generating ? "#9dc2f7" : hasSolutionFile() ? "#0a6b3d" : "#1f7aec",
+                border: hasSolution ? "1px solid #0a6b3d" : "1px solid #1f7aec",
+                background: generating ? "#9dc2f7" : hasSolution ? "#0a6b3d" : "#1f7aec",
                 color: "#fff",
-                cursor: files.length === 0 || generating ? "not-allowed" : "pointer",
-                opacity: files.length === 0 || generating ? 0.7 : 1,
+                cursor: !hasFiles || generating ? "not-allowed" : "pointer",
+                opacity: !hasFiles || generating ? 0.7 : 1,
               }}
             >
               {generating 
-                ? (hasSolutionFile() ? "Parsing & Generating..." : "Generating...") 
-                : (hasSolutionFile() ? "Parse & Generate Docs" : "Generate docs")}
+                ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
+                : (hasSolution ? "Parse & Generate Docs" : "Generate docs")}
             </button>
             <div style={{ fontSize: 12, color: "#555" }}>
-              {hasSolutionFile() 
+              {hasInvalidZip
+                ? "Solution docs require a Power Platform solution (.zip export). For other files, use Chat/RAG mode."
+                : !hasFiles
+                ? "Select files to enable generation."
+                : hasSolution
                 ? "Will parse solution with PAC CLI, then generate docs with RAG pipeline."
                 : "Uses attached files with current model/system prompt/temperature."}
             </div>
           </div>
+          {hasOnlyNonSolution && (
+            <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
+              Solution docs require a .zip export. For other files, use Chat/RAG mode or Generate docs.
+            </div>
+          )}
           {generateError && (
-            <div style={{ color: "#a00", fontSize: 12, marginBottom: 8 }}>
-              {generateError}
+            <div
+              style={{
+                border: "1px solid #f5c2c7",
+                background: "#fff5f5",
+                color: "#7a1a1a",
+                padding: "8px 10px",
+                borderRadius: 8,
+                fontSize: 12,
+                marginBottom: 8,
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>{generateError.message}</div>
+              {generateError.code && <div>Code: {generateError.code}</div>}
+              {generateError.hint && <div>{generateError.hint}</div>}
             </div>
           )}
 
@@ -987,8 +1543,8 @@ export default function Page() {
           )}
         </section>
 
-        <section style={panelStyle}>
-          <div style={panelHeaderStyle}>File Preview</div>
+        <section className="panel">
+          <div className="panel-header">File Preview</div>
           {(() => {
             const out = getSelectedOutput();
             if (!out) {
@@ -1056,21 +1612,6 @@ export default function Page() {
     </main>
   );
 }
-
-const panelStyle: React.CSSProperties = {
-  background: "#fff",
-  border: "1px solid #e0e0e5",
-  borderRadius: 12,
-  padding: 14,
-  minHeight: 420,
-  boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
-};
-
-const panelHeaderStyle: React.CSSProperties = {
-  fontWeight: 700,
-  marginBottom: 10,
-  color: "#222",
-};
 
 const placeholderBox: React.CSSProperties = {
   border: "1px dashed #d0d0d7",

@@ -28,6 +28,14 @@ export default function SolutionDocsPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
+  const parseApiError = (payload: any, fallback: string) => {
+    if (payload?.error?.message) return payload.error.message;
+    if (payload?.error) return payload.error;
+    if (payload?.detail?.message) return payload.detail.message;
+    if (payload?.detail) return payload.detail;
+    return fallback;
+  };
+
   useEffect(() => {
     // Check backend health on mount
     fetch("/api/rag-health")
@@ -77,12 +85,12 @@ export default function SolutionDocsPage() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to parse solution");
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(parseApiError(errorData, "Failed to parse solution"));
       }
 
-      const result = await response.json();
-      setParsedSolution(result);
+      const result = await response.json().catch(() => ({}));
+      setParsedSolution(result?.data || result);
       setLoading("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to parse solution");
@@ -112,8 +120,8 @@ export default function SolutionDocsPage() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to generate documentation");
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(parseApiError(errorData, "Failed to generate documentation"));
       }
 
       const result = await response.json();

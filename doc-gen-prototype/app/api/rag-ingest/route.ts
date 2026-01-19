@@ -5,7 +5,10 @@ const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8000";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { solution } = body;
+    const { solution, dataset_id: datasetId } = body;
+    if (!datasetId) {
+      return NextResponse.json({ error: "dataset_id is required" }, { status: 400 });
+    }
 
     // Create chunks from the PARSED SOLUTION data (PAC CLI output)
     const chunks: { content: string; metadata: Record<string, string> }[] = [];
@@ -20,6 +23,8 @@ Total Components: ${solution.components?.length || 0}
 Managed: ${solution.managed || false}`,
         metadata: {
           source: "solution_overview",
+          file_name: "solution_overview",
+          kind: "solution",
           type: "overview",
           solution_name: solution?.solution_name || "Unknown"
         }
@@ -39,6 +44,8 @@ ${component.content ? `Content:\n${typeof component.content === 'string' ? compo
           content: componentContent,
           metadata: {
             source: component.name || "component",
+            file_name: component.name || "component",
+            kind: "solution",
             type: component.type || "component",
             path: component.path || "",
             solution_name: solution?.solution_name || "Unknown"
@@ -58,6 +65,8 @@ ${workflow.actions ? `Actions: ${JSON.stringify(workflow.actions, null, 2)}` : '
 ${workflow.definition ? `Definition:\n${JSON.stringify(workflow.definition, null, 2)}` : ''}`,
           metadata: {
             source: workflow.name || "workflow",
+            file_name: workflow.name || "workflow",
+            kind: "solution",
             type: "workflow",
             solution_name: solution?.solution_name || "Unknown"
           }
@@ -75,6 +84,8 @@ ${app.controls ? `Controls: ${JSON.stringify(app.controls, null, 2)}` : ''}
 ${app.data_sources ? `Data Sources: ${JSON.stringify(app.data_sources, null, 2)}` : ''}`,
           metadata: {
             source: app.name || "canvas_app",
+            file_name: app.name || "canvas_app",
+            kind: "solution",
             type: "canvas_app",
             solution_name: solution?.solution_name || "Unknown"
           }
@@ -93,6 +104,8 @@ Content:
 ${file.content.substring(0, 3000)}${file.content.length > 3000 ? '...(truncated)' : ''}`,
             metadata: {
               source: file.name || file.path || "file",
+              file_name: file.name || file.path || "file",
+              kind: "solution",
               type: "file",
               path: file.path || "",
               solution_name: solution?.solution_name || "Unknown"
@@ -110,7 +123,7 @@ ${file.content.substring(0, 3000)}${file.content.length > 3000 ? '...(truncated)
     const res = await fetch(`${RAG_BACKEND_URL}/rag/ingest-chunks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chunks }),
+      body: JSON.stringify({ chunks, dataset_id: datasetId, dataset_mode: "solution" }),
     });
 
     if (!res.ok) {

@@ -17,7 +17,8 @@
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.3.136",
     "markdown-it": "^14.1.0",
-    "playwright": "^1.43.1"
+    "playwright": "^1.43.1",
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -20,9 +20,82 @@
 }
 
 body {
-  background: var(--background);
+  background: #f7f7fb;
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+}
+
+/* Layout: responsive 4/2/1 grid with stable panel sizing */
+.app-shell {
+  max-width: 1680px;
+  margin: 16px auto;
+  padding: 0 12px 20px;
+  min-height: 100vh;
+}
+
+.app-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.2fr) minmax(240px, 1fr) minmax(280px, 1.2fr);
+  gap: 12px;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #e0e0e5;
+  border-radius: 12px;
+  padding: 14px;
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.panel-header {
+  font-weight: 700;
+  margin-bottom: 10px;
+  color: #222;
+}
+
+/* Panel content should scroll internally, not the full page */
+.panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Chat wrapping: prevent long strings/paths from overflowing */
+.chat-message,
+.chat-message p,
+.chat-message li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* Code blocks may scroll horizontally, but are constrained locally */
+.chat-message pre {
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.chat-message code {
+  word-break: break-word;
+}
+
+@media (max-width: 1200px) {
+  .app-grid {
+    grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr);
+  }
+}
+
+@media (max-width: 820px) {
+  .app-grid {
+    grid-template-columns: 1fr;
+  }
+  .panel {
+    min-height: 360px;
+  }
 }
 
 .dropzone {

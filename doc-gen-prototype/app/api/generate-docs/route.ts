@@ -122,46 +122,46 @@ function buildFilePrompt(file: IncomingFile) {
 export async function POST(req: Request) {
   try {
     const { model, systemPrompt, temperature, files, apiKey: bodyApiKey } = await req.json();
-    const apiKey = bodyApiKey || req.headers.get(\"x-openai-api-key\") || process.env.OPENAI_API_KEY;
-    
+    const apiKey = bodyApiKey || req.headers.get("x-openai-api-key") || process.env.OPENAI_API_KEY;
+
     if (!apiKey) {
       return NextResponse.json(
-        { error: \"OpenAI API key is required. Please add it in Advanced options.\" },
+        { error: "OpenAI API key is required. Please add it in Advanced options." },
         { status: 401 }
       );
     }
-    
-    const modelToUse = model || process.env.OPENAI_MODEL || \"gpt-4\";
-    const tempValue = typeof temperature === \"number\" ? temperature : 0.7;
+
+    const modelToUse = model || process.env.OPENAI_MODEL || "gpt-4";
+    const tempValue = typeof temperature === "number" ? temperature : 0.7;
     const fileArray: IncomingFile[] = Array.isArray(files) ? files : [];
 
     const systemMessage = systemPrompt
       ? `You are a documentation generator. Produce clear, structured text for PDFs. ${systemPrompt}`
-      : \"You are a documentation generator. Produce clear, structured text for PDFs.\";
+      : "You are a documentation generator. Produce clear, structured text for PDFs.";
 
     const outputs = [];
-  const errors = [];
+    const errors = [];
 
-  for (const file of fileArray) {
-    const prompt = [
-      \"Generate documentation for THIS file only.\",
-      \"Use only the provided content/metadata.\",
-      \"Output markdown with clear headings: Title, Overview, Key Entities, Assumptions, Summary.\",
-      buildFilePrompt(file),
-      \"Include overview, key entities, assumptions, and a concise summary.\",
-    ].join(\"\\n\\n\");
+    for (const file of fileArray) {
+      const prompt = [
+        "Generate documentation for THIS file only.",
+        "Use only the provided content/metadata.",
+        "Output markdown with clear headings: Title, Overview, Key Entities, Assumptions, Summary.",
+        buildFilePrompt(file),
+        "Include overview, key entities, assumptions, and a concise summary.",
+      ].join("\n\n");
 
-      const openaiRes = await fetch(\"https://api.openai.com/v1/chat/completions\", {
-        method: \"POST\",
-        headers: { 
-          \"Content-Type\": \"application/json\",
-          \"Authorization\": `Bearer ${apiKey}`,
+      const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
           model: modelToUse,
           messages: [
-            { role: \"system\", content: systemMessage },
-            { role: \"user\", content: prompt },
+            { role: "system", content: systemMessage },
+            { role: "user", content: prompt },
           ],
           temperature: tempValue,
         }),
@@ -169,14 +169,14 @@ export async function POST(req: Request) {
 
       if (!openaiRes.ok) {
         const text = await openaiRes.text();
-        errors.push({ file: file?.name, message: text || \"OpenAI API request failed\" });
+        errors.push({ file: file?.name, message: text || "OpenAI API request failed" });
         continue;
       }
 
       const data = await openaiRes.json();
       const markdown = data?.choices?.[0]?.message?.content;
       if (!markdown) {
-        errors.push({ file: file?.name, message: \"Empty response from model\" });
+        errors.push({ file: file?.name, message: "Empty response from model" });
         continue;
       }
 

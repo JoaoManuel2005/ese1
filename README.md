@@ -20,8 +20,8 @@ The solution aims to simplify documentation production for consultants, develope
 | **Tech Documentation Generation** | Automatically create structured technical documentation using a RAG pipeline and generative AI |
 | **Entity Relationship Diagram (ERD)** | Generate ERDs based on Dataverse/SharePoint/solution data |
 | **Solution Overview / Architecture Diagram** | Auto-generate architecture diagrams from solution metadata and user inputs |
-| **Export to WM Reply – Replybrary** | Output must be compatible with Replybary import format (defined template) |
-| **Tech Stack Alignment** | Backend & processing must use WM Reply-friendly stack: <br>• C# <br>• NodeJS <br>• JavaScript <br>• .NET |
+| **Export to Customer – target system** | Output must be compatible with target system import format (defined template) |
+| **Tech Stack Alignment** | Backend & processing must use Customer-friendly stack: <br>• C# <br>• NodeJS <br>• JavaScript <br>• .NET |
 | **User-Friendly Frontend** | UI/UX must support non-technical users via **Open WebUI** |
 
 ---
@@ -41,7 +41,7 @@ The solution aims to simplify documentation production for consultants, develope
 
 | Requirement | 
 |-------------|
-| Direct API integration with Replybrary system for auto-upload |
+| Direct API integration with target system system for auto-upload |
 | Conversational AI Agent UI to guide users through documentation creation |
 
 ---
@@ -75,7 +75,7 @@ RAG Pipeline (LLM + Vector DB)
 └─► Architecture Diagram Generator
 │
 ▼
-Export + Replybrary-formatted Output
+Export + target system-formatted Output
 
 ```
 
@@ -96,8 +96,8 @@ Export + Replybrary-formatted Output
 
 - Generates technical documentation from solution files with minimal user interaction
 - Outputs valid ERD and architecture diagrams  
-- Output importable into Replybrary  
-- Works with selected WM Reply tech stack  
+- Output importable into target system  
+- Works with selected Customer tech stack  
 - UI usable without technical training  
 
 ---
@@ -279,26 +279,26 @@ Note: CI is configured to pin `pip==25.2` and `pip-tools==7.5.1` so please use t
 
 **User Stories**
 
-**WMReply Developer**
+**Customer Developer**
 
 ```
-• The WMReply Developer would need to design future WMReply applications to work easily alongside
+• The Customer Developer would need to design future Customer applications to work easily alongside
  the documentation generator. Therefore the documentation generator must be adaptable to different
  technologies and allow for modifications.
   
-• If at some point in the future WMReply wanted to integrate our documentation generator into
+• If at some point in the future Customer wanted to integrate our documentation generator into
  their core workflow the Developer would need to access and understand the fundamental workings
  and source code from our application.
 ```
 
-_“As a WMReply Developer I want to use the documentation generator to quickly provide concise
+_“As a Customer Developer I want to use the documentation generator to quickly provide concise
  documentation from existing power platform solutions so that I can save time and focus on 
 development”_
 
-**WMReply Solution Architect**
+**Customer Solution Architect**
 
 ```
-• The WMReply Solution Architect will be the primary user of our Application. They will be 
+• The Customer Solution Architect will be the primary user of our Application. They will be 
 responsible for providing clients with detailed advice and solutions, and can use the 
 documentation generator to help them in this process.
 
@@ -306,14 +306,14 @@ documentation generator to help them in this process.
  flows, and integrations.
 ```
 
-_“As a Solution Architect at WMReply I want the Documentation generator to produce high-level 
+_“As a Solution Architect at Customer I want the Documentation generator to produce high-level 
 system architecture and ER diagrams so that I can quickly access solution design, validate 
 component relationships, and guide the development team efficiently”_
 
-**WMReply CEO**
+**Customer CEO**
 
 ```
-• The CEO of WMReply will have to become familiar with the application to ensure that it is 
+• The CEO of Customer will have to become familiar with the application to ensure that it is 
 functioning properly and is still fit to use within the company.
   
 • The CEO cannot be expected to have advanced technical knowledge so the documentation must be 
@@ -323,8 +323,19 @@ easy to digest and the UI must be intuitive.
 application must be efficient and easy to Understand.
 ```
 
-_“As the CEO of WMReply I want the documentation generator to produce summarized reports and key insights from power platform solutions so that I can quickly understand project scope and business impact, and assure alignment with company strategy without delving into technical details”_
+_“As the CEO of Customer I want the documentation generator to produce summarized reports and key insights from power platform solutions so that I can quickly understand project scope and business impact, and assure alignment with company strategy without delving into technical details”_
 
 # Wireframes
 
 ![Demo](images/Wireframe.jpeg)
+
+# Dataset Scoping + Reset Behavior
+
+This prototype isolates each upload session using a `dataset_id`. All ingestion and retrieval calls must include the active dataset id so previous uploads never leak into new chats. Clearing files or removing the last file should reset the dataset (server-side `/rag/reset`) and generate a new dataset id on the client before re-ingesting remaining files.
+
+# How To Debug Sources
+
+- Enable the dev dataset indicator in the UI to confirm the current dataset id.
+- Check that `/rag/status?dataset_id=<id>` shows the expected document count.
+- If sources look wrong, reset the dataset and re-ingest the selected files only.
+

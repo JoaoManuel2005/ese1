@@ -31,6 +31,8 @@ fi
 echo -e "${YELLOW}Installing Python dependencies...${NC}"
 source "$VENV_DIR/bin/activate"
 pip install --upgrade pip
+# Pin huggingface-hub to a version exposing `cached_download` for compatibility
+pip install "huggingface-hub==0.12.0"
 pip install -r "$BACKEND_DIR/requirements.txt"
 echo -e "${GREEN}✓ Python dependencies installed${NC}"
 echo ""

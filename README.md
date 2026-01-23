@@ -327,7 +327,7 @@ _“As the CEO of Customer I want the documentation generator to produce summari
 
 # Wireframes
 
-![Demo](images/Wireframe.jpeg)
+![Demo](images/wireframe2.jpeg)
 
 # Dataset Scoping + Reset Behavior
 

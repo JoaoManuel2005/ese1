@@ -4,7 +4,7 @@
 
 ## 1. Objective
 
-Build an application that automatically generates high-quality technical documentation from Microsoft Power Platform solution files, powered by a **Retrieval-Augmented Generation (RAG) pipeline** for backend processing and **Open WebUI** as the user-facing interface
+Build an application that automatically generates high-quality technical documentation from Microsoft Power Platform solution files, powered by a **Retrieval-Augmented Generation (RAG) pipeline** for backend processing and **NextJS** as the user-facing interface
 
 The solution aims to simplify documentation production for consultants, developers, and business users by analysing solution components and producing structured, import-ready outputs
 
@@ -22,7 +22,7 @@ The solution aims to simplify documentation production for consultants, develope
 | **Solution Overview / Architecture Diagram** | Auto-generate architecture diagrams from solution metadata and user inputs |
 | **Export to Customer – target system** | Output must be compatible with target system import format (defined template) |
 | **Tech Stack Alignment** | Backend & processing must use Customer-friendly stack: <br>• C# <br>• NodeJS <br>• JavaScript <br>• .NET |
-| **User-Friendly Frontend** | UI/UX must support non-technical users via **Open WebUI** |
+| **User-Friendly Frontend** | UI/UX must support non-technical users via **NextJS** |
 
 ---
 
@@ -59,7 +59,7 @@ The solution aims to simplify documentation production for consultants, develope
 
 ```
 
-User (Open WebUI) ─▶ API Layer (.NET / NodeJS)
+User (NextJS) ─▶ API Layer (.NET / NodeJS)
 │
 ▼
 File Upload / Inputs

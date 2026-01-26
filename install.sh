@@ -11,8 +11,8 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BACKEND_DIR="$PROJECT_DIR/rag-backend"
-FRONTEND_DIR="$PROJECT_DIR/doc-gen-prototype"
+BACKEND_DIR="$PROJECT_DIR/rag_backend"
+FRONTEND_DIR="$PROJECT_DIR/documentation_generator"
 VENV_DIR="$PROJECT_DIR/.venv"
 
 echo -e "${BLUE}==============================================================================${NC}"

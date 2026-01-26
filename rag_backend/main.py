@@ -14,6 +14,9 @@ from rag_pipeline import RAGPipeline
 from full_rag_pipeline import FullRAGPipeline
 from dotenv import load_dotenv
 from llm_client import chat_complete, resolve_model, resolve_provider
+from conversation_memory import conversation_memory
+from preference_extractor import extract_preferences_from_chat
+from smart_preference_extractor import extract_preferences_with_llm
 
 load_dotenv()
 
@@ -121,6 +124,8 @@ class GenerateDocRequest(BaseModel):
     doc_type: str = "markdown"
     provider: Optional[str] = None
     model: Optional[str] = None
+    dataset_id: Optional[str] = None  # For accessing chat context
+    user_preferences: Optional[str] = None  # User's document preferences from chat
 
 class GenerateDocResponse(BaseModel):
     documentation: str
@@ -221,13 +226,43 @@ async def generate_documentation(request: GenerateDocRequest):
         )
 
     try:
+        # Get user preferences from chat history - use FULL chat context
+        # ALWAYS prioritize conversation memory if dataset_id is available
+        user_preferences = None
+
+        if request.dataset_id:
+            # Use conversation memory first (this has the cumulative history)
+            chat_history = conversation_memory.get_history(request.dataset_id, max_messages=50)
+            print(f"[DEBUG] Found {len(chat_history)} messages in conversation memory for dataset {request.dataset_id}")
+            if chat_history:
+                # Use ONLY smart LLM-based extraction for natural ChatGPT-like conversation
+                user_preferences = extract_preferences_with_llm(chat_history)
+                print(f"[DEBUG] Extracted preferences: {user_preferences[:200] if user_preferences else 'None'}")
+
+        # Fallback: If no conversation memory, parse from request
+        if not user_preferences and request.user_preferences:
+            # Parse the user preferences string into structured format
+            # Convert "user: message\nassistant: response" format to list of dicts
+            lines = request.user_preferences.split('\n')
+            chat_messages = []
+            for line in lines:
+                if ': ' in line:
+                    role, content = line.split(': ', 1)
+                    if role.lower() in ['user', 'assistant']:
+                        chat_messages.append({'role': role.lower(), 'content': content})
+
+            if chat_messages:
+                # Use ONLY smart LLM-based extraction for natural ChatGPT-like conversation
+                user_preferences = extract_preferences_with_llm(chat_messages)
+
         documentation = await rag_pipeline.generate(
             solution=request.solution,
             doc_type=request.doc_type,
             provider_override=provider,
             model_override=model,
+            user_preferences=user_preferences,
         )
-        
+
         return GenerateDocResponse(
             documentation=documentation,
             format=request.doc_type
@@ -501,6 +536,7 @@ class RAGRetrieveRequest(BaseModel):
     model: Optional[str] = None
     dataset_id: Optional[str] = None
     focus_files: Optional[List[str]] = None
+    conversation_history: Optional[List[Dict[str, str]]] = None  # Chat history for context
 
 class RetrievedChunk(BaseModel):
     source: str
@@ -557,31 +593,54 @@ async def rag_retrieve(request: RAGRetrieveRequest):
 
         answer = None
         if retrieved_chunks:
+            # Store user question in conversation memory
+            conversation_memory.add_message(dataset_id, "user", request.question)
+
             if dataset_mode == "solution":
                 system_prompt = """You are a helpful assistant that answers questions about Power Platform solutions.
-Answer questions clearly and naturally based on the provided context.
+Answer questions clearly and naturally based on the provided context and conversation history.
 Be concise but thorough. If the context contains technical XML data, explain it in plain English.
 Always mention what you found (e.g., "The bot uses authentication mode 2" or "I found 5 Power Automate flows").
 If you can't find the answer in the context, say so.
-Do not include sections labeled Sources, Evidence, or Citations, and do not list file paths."""
+Do not include sections labeled Sources, Evidence, or Citations, and do not list file paths.
+Use previous conversation context when relevant to provide better answers."""
             else:
                 system_prompt = """You are a general document assistant.
-Answer only from the uploaded documents.
+Answer only from the uploaded documents and conversation history.
 Do not assume any domain, product, company, or vendor unless it appears in the context.
 If you cannot find the answer in the documents, say so.
-Do not include sections labeled Sources, Evidence, or Citations, and do not list file paths."""
+Do not include sections labeled Sources, Evidence, or Citations, and do not list file paths.
+Use previous conversation context when relevant to provide better answers."""
+
             context_parts = []
             for i, chunk in enumerate(retrieved_chunks):
                 source = chunk.get("metadata", {}).get("source", f"Source {i+1}")
                 content = chunk.get("content", "")[:1500]
                 context_parts.append(f"[{source}]\n{content}")
             context = "\n\n---\n\n".join(context_parts)
+
+            # Add conversation history to context
+            conversation_context = ""
+            if request.conversation_history:
+                # Use provided history (from frontend)
+                history_parts = []
+                for msg in request.conversation_history[-5:]:  # Last 5 messages
+                    history_parts.append(f"{msg.get('role', 'user')}: {msg.get('content', '')}")
+                if history_parts:
+                    conversation_context = "\n\nPrevious conversation:\n" + "\n".join(history_parts) + "\n"
+            else:
+                # Use server-side memory
+                conv_summary = conversation_memory.get_context_summary(dataset_id, max_chars=1000)
+                if conv_summary:
+                    conversation_context = f"\n\nPrevious conversation:\n{conv_summary}\n"
+
             file_hint = ""
             if dataset_mode == "generic":
                 files_list = ", ".join(sorted(set(dataset_files))) if dataset_files else ""
                 if files_list:
                     file_hint = f"Available files: {files_list}\n\n"
-            user_prompt = f"{file_hint}Context:\n{context}\n\n---\n\nQuestion: {request.question}"
+
+            user_prompt = f"{file_hint}Context:\n{context}{conversation_context}\n\n---\n\nCurrent Question: {request.question}"
 
             try:
                 answer = chat_complete(
@@ -590,6 +649,10 @@ Do not include sections labeled Sources, Evidence, or Citations, and do not list
                     provider_override=provider,
                     model_override=model,
                 )
+
+                # Store assistant answer in conversation memory
+                if answer:
+                    conversation_memory.add_message(dataset_id, "assistant", answer)
             except Exception as llm_error:  # noqa: BLE001
                 print(f"LLM error: {llm_error}")
                 answer = None

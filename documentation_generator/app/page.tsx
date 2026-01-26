@@ -673,6 +673,12 @@ export default function Page() {
 
     // Step 3: Generate documentation with RAG pipeline (API key from backend .env)
     const modelForProvider = llmSelection.model;
+
+    // Extract user preferences from chat history
+    const userPreferences = chat
+      .map(msg => `${msg.role}: ${msg.content}`)
+      .join('\n');
+
     const genRes = await fetch("/api/generate-solution-docs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -681,6 +687,8 @@ export default function Page() {
         doc_type: "markdown",
         provider: llmSelection.provider,
         model: modelForProvider,
+        dataset_id: activeDatasetId,
+        user_preferences: userPreferences || undefined,
       }),
     });
 
@@ -827,6 +835,20 @@ export default function Page() {
         };
         upsertOutput(output);
         setSelectedOutputId(output.id);
+
+        // Add success message to chat if there are existing chat messages
+        if (chat.length > 0) {
+          const successId = createMessageId();
+          setChat((c) => [
+            ...c,
+            {
+              id: successId,
+              role: "assistant",
+              content: `✅ Document regenerated successfully! Your preferences have been applied. Check the Output Files panel to view the updated PDF.`,
+            },
+          ]);
+        }
+
         return;
       }
 
@@ -926,6 +948,14 @@ export default function Page() {
   async function send() {
     const text = message.trim();
     if (!text || loading) return;
+
+    // Check if user wants to clear the chat
+    if (text.toLowerCase() === 'clear') {
+      setChat([]);
+      setMessage("");
+      return;
+    }
+
     const activeDatasetId = datasetId || createDatasetId();
     if (!datasetId) {
       setDatasetId(activeDatasetId);
@@ -947,6 +977,13 @@ export default function Page() {
       // Always use FREE RAG mode - queries ChromaDB for context
       const modelForProvider = llmSelection.model;
       const focusFiles = getFocusFiles(text, files);
+
+      // Send conversation history for context
+      const conversationHistory = chat.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+
       const ragRes = await fetch("/api/rag-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -956,6 +993,7 @@ export default function Page() {
           model: modelForProvider,
           dataset_id: activeDatasetId,
           focus_files: focusFiles.length ? focusFiles : undefined,
+          conversation_history: conversationHistory,
         }),
       });
 
@@ -978,15 +1016,70 @@ export default function Page() {
 
       const sources = Array.isArray(ragData.sources) ? ragData.sources : [];
 
-      // Update the assistant message with RAG response
+      // Check if user wants to regenerate documentation BEFORE updating chat
+      const lowerText = text.toLowerCase();
+      const regenerateKeywords = [
+        'regenerate', 'generate', 're-generate',
+        'update doc', 'update documentation', 'update the doc',
+        'create doc', 'create documentation',
+        'please update', 'refresh doc', 'refresh documentation'
+      ];
+
+      // Also detect document modification requests (more flexible patterns)
+      const documentModificationPatterns = [
+        /\bexpand\s+(?:on\s+)?(?:the\s+)?/i,
+        /\bremove\s+(?:the\s+)?/i,
+        /\bdon'?t\s+(?:want|need|include)/i,
+        /\bskip\s+(?:the\s+)?/i,
+        /\bfocus\s+(?:on\s+)?(?:the\s+)?/i,
+        /\bmore\s+(?:details|info|on|about)/i,
+        /\bgive\s+more/i,
+        /\belaborate/i,
+        /\bneed\s+(?:more|details|info)/i,
+        /\bwant\s+(?:more|details|info|to\s+see)/i,
+        /\b(?:less|fewer)\s+(?:details?|info)/i,
+        /\b(?:not|isn'?t)\s+important/i,
+        /\bway\s+more/i,
+        /\btell\s+me\s+more/i,
+        /\bmake\s+(?:the\s+)?.*?\s+more\s+(?:detailed|comprehensive|thorough)/i,
+        /\bmake\s+(?:the\s+)?.*?\s+(?:shorter|longer|brief)/i,
+        /\badd\s+more\s+(?:details?|info)/i,
+        /\binclude\s+more\s+(?:details?|info)/i,
+        /\badd\s+(?:a\s+)?.*?\s+section/i,
+        /\binclude\s+(?:a\s+)?.*?\s+section/i,
+        /\bcreate\s+(?:a\s+)?.*?\s+section/i,
+        /\bneed\s+(?:a\s+)?.*?\s+section/i,
+        /\bwant\s+(?:a\s+)?.*?\s+section/i,
+      ];
+
+      // Check if message contains regenerate keywords OR document modification patterns
+      const shouldRegenerate = regenerateKeywords.some(keyword => lowerText.includes(keyword)) ||
+                               documentModificationPatterns.some(pattern => pattern.test(lowerText));
+
+      // If this is a regeneration request, override the assistant's response
+      let assistantMessage = ragData.answer || "No response";
+      if (shouldRegenerate && hasSolutionFile() && outputs.length > 0) {
+        assistantMessage = "🔄 Regenerating document with your preferences... This will take a moment.";
+      }
+
+      // Update the assistant message with appropriate response
       setChat((c) =>
         c.map((m) =>
           m.id === assistantId
-            ? { ...m, content: ragData.answer || "No response", sources }
+            ? { ...m, content: assistantMessage, sources: shouldRegenerate ? [] : sources }
             : m
         )
       );
-      
+
+      if (shouldRegenerate && hasSolutionFile() && outputs.length > 0) {
+        // Automatically regenerate documentation with current chat context
+        setTimeout(() => {
+          void generateDocs();
+        }, 500); // Small delay to let chat update first
+        // Don't set loading to false - generateDocs will handle it
+        return;
+      }
+
     } catch (e: any) {
       const msg = e?.message ?? "Unknown error";
 

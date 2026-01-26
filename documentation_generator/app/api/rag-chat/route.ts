@@ -5,7 +5,7 @@ const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8000";
 
 export async function POST(req: Request) {
   try {
-    const { message, provider, model, dataset_id: datasetId, focus_files: focusFiles } = await req.json();
+    const { message, provider, model, dataset_id: datasetId, focus_files: focusFiles, conversation_history: conversationHistory } = await req.json();
     if (!datasetId) {
       return NextResponse.json(
         { error: "No dataset selected. Upload files and try again." },
@@ -24,6 +24,7 @@ export async function POST(req: Request) {
         model,
         dataset_id: datasetId,
         focus_files: focusFiles,
+        conversation_history: conversationHistory,
       }),
     });
 

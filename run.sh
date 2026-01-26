@@ -11,8 +11,8 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BACKEND_DIR="$PROJECT_DIR/rag-backend"
-FRONTEND_DIR="$PROJECT_DIR/doc-gen-prototype"
+BACKEND_DIR="$PROJECT_DIR/rag_backend"
+FRONTEND_DIR="$PROJECT_DIR/documentation_generator"
 VENV_DIR="$PROJECT_DIR/.venv"
 
 echo -e "${BLUE}==============================================================================${NC}"
@@ -23,7 +23,7 @@ echo ""
 # Check if virtual environment exists
 if [ ! -d "$VENV_DIR" ]; then
     echo -e "${RED}Error: Virtual environment not found at $VENV_DIR${NC}"
-    echo -e "${YELLOW}Run: python3 -m venv .venv && source .venv/bin/activate && pip install -r rag-backend/requirements.txt${NC}"
+    echo -e "${YELLOW}Run: python3 -m venv .venv && source .venv/bin/activate && pip install -r rag_backend/requirements.txt${NC}"
     exit 1
 fi
 

@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BACKEND_DIR="$PROJECT_DIR/rag-backend"
+BACKEND_DIR="$PROJECT_DIR/rag_backend"
 CHUNKS_DIR="$PROJECT_DIR/chunks"
 
 echo -e "${BLUE}==============================================================================${NC}"

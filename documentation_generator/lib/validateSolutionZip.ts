@@ -2,7 +2,7 @@
  * Validate that a zip file is a Power Platform solution export
  */
 
-import JSZip from "jszip";
+import * as JSZip from "jszip";
 
 export interface ValidationResult {
   ok: boolean;

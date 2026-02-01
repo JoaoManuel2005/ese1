@@ -1,3 +1,22 @@
+# TinyLlama (Local LLM) Integration
+
+To use TinyLlama as your local LLM (without pulling the full Ollama model set):
+
+1. Ensure you have Docker and Docker Compose installed.
+2. The `tinyllama` service in `docker-compose.yml` will start an Ollama container and only pull the TinyLlama model.
+3. The backend is preconfigured to use this container as its local LLM endpoint.
+4. To start all services:
+
+	 ```sh
+	 docker compose up --build
+	 ```
+
+This will:
+	- Start the TinyLlama Ollama container (pulling only TinyLlama)
+	- Set the backend to use TinyLlama for local LLM tasks
+	- Avoid downloading larger models or the full Ollama LLM set
+
+You can adjust the model or endpoint in the `docker-compose.yml` if needed.
 # ESE1 
 
 # Power Platform Documentation Generator

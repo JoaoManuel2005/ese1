@@ -55,26 +55,46 @@ def chat_complete(
     model = config["model"]
 
     if provider == "local":
+        # Use /api/generate for tinyllama, fallback to /api/chat for others
         try:
-            resp = requests.post(
-                f"{config['base_url']}/api/chat",
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    "stream": False,
-                },
-                timeout=120,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            message = data.get("message", {})
-            content = message.get("content")
-            if not content:
-                raise ValueError("Local LLM returned no content")
-            return content
+            if model.startswith("tinyllama"):
+                # Use /api/generate endpoint for TinyLlama
+                resp = requests.post(
+                    f"{config['base_url']}/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": f"{system}\n{user}",
+                        "stream": False,
+                    },
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                content = data.get("response")
+                if not content:
+                    raise ValueError("Local LLM returned no content")
+                return content
+            else:
+                # Use /api/chat for other models
+                resp = requests.post(
+                    f"{config['base_url']}/api/chat",
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        "stream": False,
+                    },
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                message = data.get("message", {})
+                content = message.get("content")
+                if not content:
+                    raise ValueError("Local LLM returned no content")
+                return content
         except requests.RequestException as exc:
             raise RuntimeError(
                 f"Local LLM not reachable at {config['base_url']}. "

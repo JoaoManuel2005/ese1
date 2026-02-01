@@ -20,8 +20,8 @@ services:
       - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-openai}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o-mini}
       # Local LLM (Ollama) settings - use host network to access Ollama on host
-      - LOCAL_LLM_BASE_URL=${LOCAL_LLM_BASE_URL:-http://tinyllama:11434}
-      - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-tinyllama}
+      - LOCAL_LLM_BASE_URL=${LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434}
+      - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-llama3.1:8b}
     volumes:
       # Persist ChromaDB data
       - rag_chroma_data:/app/rag_chroma_db
@@ -56,39 +56,14 @@ services:
     depends_on:
       rag-backend:
         condition: service_healthy
-      tinyllama:
-        condition: service_started
     networks:
       - docgen-network
     restart: unless-stopped
-
-
-  # TinyLlama-only Ollama service with auto-pull
-  tinyllama:
-    image: ollama/ollama
-    container_name: tinyllama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull tinyllama && wait"]
-    networks:
-      - docgen-network
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 
 networks:
   docgen-network:
     driver: bridge
 
 volumes:
-  ollama_data:
-    driver: local
   rag_chroma_data:
     driver: local

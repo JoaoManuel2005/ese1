@@ -3,8 +3,16 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useEffect, useRef, useState } from "react";
+import useFiles from "./hooks/useFiles";
+import useModels from "./hooks/useModels";
+import useRag from "./hooks/useRag";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { classifyUploads, UploadClassification } from "../lib/classifyUploads";
+import FileUploader from "./components/FileUploader";
+import ModelProviderControls from "./components/ModelProviderControls";
+import ChatWindow from "./components/ChatWindow";
+import OutputsList from "./components/OutputsList";
+import PreviewPanel from "./components/PreviewPanel";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -51,7 +59,7 @@ const DEFAULT_TEMP = 0.5;
 
 export default function Page() {
   const [message, setMessage] = useState("");
-  const [files, setFiles] = useState<AttachedFile[]>([]);
+  const { files, setFiles, updateFileText } = useFiles([]);
   const [outputs, setOutputs] = useState<OutputFile[]>([]);
   const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -71,7 +79,6 @@ export default function Page() {
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
   const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number; provider?: string; model?: string; backend_online?: boolean } | null>(null);
   const [corpusType, setCorpusType] = useState<"solution_zip" | "docs" | "unknown" | null>(null);
   const [corpusReason, setCorpusReason] = useState<string | null>(null);
@@ -81,7 +88,6 @@ export default function Page() {
   const [datasetId, setDatasetId] = useState("");
   const [isClient, setIsClient] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
 
   function mapProviderError(msg: string, status?: number) {
@@ -502,13 +508,13 @@ export default function Page() {
     return ext === SOLUTION_EXT;
   }
 
-  async function addFiles(fileList: FileList | null) {
+  async function addFiles(fileList: FileList | File[] | null) {
     if (!fileList) return;
     if (files.length === 0) {
       setDatasetId(createDatasetId());
       setDocsIngestSignature(null);
     }
-    const incoming = Array.from(fileList);
+    const incoming = Array.isArray(fileList) ? fileList : Array.from(fileList);
 
     const processed = await Promise.all(
       incoming.map(async (file) => {
@@ -945,8 +951,8 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOutputId, outputs]);
 
-  async function send() {
-    const text = message.trim();
+  async function send(textParam?: string) {
+    const text = (textParam ?? message).trim();
     if (!text || loading) return;
 
     // Check if user wants to clear the chat
@@ -1145,147 +1151,14 @@ export default function Page() {
       {/* Responsive grid: 4 columns desktop, 2 columns medium, 1 column small */}
       <div className="app-grid">
         <section className="panel">
-          <div className="panel-header">Input Files</div>
-          <div
-            className={`dropzone${isDragging ? " dragging" : ""}`}
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setIsDragging(true);
-            }}
-            onDragLeave={(e) => {
-              e.preventDefault();
-              setIsDragging(false);
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              setIsDragging(false);
-              void addFiles(e.dataTransfer.files);
-            }}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              style={{ display: "none" }}
-              onChange={(e) => void addFiles(e.target.files)}
-            />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <div>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>Upload or drop files</div>
-                <div style={{ fontSize: 13, color: "#555" }}>
-                  Docs (txt, md, json) or <strong>.zip solution files</strong>. {isDragging ? "Drop files here" : "Click to choose or drag & drop."}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                style={{
-                  border: "1px solid #d0d0d7",
-                  background: "#fff",
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  cursor: "pointer",
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-                }}
-              >
-                Browse
-              </button>
-            </div>
-          </div>
-
-          {files.length > 0 ? (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <div style={{ fontWeight: 600 }}>Selected files</div>
-                <button
-                  onClick={clearFiles}
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    color: "#1f7aec",
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
-                >
-                  Clear all
-                </button>
-              </div>
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-                {files.map((file, index) => (
-                  <li
-                    key={`${file.name}-${index}-${file.size}`}
-                    style={{
-                      border: "1px solid #e0e0e5",
-                      borderRadius: 10,
-                      padding: 10,
-                      background: "#fafbff",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <div style={{ display: "grid", gap: 4 }}>
-                      <div style={{ fontWeight: 600 }}>{file.name}</div>
-                      <div style={{ fontSize: 12, color: "#555" }}>
-                        {file.type || "unknown"} • {formatSize(file.size)}
-                      </div>
-                      <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12 }}>
-                        {file.error ? (
-                          <span style={{ color: "#a00" }}>{file.error}</span>
-                        ) : file.name.toLowerCase().endsWith(".zip") ? (
-                          <span style={{ color: "#1f7aec", fontWeight: 500 }}>📦 Power Platform Solution (PAC CLI + RAG)</span>
-                        ) : file.isText ? (
-                          <>
-                            <span style={{ color: "#0a6" }}>Text loaded</span>
-                            {file.truncated && <span style={{ color: "#a60" }}>(truncated)</span>}
-                          </>
-                        ) : (
-                          <span style={{ color: "#555" }}>Metadata only (preview not supported)</span>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => removeFile(index)}
-                      aria-label={`Remove ${file.name}`}
-                      style={{
-                        border: "none",
-                        background: "#fff",
-                        color: "#a00",
-                        borderRadius: 8,
-                        padding: "6px 10px",
-                        cursor: "pointer",
-                        boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <div style={{ marginTop: 8, fontSize: 12, color: "#555" }}>
-                {files.length} file{files.length !== 1 ? "s" : ""} •{" "}
-                {formatSize(files.reduce((sum, f) => sum + f.size, 0))}
-              </div>
-              {displayType && (
-                <div style={{ marginTop: 6, fontSize: 12, color: "#333" }}>
-                  <span style={{ padding: "2px 6px", borderRadius: 6, background: "#eef2ff", border: "1px solid #c7d2fe" }}>
-                    {displayType === "solution_zip" || displayType === "power_platform_solution_zip"
-                      ? "Detected: Power Platform solution"
-                      : displayType === "docs" || displayType === "generic_docs"
-                      ? "Detected: Documents"
-                      : "Detected: Unknown"}
-                  </span>
-                  {displayReason && (
-                    <span style={{ marginLeft: 6, color: "#666" }}>{displayReason}</span>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{ ...placeholderBox, marginTop: 12 }}>No files selected yet.</div>
-          )}
+        <FileUploader
+          files={files}
+          onAdd={(fl) => addFiles(fl)}
+          onRemove={removeFile}
+          clearFiles={clearFiles}
+          displayType={corpusType}
+          displayReason={corpusReason}
+        />
         </section>
 
         <section className="panel">
@@ -1293,247 +1166,38 @@ export default function Page() {
 
           <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
             <div style={{ display: "grid", gap: 6 }}>
-              <button
-                type="button"
-                aria-expanded={showAdvanced}
-                onClick={() => setShowAdvanced((v) => !v)}
-                style={{
-                  border: "1px solid #ddd",
-                  background: "#fff",
-                  padding: "8px 10px",
-                  borderRadius: 10,
-                  cursor: "pointer",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  fontWeight: 600,
-                }}
-              >
-                Advanced options
-                <span style={{ fontSize: 12, color: "#555" }}>
-                  {showAdvanced ? "▲" : `Provider: ${provider === "cloud" ? "Cloud" : "Local"}`}
-                </span>
-              </button>
-              {showAdvanced && (
-                <div style={{ display: "grid", gap: 10, paddingTop: 4 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <label htmlFor="provider-select" style={{ fontWeight: 600 }}>Provider</label>
-                    <select
-                      id="provider-select"
-                      value={provider}
-                      onChange={(e) => setProvider(e.target.value === "local" ? "local" : "cloud")}
-                      style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", minWidth: 200, background: "#fff" }}
-                    >
-                      <option value="cloud">Cloud (OpenAI API)</option>
-                      <option value="local">Local (Ollama API)</option>
-                    </select>
-                  </div>
-
-                  {provider === "cloud" ? (
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <label htmlFor="model-select" style={{ fontWeight: 600 }}>Model</label>
-                      <select
-                        id="model-select"
-                        value={selectedModel}
-                        onChange={(e) => setSelectedModel(e.target.value)}
-                        disabled={modelsLoading || (!models.length && !selectedModel)}
-                        style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", minWidth: 180, background: "#fff" }}
-                      >
-                        {modelsLoading && <option>Loading models...</option>}
-                        {!modelsLoading && models.map((m) => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                        {!modelsLoading && models.length === 0 && (
-                          <option value={selectedModel || ""}>{selectedModel || "Default (env)"}</option>
-                        )}
-                      </select>
-                      {modelsError && (
-                        <span style={{ fontSize: 12, color: "#a00" }}>
-                          Model list unavailable. Using default.
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <label htmlFor="local-model-select" style={{ fontWeight: 600 }}>Local model</label>
-                        <select
-                          id="local-model-select"
-                          value={useCustomLocalModel ? "custom" : localModel}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (val === "custom") {
-                              setUseCustomLocalModel(true);
-                            } else {
-                              setUseCustomLocalModel(false);
-                              setLocalModel(val);
-                            }
-                          }}
-                          disabled={localModelsLoading}
-                          style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", minWidth: 200, background: "#fff" }}
-                        >
-                          {localModelsLoading && <option>Loading local models...</option>}
-                          {!localModelsLoading && localModels.map((m) => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                          <option value="custom">Custom model...</option>
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() => fetchLocalModels()}
-                          aria-label="Refresh local models"
-                          style={{
-                            border: "1px solid #ddd",
-                            background: "#fff",
-                            padding: "6px 8px",
-                            borderRadius: 8,
-                            cursor: "pointer",
-                            fontSize: 12,
-                          }}
-                        >
-                          ⟳
-                        </button>
-                      </div>
-                      {localModelsError && (
-                        <span style={{ fontSize: 12, color: "#a00" }}>
-                          Couldn't detect local models. Ensure Ollama is running.
-                        </span>
-                      )}
-                      {useCustomLocalModel && (
-                        <input
-                          id="local-model"
-                          value={localModel}
-                          onChange={(e) => setLocalModel(e.target.value)}
-                          placeholder="llama3.1:8b"
-                          style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", minWidth: 180, background: "#fff" }}
-                        />
-                      )}
-                    </div>
-                  )}
-
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid #e0e0e0" }}>
-                    <div style={{ fontWeight: 600, color: "#0a6b3d" }}>
-                      API Key (Secure)
-                    </div>
-                    <div style={{ fontSize: 12, color: "#555" }}>
-                      OpenAI API key is stored securely in backend .env file. No browser storage needed.
-                    </div>
-                  </div>
-
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid #e0e0e0" }}>
-                    <div style={{ fontWeight: 600, color: "#0a6b3d" }}>
-                      RAG Mode (FREE)
-                    </div>
-                    <div style={{ fontSize: 12, color: "#555" }}>
-                      Chat uses FREE hybrid search (Sentence-BERT + BM25). No API key needed for chat!
-                    </div>
-                  </div>
-                </div>
-              )}
+              <ModelProviderControls
+                provider={provider}
+                setProvider={setProvider}
+                models={models}
+                selectedModel={selectedModel}
+                setSelectedModel={setSelectedModel}
+                modelsLoading={modelsLoading}
+                modelsError={modelsError}
+                localModels={localModels}
+                localModel={localModel}
+                setLocalModel={setLocalModel}
+                localModelsLoading={localModelsLoading}
+                localModelsError={localModelsError}
+                useCustomLocalModel={useCustomLocalModel}
+                setUseCustomLocalModel={setUseCustomLocalModel}
+                fetchLocalModels={fetchLocalModels}
+                showAdvanced={showAdvanced}
+                setShowAdvanced={setShowAdvanced}
+              />
             </div>
           </div>
 
-          {/* Chat history scrolls inside the panel to avoid page overflow */}
-          <div className="panel-scroll" style={{ border: "1px solid #e0e0e5", borderRadius: 12, padding: 12, background: "#fff" }}>
-            <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
-              {displayType === "docs" || displayType === "generic_docs"
-                ? "Chat answers from your uploaded documents (general mode)."
-                : displayType === "solution_zip" || displayType === "power_platform_solution_zip"
-                ? "Chat answers from solution components (Power Platform mode)."
-                : "Chat answers from the knowledge base once files are ingested."}
-            </div>
-            {chat.map((m) => (
-              <div key={m.id} style={{ margin: "12px 0" }}>
-                <b>{m.role}:</b>
-                <div style={{ marginTop: 6 }}>
-                  {m.role === "assistant" ? (
-                    <div style={{ display: "grid", gap: 8 }}>
-                      <div className="chat-message">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                      </div>
-                      {m.sources && m.sources.length > 0 && (
-                        <div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setExpandedSources((prev) => ({
-                                ...prev,
-                                [m.id]: !prev[m.id],
-                              }))
-                            }
-                            style={{
-                              border: "1px solid #d0d0d7",
-                              background: "#fff",
-                              padding: "4px 8px",
-                              borderRadius: 8,
-                              cursor: "pointer",
-                              fontSize: 12,
-                            }}
-                          >
-                            {expandedSources[m.id] ? "Hide sources" : `Sources (${m.sources.length})`}
-                          </button>
-                          {expandedSources[m.id] && (
-                            <ul style={{ marginTop: 8, paddingLeft: 18, fontSize: 12, color: "#444" }}>
-                              {m.sources.map((source, idx) => (
-                                <li key={`${m.id}-source-${idx}`}>{source.label}</li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="chat-message">{m.content}</div>
-                  )}
-                </div>
-              </div>
-            ))}
-
-            {loading && <div><b>assistant:</b> ...</div>}
-             <div ref={bottomRef} />
-          </div>
-
-          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault(); // stop newline
-                  send();
-                }
-                // Shift+Enter will naturally insert a newline
-              }}
-              placeholder="Type a message"
-              rows={2}
-              style={{
-                flex: 1,
-                padding: 12,
-                borderRadius: 10,
-                border: "1px solid #ddd",
-                resize: "vertical",
-                lineHeight: 1.4,
-                background: "#fff",
-              }}
-            />
-
-            <button
-              onClick={send}
-              disabled={loading}
-              style={{
-                padding: "12px 16px",
-                borderRadius: 10,
-                opacity: loading ? 0.6 : 1,
-                cursor: loading ? "not-allowed" : "pointer",
-                background: "#1f7aec",
-                color: "#fff",
-                border: "none",
-              }}
-            >
-              {loading ? "Sending..." : "Send"}
-            </button>
-
-          </div>
+          <ChatWindow
+            chat={chat}
+            loading={loading}
+            onSend={(txt) => void send(txt)}
+            onClear={() => { setChat([]); setMessage(""); }}
+            expandedSources={expandedSources}
+            onToggleSources={(id) => setExpandedSources((prev) => ({ ...prev, [id]: !prev[id] }))}
+            bottomRef={bottomRef}
+            displayType={displayType}
+          />
         </section>
 
         <section className="panel">
@@ -1589,117 +1253,18 @@ export default function Page() {
             </div>
           )}
 
-          {outputs.length === 0 ? (
-            <div style={placeholderBox}>No generated outputs yet.</div>
-          ) : (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
-              {outputs.map((out) => (
-                <li
-                  key={out.id}
-                  onClick={() => setSelectedOutputId(out.id)}
-                  style={{
-                    border: out.id === selectedOutputId ? "1px solid #1f7aec" : "1px solid #e0e0e5",
-                    background: out.id === selectedOutputId ? "#f0f6ff" : "#fafbff",
-                    borderRadius: 10,
-                    padding: 10,
-                    cursor: "pointer",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{out.filename}</div>
-                    <div style={{ fontSize: 12, color: "#555" }}>
-                      {new Date(out.createdAt).toLocaleTimeString()}
-                    </div>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      downloadOutput(out);
-                    }}
-                    style={{
-                      border: "1px solid #d0d0d7",
-                      background: "#fff",
-                      padding: "6px 10px",
-                      borderRadius: 8,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Download
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <OutputsList outputs={outputs} selectedOutputId={selectedOutputId} onSelect={(id) => setSelectedOutputId(id)} onDownload={(o) => downloadOutput(o)} />
         </section>
 
         <section className="panel">
           <div className="panel-header">File Preview</div>
-          {(() => {
-            const out = getSelectedOutput();
-            if (!out) {
-              return <div style={placeholderBox}>Select an output file to preview its contents.</div>;
-            }
-            return (
-              <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ fontWeight: 600 }}>{out.filename}</div>
-                <div style={{ fontSize: 12, color: "#555" }}>
-                  Generated at {new Date(out.createdAt).toLocaleString()}
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button
-                    onClick={() => downloadOutput(out)}
-                    style={{
-                      padding: "6px 10px",
-                      borderRadius: 8,
-                      border: "1px solid #d0d0d7",
-                      background: "#fff",
-                      cursor: "pointer",
-                      fontSize: 12,
-                    }}
-                  >
-                    Download
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (previewBlobUrlRef.current) {
-                        window.open(previewBlobUrlRef.current, "_blank");
-                      }
-                    }}
-                    style={{
-                      padding: "6px 10px",
-                      borderRadius: 8,
-                      border: "1px solid #d0d0d7",
-                      background: "#fff",
-                      cursor: "pointer",
-                      fontSize: 12,
-                    }}
-                  >
-                    Open PDF in new tab
-                  </button>
-                </div>
-                {pdfRenderError && (
-                  <div style={{ color: "#a00", fontSize: 12 }}>
-                    {pdfRenderError}. You can still open the PDF in a new tab.
-                  </div>
-                )}
-                <div
-                  style={{
-                    border: "1px solid #e0e0e5",
-                    borderRadius: 10,
-                    padding: 10,
-                    background: "#fafbff",
-                    maxHeight: 500,
-                    overflowY: "auto",
-                  }}
-                  dangerouslySetInnerHTML={{ __html: out.htmlPreview || "<p>Preview unavailable.</p>" }}
-                />
-              </div>
-            );
-          })()}
+          <PreviewPanel
+            out={getSelectedOutput()}
+            previewBlobUrl={previewBlobUrlRef.current}
+            pdfRenderError={pdfRenderError}
+            onDownload={(o) => downloadOutput(o)}
+            onOpenPdf={() => { if (previewBlobUrlRef.current) window.open(previewBlobUrlRef.current, "_blank"); }}
+          />
         </section>
       </div>
     </main>

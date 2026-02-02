@@ -20,7 +20,6 @@ work/
 
 # PAC CLI extracted files (temporary solution parsing data)
 pac-workspace/
-pac-cli/
 
 # Next.js build output
 .next/

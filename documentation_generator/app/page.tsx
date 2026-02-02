@@ -10,6 +10,7 @@ import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { classifyUploads, UploadClassification } from "../lib/classifyUploads";
 import FileUploader from "./components/FileUploader";
 import ModelProviderControls from "./components/ModelProviderControls";
+import SettingsButton from "./components/SettingsButton";
 import ChatWindow from "./components/ChatWindow";
 import OutputsList from "./components/OutputsList";
 import PreviewPanel from "./components/PreviewPanel";
@@ -78,7 +79,7 @@ export default function Page() {
   const [useCustomLocalModel, setUseCustomLocalModel] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  
   const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number; provider?: string; model?: string; backend_online?: boolean } | null>(null);
   const [corpusType, setCorpusType] = useState<"solution_zip" | "docs" | "unknown" | null>(null);
   const [corpusReason, setCorpusReason] = useState<string | null>(null);
@@ -1118,7 +1119,26 @@ export default function Page() {
   return (
     <main className="app-shell" style={{ fontFamily: "system-ui" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation Generator</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <SettingsButton
+            provider={provider}
+            setProvider={setProvider}
+            models={models}
+            selectedModel={selectedModel}
+            setSelectedModel={setSelectedModel}
+            modelsLoading={modelsLoading}
+            modelsError={modelsError}
+            localModels={localModels}
+            localModel={localModel}
+            setLocalModel={setLocalModel}
+            localModelsLoading={localModelsLoading}
+            localModelsError={localModelsError}
+            useCustomLocalModel={useCustomLocalModel}
+            setUseCustomLocalModel={setUseCustomLocalModel}
+            fetchLocalModels={fetchLocalModels}
+          />
+          <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation Generator</h1>
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {/* RAG Status Badge */}
           <div style={{
@@ -1182,8 +1202,6 @@ export default function Page() {
                 useCustomLocalModel={useCustomLocalModel}
                 setUseCustomLocalModel={setUseCustomLocalModel}
                 fetchLocalModels={fetchLocalModels}
-                showAdvanced={showAdvanced}
-                setShowAdvanced={setShowAdvanced}
               />
             </div>
           </div>

@@ -59,11 +59,21 @@ const SettingsButton: FC<Props> = ({
     if (theme === "dark") {
       document.documentElement.style.setProperty("--background", "#0a0a0a");
       document.documentElement.style.setProperty("--foreground", "#ffffff");
+      document.documentElement.style.setProperty("--border", "#333");
+      document.documentElement.style.setProperty("--input-bg", "#111");
+      document.documentElement.style.setProperty("--panel-bg", "#0f0f0f");
+      document.documentElement.style.setProperty("--muted", "#bbb");
+      document.documentElement.style.setProperty("--danger", "#ff6b6b");
       document.body.style.background = "#0a0a0a";
       document.body.style.color = "#ffffff";
     } else {
       document.documentElement.style.setProperty("--background", "#ffffff");
       document.documentElement.style.setProperty("--foreground", "#000000");
+      document.documentElement.style.setProperty("--border", "#e0e0e5");
+      document.documentElement.style.setProperty("--input-bg", "#fff");
+      document.documentElement.style.setProperty("--panel-bg", "#fff");
+      document.documentElement.style.setProperty("--muted", "#555");
+      document.documentElement.style.setProperty("--danger", "#a00");
       document.body.style.background = "";
       document.body.style.color = "";
     }
@@ -74,6 +84,7 @@ const SettingsButton: FC<Props> = ({
   const borderColor = theme === "dark" ? "#333" : "#ddd";
   const inputBg = theme === "dark" ? "#111" : "#fff";
   const backdrop = theme === "dark" ? "rgba(0,0,0,0.6)" : "rgba(0,0,0,0.25)";
+  const smallText = "var(--muted)";
 
   return (
     <>
@@ -143,12 +154,12 @@ const SettingsButton: FC<Props> = ({
                   id="theme-select"
                   value={theme}
                   onChange={(e) => setTheme(e.target.value === "dark" ? "dark" : "light")}
-                  style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", minWidth: 220, background: "#fff" }}
+                  style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, minWidth: 220, background: inputBg, color: textColor }}
                 >
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
                 </select>
-                <div style={{ fontSize: 12, color: "#555", marginLeft: 8 }}>{theme === "dark" ? "Dark mode" : "Light mode"}</div>
+                <div style={{ fontSize: 12, color: smallText, marginLeft: 8 }}>{theme === "dark" ? "Dark mode" : "Light mode"}</div>
               </div>
 
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -213,14 +224,14 @@ const SettingsButton: FC<Props> = ({
                 </div>
               )}
 
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid #e0e0e0" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
                 <div style={{ fontWeight: 600, color: "#0a6b3d" }}>API Key (Secure)</div>
-                <div style={{ fontSize: 12, color: "#555" }}>OpenAI API key is stored securely in backend .env file. No browser storage needed.</div>
+                <div style={{ fontSize: 12, color: smallText }}>OpenAI API key is stored securely in backend .env file. No browser storage needed.</div>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid #e0e0e0" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
                 <div style={{ fontWeight: 600, color: "#0a6b3d" }}>RAG Mode (FREE)</div>
-                <div style={{ fontSize: 12, color: "#555" }}>Chat uses FREE hybrid search (Sentence-BERT + BM25). No API key needed for chat!</div>
+                <div style={{ fontSize: 12, color: smallText }}>Chat uses FREE hybrid search (Sentence-BERT + BM25). No API key needed for chat!</div>
               </div>
             </div>
 

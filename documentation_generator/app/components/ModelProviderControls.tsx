@@ -50,7 +50,7 @@ const ModelProviderControls: FC<Props> = ({
         <div style={{ fontSize: 14 }}>{provider === "cloud" ? (selectedModel || "default") : (localModel || "default")}</div>
       </div>
 
-      <div style={{ fontSize: 12, color: "#666" }}>
+      <div style={{ fontSize: 12, color: "var(--muted)" }}>
         To change provider/model or API key, open the Settings overlay (⚙️ Settings in the header).
       </div>
     </div>

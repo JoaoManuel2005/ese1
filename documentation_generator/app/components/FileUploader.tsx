@@ -34,7 +34,7 @@ export default function FileUploader({
     return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   }
 
-  const placeholderBox: React.CSSProperties = { padding: 12, color: "#666" };
+  const placeholderBox: React.CSSProperties = { padding: 12, color: "var(--muted)" };
 
   return (
     <div>
@@ -67,7 +67,7 @@ export default function FileUploader({
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <div>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Upload or drop files</div>
-                <div style={{ fontSize: 13, color: "#555" }}>
+                <div style={{ fontSize: 13, color: "var(--muted)" }}>
                   Docs (txt, md, json) or <strong>.zip solution files</strong>. {isDragging ? "Drop files here" : "Click to choose or drag & drop."}
                 </div>
               </div>
@@ -75,8 +75,8 @@ export default function FileUploader({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 style={{
-                  border: "1px solid #d0d0d7",
-                  background: "#fff",
+                  border: "1px solid var(--border)",
+                  background: "var(--input-bg)",
                   padding: "8px 12px",
                   borderRadius: 8,
                   cursor: "pointer",
@@ -98,7 +98,7 @@ export default function FileUploader({
                     style={{
                       border: "none",
                       background: "transparent",
-                      color: "#1f7aec",
+                      color: "var(--primary)",
                       cursor: "pointer",
                       fontSize: 13,
                     }}
@@ -112,10 +112,10 @@ export default function FileUploader({
                   <li
                     key={`${file.name}-${index}-${file.size}`}
                     style={{
-                      border: "1px solid #e0e0e5",
+                      border: "1px solid var(--border)",
                       borderRadius: 10,
                       padding: 10,
-                      background: "#fafbff",
+                      background: "var(--panel-bg)",
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
@@ -129,16 +129,16 @@ export default function FileUploader({
                       </div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12 }}>
                         {file.error ? (
-                          <span style={{ color: "#a00" }}>{file.error}</span>
+                          <span style={{ color: "var(--danger)" }}>{file.error}</span>
                         ) : file.name.toLowerCase().endsWith(".zip") ? (
-                          <span style={{ color: "#1f7aec", fontWeight: 500 }}>📦 Power Platform Solution (PAC CLI + RAG)</span>
+                          <span style={{ color: "var(--primary)", fontWeight: 500 }}>📦 Power Platform Solution (PAC CLI + RAG)</span>
                         ) : file.isText ? (
                           <>
-                            <span style={{ color: "#0a6" }}>Text loaded</span>
-                            {file.truncated && <span style={{ color: "#a60" }}>(truncated)</span>}
+                            <span style={{ color: "var(--success)" }}>Text loaded</span>
+                            {file.truncated && <span style={{ color: "var(--warning)" }}>(truncated)</span>}
                           </>
                         ) : (
-                          <span style={{ color: "#555" }}>Metadata only (preview not supported)</span>
+                          <span style={{ color: "var(--muted)" }}>Metadata only (preview not supported)</span>
                         )}
                       </div>
                     </div>
@@ -147,8 +147,8 @@ export default function FileUploader({
                       aria-label={`Remove ${file.name}`}
                       style={{
                         border: "none",
-                        background: "#fff",
-                        color: "#a00",
+                        background: "var(--input-bg)",
+                        color: "var(--danger)",
                         borderRadius: 8,
                         padding: "6px 10px",
                         cursor: "pointer",
@@ -160,13 +160,13 @@ export default function FileUploader({
                   </li>
                 ))}
               </ul>
-              <div style={{ marginTop: 8, fontSize: 12, color: "#555" }}>
+              <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
                 {files.length} file{files.length !== 1 ? "s" : ""} •{" "}
                 {formatSize(files.reduce((sum, f) => sum + f.size, 0))}
               </div>
               {displayType && (
-                <div style={{ marginTop: 6, fontSize: 12, color: "#333" }}>
-                  <span style={{ padding: "2px 6px", borderRadius: 6, background: "#eef2ff", border: "1px solid #c7d2fe" }}>
+                <div style={{ marginTop: 6, fontSize: 12, color: "var(--muted)" }}>
+                  <span style={{ padding: "2px 6px", borderRadius: 6, background: "var(--panel-bg)", border: "1px solid var(--border)", color: "var(--primary)" }}>
                     {displayType === "solution_zip" || displayType === "power_platform_solution_zip"
                       ? "Detected: Power Platform solution"
                       : displayType === "docs" || displayType === "generic_docs"
@@ -174,7 +174,7 @@ export default function FileUploader({
                       : "Detected: Unknown"}
                   </span>
                   {displayReason && (
-                    <span style={{ marginLeft: 6, color: "#666" }}>{displayReason}</span>
+                    <span style={{ marginLeft: 6, color: "var(--muted)" }}>{displayReason}</span>
                   )}
                 </div>
               )}

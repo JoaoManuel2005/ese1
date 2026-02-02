@@ -29,7 +29,7 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      <div style={{ fontSize: 12, color: "#666" }}>
+      <div style={{ fontSize: 12, color: "var(--muted)" }}>
         {displayType === "docs" || displayType === "generic_docs"
           ? "Chat answers from your uploaded documents (general mode)."
           : displayType === "solution_zip" || displayType === "power_platform_solution_zip"
@@ -37,7 +37,7 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
           : "Chat answers from the knowledge base once files are ingested."}
       </div>
 
-      <div className="panel-scroll" style={{ border: "1px solid #e0e0e5", borderRadius: 12, padding: 12, background: "#fff" }}>
+      <div className="panel-scroll" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--panel-bg)" }}>
         {chat.map((m) => (
           <div key={m.id} style={{ margin: "12px 0" }}>
             <b>{m.role}:</b>
@@ -52,12 +52,12 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
                       <button
                         type="button"
                         onClick={() => onToggleSources(m.id)}
-                        style={{ border: "1px solid #d0d0d7", background: "#fff", padding: "4px 8px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
+                        style={{ border: "1px solid var(--border)", background: "var(--input-bg)", padding: "4px 8px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}
                       >
                         {expandedSources[m.id] ? "Hide sources" : `Sources (${m.sources.length})`}
                       </button>
                       {expandedSources[m.id] && (
-                        <ul style={{ marginTop: 8, paddingLeft: 18, fontSize: 12, color: "#444" }}>
+                        <ul style={{ marginTop: 8, paddingLeft: 18, fontSize: 12, color: "var(--muted)" }}>
                           {m.sources!.map((source, idx) => (
                             <li key={`${m.id}-source-${idx}`}>{source.label}</li>
                           ))}
@@ -89,11 +89,11 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
           }}
           placeholder="Type a message"
           rows={2}
-          style={{ flex: 1, padding: 12, borderRadius: 10, border: "1px solid #ddd", resize: "vertical", lineHeight: 1.4, background: "#fff" }}
+          style={{ flex: 1, padding: 12, borderRadius: 10, border: "1px solid var(--border)", resize: "vertical", lineHeight: 1.4, background: "var(--input-bg)" }}
         />
 
-        <button onClick={() => void send()} disabled={loading} style={{ padding: "12px 16px", borderRadius: 10, opacity: loading ? 0.6 : 1, cursor: loading ? "not-allowed" : "pointer", background: "#1f7aec", color: "#fff", border: "none" }}>{loading ? "Sending..." : "Send"}</button>
-        <button onClick={onClear} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ddd", background: "#fff" }}>Clear</button>
+        <button onClick={() => void send()} disabled={loading} style={{ padding: "12px 16px", borderRadius: 10, opacity: loading ? 0.6 : 1, cursor: loading ? "not-allowed" : "pointer", background: "var(--primary)", color: "var(--foreground)", border: "none" }}>{loading ? "Sending..." : "Send"}</button>
+        <button onClick={onClear} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)" }}>Clear</button>
       </div>
     </div>
   );

@@ -3,6 +3,14 @@
 :root {
   --background: #ffffff;
   --foreground: #000000;
+  --border: #e0e0e5;
+  --panel-bg: #fff;
+  --input-bg: #fff;
+  --muted: #555;
+  --danger: #a00;
+  --primary: #1f7aec;
+  --success: #0a6;
+  --warning: #a60;
 }
 
 @theme inline {
@@ -14,13 +22,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #ffffff;
-    --foreground: #000000;
+    --background: #0a0a0a;
+    --foreground: #ffffff;
+    --border: #333;
+    --panel-bg: #0f0f0f;
+    --input-bg: #111;
+    --muted: #bbb;
+    --danger: #ff6b6b;
   }
 }
 
 body {
-  background: #f7f7fb;
+  background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
   margin: 0;
@@ -41,8 +54,8 @@ body {
 }
 
 .panel {
-  background: #fff;
-  border: 1px solid #e0e0e5;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 14px;
   min-height: 420px;
@@ -54,7 +67,7 @@ body {
 .panel-header {
   font-weight: 700;
   margin-bottom: 10px;
-  color: #222;
+  color: var(--foreground);
 }
 
 /* Panel content should scroll internally, not the full page */
@@ -99,15 +112,15 @@ body {
 }
 
 .dropzone {
-  border: 1px dashed #d0d0d7;
+  border: 1px dashed var(--border);
   border-radius: 12px;
   padding: 14px;
-  background: #fafbff;
+  background: var(--panel-bg);
   transition: border-color 0.15s ease, background 0.15s ease;
   cursor: pointer;
 }
 
 .dropzone.dragging {
-  border-color: #1f7aec;
-  background: #f0f5ff;
+  border-color: var(--primary);
+  background: var(--panel-bg);
 }

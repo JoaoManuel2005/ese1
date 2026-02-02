@@ -9,25 +9,68 @@ class PacParser:
     """Parser for Power Platform solution files using PAC CLI"""
     
     def __init__(self):
-        # Try to find PAC CLI in common locations
-        self.pac_path = self._find_pac_cli()
-        self.pac_available = self.pac_path is not None
+        # Defer PAC CLI detection until first use
+        self.pac_path = None
+        self.pac_checked = False
+        self._pac_available = None
+    
+    @property
+    def pac_available(self):
+        """Check if PAC CLI is available (with lazy loading)"""
+        if not self.pac_checked:
+            self.pac_path = self._find_pac_cli()
+            self._pac_available = self.pac_path is not None
+            self.pac_checked = True
+        return self._pac_available
     
     def _find_pac_cli(self) -> str:
         """Find PAC CLI executable"""
-        # Common PAC CLI locations
+        # Check if we can access PAC CLI via Docker container
+        # Try multiple times with increasing timeout due to QEMU emulation overhead
+        import time
+        
+        for attempt in range(2):
+            try:
+                timeout_val = 60 if attempt == 0 else 90
+                print(f"Checking PAC CLI via Docker (attempt {attempt + 1}, timeout={timeout_val}s)...")
+                result = subprocess.run(
+                    ["docker", "exec", "pac-cli", "pac", "help"],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_val
+                )
+                if result.returncode == 0:
+                    print("✓ Found PAC CLI in Docker container 'pac-cli'")
+                    return "docker-container"
+                else:
+                    print(f"Docker exec failed with return code {result.returncode}: {result.stderr}")
+                    if attempt == 0:
+                        time.sleep(5)  # Wait before retry
+                        continue
+            except subprocess.TimeoutExpired:
+                print(f"Docker exec to pac-cli timed out after {timeout_val}s (attempt {attempt + 1})")
+                if attempt == 0:
+                    print("Retrying with longer timeout...")
+                    time.sleep(5)
+                    continue
+            except FileNotFoundError:
+                print("Docker command not found")
+                break
+            except Exception as e:
+                print(f"Error checking Docker PAC CLI: {type(e).__name__}: {e}")
+                break
+        
+        # Fallback: Check for local PAC CLI installation
         possible_paths = [
-            os.path.expanduser("~/.dotnet/tools/pac"),  # Default .NET tools location (check first)
+            os.path.expanduser("~/.dotnet/tools/pac"),
             "pac",  # In PATH
-            "/usr/local/bin/pac",
-            "/opt/homebrew/bin/pac",
+            "/root/.dotnet/tools/pac",
         ]
         
-        # First, just check if the file exists (faster than running --version)
         for pac_path in possible_paths:
             expanded_path = os.path.expanduser(pac_path) if pac_path.startswith("~") else pac_path
             if os.path.exists(expanded_path) and os.access(expanded_path, os.X_OK):
-                print(f"✓ Found PAC CLI at: {expanded_path}")
+                print(f"✓ Found local PAC CLI at: {expanded_path}")
                 return expanded_path
         
         print("Warning: PAC CLI not found. Using fallback XML parsing.")
@@ -38,7 +81,13 @@ class PacParser:
         extract_dir = os.path.join(temp_dir, "extracted")
         os.makedirs(extract_dir, exist_ok=True)
         
-        if self.pac_available:
+        # Check for PAC CLI on first use
+        if not self.pac_checked:
+            self.pac_path = self._find_pac_cli()
+            self._pac_available = self.pac_path is not None
+            self.pac_checked = True
+        
+        if self._pac_available:
             return self._parse_with_pac_cli(zip_path, extract_dir)
         else:
             return self._parse_with_fallback(zip_path, extract_dir)
@@ -46,15 +95,48 @@ class PacParser:
     def _parse_with_pac_cli(self, zip_path: str, extract_dir: str) -> Dict[str, Any]:
         """Use PAC CLI to unpack and parse solution"""
         try:
-            result = subprocess.run(
-                [self.pac_path, "solution", "unpack", "--zipfile", zip_path, "--folder", extract_dir],
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
-            
-            if result.returncode != 0:
-                raise Exception(f"PAC CLI error: {result.stderr}")
+            if self.pac_path == "docker-container":
+                # Copy zip file to pac-cli container, unpack, then copy back
+                container_zip = "/pac-workspace/solution.zip"
+                container_extract = "/pac-workspace/extracted"
+                
+                # Copy zip file to container
+                subprocess.run(
+                    ["docker", "cp", zip_path, f"pac-cli:{container_zip}"],
+                    check=True,
+                    capture_output=True
+                )
+                
+                # Run PAC CLI unpack command in container
+                result = subprocess.run(
+                    ["docker", "exec", "pac-cli", "pac", "solution", "unpack", 
+                     "--zipfile", container_zip, "--folder", container_extract],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                
+                if result.returncode != 0:
+                    raise Exception(f"PAC CLI error: {result.stderr}")
+                
+                # Copy extracted files back to host
+                subprocess.run(
+                    ["docker", "cp", f"pac-cli:{container_extract}/.", extract_dir],
+                    check=True,
+                    capture_output=True
+                )
+                
+            else:
+                # Use local PAC CLI
+                result = subprocess.run(
+                    [self.pac_path, "solution", "unpack", "--zipfile", zip_path, "--folder", extract_dir],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                
+                if result.returncode != 0:
+                    raise Exception(f"PAC CLI error: {result.stderr}")
             
             return self._parse_unpacked_solution(extract_dir)
             

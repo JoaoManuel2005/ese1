@@ -268,6 +268,10 @@ async def generate_documentation(request: GenerateDocRequest):
             format=request.doc_type
         )
     except Exception as e:
+        import traceback
+        error_traceback = traceback.format_exc()
+        print(f"[ERROR] Documentation generation failed: {str(e)}")
+        print(f"[ERROR] Traceback:\n{error_traceback}")
         raise HTTPException(
             status_code=500,
             detail={"message": "Failed to generate documentation", "error": str(e)},

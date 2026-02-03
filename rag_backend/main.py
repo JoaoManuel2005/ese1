@@ -216,14 +216,21 @@ async def parse_solution(file: UploadFile = File(...)):
 async def generate_documentation(request: GenerateDocRequest):
     """Generate documentation using RAG pipeline with configured provider"""
 
+    print(f"[DEBUG] Request provider: {request.provider}, model: {request.model}")
     provider = resolve_provider(request.provider)
     model = resolve_model(provider, request.model)
+    print(f"[DEBUG] Resolved provider: {provider}, model: {model}")
 
-    if provider == "cloud" and not os.getenv("OPENAI_API_KEY"):
-        raise HTTPException(
-            status_code=500,
-            detail="OPENAI_API_KEY not configured in backend .env file for cloud provider",
-        )
+    if provider == "cloud":
+        # Check for either OpenAI or Azure OpenAI credentials
+        has_openai = bool(os.getenv("OPENAI_API_KEY"))
+        has_azure = bool(os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"))
+        
+        if not (has_openai or has_azure):
+            raise HTTPException(
+                status_code=500,
+                detail="Cloud provider requires either OPENAI_API_KEY or Azure OpenAI credentials (AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT) in backend .env file",
+            )
 
     try:
         # Get user preferences from chat history - use FULL chat context
@@ -293,7 +300,7 @@ async def rag_status(dataset_id: Optional[str] = None):
             "model": model,
             "chunks_indexed": count,
             "collection_name": full_rag._get_collection_name(dataset_id) if dataset_id else None,
-            "embedding_model": "all-MiniLM-L6-v2 (Sentence-BERT, FREE)",
+            "embedding_model": "BAAI/bge-small-en-v1.5 (BGE, FREE)",
         }
     except Exception as e:
         return {

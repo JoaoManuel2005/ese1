@@ -162,6 +162,11 @@ class PacParser:
             "components": []
         }
         
+        # Debug: list what's in extract_dir
+        print(f"[PAC Parser] Extracted directory: {extract_dir}")
+        if os.path.exists(extract_dir):
+            print(f"[PAC Parser] Contents: {os.listdir(extract_dir)}")
+        
         # Parse solution.xml - try multiple locations (PAC CLI may create different structure)
         solution_xml_paths = [
             os.path.join(extract_dir, "solution.xml"),
@@ -174,10 +179,12 @@ class PacParser:
             if "solution.xml" in files:
                 solution_xml_paths.append(os.path.join(root, "solution.xml"))
         
+        print(f"[PAC Parser] Searching for solution.xml in {len(solution_xml_paths)} locations")
         for solution_xml_path in solution_xml_paths:
             if os.path.exists(solution_xml_path):
-                print(f"Found solution.xml at: {solution_xml_path}")
+                print(f"[PAC Parser] Found solution.xml at: {solution_xml_path}")
                 parsed = self._parse_solution_xml(solution_xml_path)
+                print(f"[PAC Parser] Parsed solution: name={parsed.get('name')}, publisher={parsed.get('publisher')}")
                 if parsed.get("name") and parsed.get("name") != "Unknown":
                     solution_data.update(parsed)
                     break

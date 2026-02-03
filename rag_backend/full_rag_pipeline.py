@@ -40,10 +40,10 @@ class FullRAGPipeline:
             settings=Settings(anonymized_telemetry=False),
         )
 
-        # Initialize Sentence-BERT for FREE local embeddings
-        print("[chroma] Loading Sentence-BERT model (free, local)...")
-        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-        print("[chroma] Sentence-BERT model loaded")
+        # Initialize BGE embeddings for better retrieval accuracy
+        print("[chroma] Loading BGE embedding model (free, local)...")
+        self.embedding_model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        print("[chroma] BGE embedding model loaded")
 
         # BM25 index for keyword search (hybrid retrieval)
         self.bm25_index: Dict[str, Optional[BM25Okapi]] = {}

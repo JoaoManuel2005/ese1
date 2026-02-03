@@ -2,7 +2,7 @@ import os
 from typing import Dict, Optional
 
 import requests
-from openai import OpenAI
+from openai import OpenAI, AzureOpenAI
 
 
 DEFAULT_PROVIDER = "cloud"
@@ -85,6 +85,40 @@ def chat_complete(
             raise RuntimeError(f"Local LLM error: {exc}") from exc
 
     api_key = api_key_override or os.getenv("OPENAI_API_KEY")
+    
+    # Check for Azure OpenAI configuration
+    azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    
+    # Use Azure OpenAI if configured
+    if is_valid_api_key(azure_api_key) and azure_endpoint:
+        client = AzureOpenAI(
+            api_key=azure_api_key,
+            azure_endpoint=azure_endpoint.rstrip("/"),
+            api_version="2024-02-15-preview"
+        )
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.3,
+                max_tokens=2000,
+            )
+            return resp.choices[0].message.content
+        except Exception as exc:  # noqa: BLE001
+            error_msg = str(exc).lower()
+            if "invalid api key" in error_msg or "incorrect api key" in error_msg:
+                raise RuntimeError(
+                    "Invalid Azure OpenAI API key. Please check your AZURE_OPENAI_API_KEY in the .env file."
+                ) from exc
+            if "quota" in error_msg or "billing" in error_msg or "insufficient" in error_msg:
+                raise RuntimeError(
+                    "Azure OpenAI API quota exceeded or billing issue. Please check your Azure account."
+                ) from exc
+            raise RuntimeError(f"Azure OpenAI error: {exc}") from exc
     
     # Validate API key is set and not a placeholder
     if not is_valid_api_key(api_key):

@@ -50,6 +50,9 @@ const SettingsButton: FC<Props> = ({
     return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
 
+  // Local ephemeral API key (visible only when provider is 'cloud')
+  const [apiKey, setApiKey] = useState<string>("");
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -233,6 +236,21 @@ const SettingsButton: FC<Props> = ({
                 <div style={{ fontWeight: 600, color: "#0a6b3d" }}>RAG Mode (FREE)</div>
                 <div style={{ fontSize: 12, color: smallText }}>Chat uses FREE hybrid search (Sentence-BERT + BM25). No API key needed for chat!</div>
               </div>
+
+              {provider === "cloud" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                  <label htmlFor="cloud-api-key" style={{ fontWeight: 600 }}>Cloud API Key</label>
+                  <input
+                    id="cloud-api-key"
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="Enter API key (optional)"
+                    style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, minWidth: 220, background: inputBg, color: textColor }}
+                  />
+                  <div style={{ fontSize: 12, color: smallText }}>This is stored only in your browser session. For production, set keys in the server .env file.</div>
+                </div>
+              )}
             </div>
 
           </div>

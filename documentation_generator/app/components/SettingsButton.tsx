@@ -94,9 +94,9 @@ const SettingsButton: FC<Props> = ({
         onClick={() => setOpen(true)}
         title="Settings"
         style={{
-          border: `1px solid ${borderColor}`,
-          background: inputBg,
-          color: textColor,
+          border: "1px solid var(--border)",
+          background: "var(--input-bg)",
+          color: "var(--foreground)",
           padding: "6px 10px",
           borderRadius: 8,
           cursor: "pointer",

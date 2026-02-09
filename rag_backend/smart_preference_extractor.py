@@ -3,12 +3,19 @@ Smart LLM-based preference extractor
 Understands natural language without specific keywords
 """
 
-from typing import List, Dict
+from typing import List, Dict, Optional
 from llm_client import chat_complete, resolve_provider, resolve_model
 import os
 
 
-def extract_preferences_with_llm(conversation_history: List[Dict[str, str]]) -> str:
+def extract_preferences_with_llm(
+    conversation_history: List[Dict[str, str]],
+    *,
+    api_key: Optional[str] = None,
+    endpoint: Optional[str] = None,
+    provider_override: Optional[str] = None,
+    model_override: Optional[str] = None,
+) -> str:
     """
     Use LLM to understand user preferences from natural conversation
     This works even without specific keywords
@@ -69,11 +76,12 @@ What are the user's documentation preferences?"""
 
     try:
         # Try to use LLM to understand preferences
-        provider = resolve_provider()
-        model = resolve_model(provider)
+        provider = resolve_provider(provider_override)
+        model = resolve_model(provider, model_override)
 
         # Only use LLM if OpenAI key is available, otherwise fall back to keyword-based
-        if provider == "cloud" and not os.getenv("OPENAI_API_KEY"):
+        effective_api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if provider == "cloud" and not effective_api_key:
             return ""
 
         result = chat_complete(
@@ -81,6 +89,8 @@ What are the user's documentation preferences?"""
             user=user_prompt,
             provider_override=provider,
             model_override=model,
+            api_key_override=effective_api_key,
+            endpoint_override=endpoint,
         )
 
         if result and "No preferences found" not in result:

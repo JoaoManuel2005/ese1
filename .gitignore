@@ -4,6 +4,9 @@ __pycache__/
 .env.local
 .env.*
 !.env.example
+.runtime-config.json
+documentation_generator/.runtime-config.json
+documentation_generator/runtime-data/
 .venv/
 .vscode/
 dist/
@@ -17,6 +20,9 @@ chunks/
 data/
 work/
 *.sqlite3
+
+# PAC CLI extracted files (temporary solution parsing data)
+pac-workspace/
 
 # Next.js build output
 .next/
@@ -44,6 +50,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+!documentation_generator/lib/
+!documentation_generator/lib/*.ts
 lib64/
 parts/
 sdist/

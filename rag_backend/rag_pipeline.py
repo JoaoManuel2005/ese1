@@ -22,6 +22,8 @@ class RAGPipeline:
         provider_override: Optional[str] = None,
         model_override: Optional[str] = None,
         user_preferences: Optional[str] = None,
+        api_key: Optional[str] = None,
+        endpoint: Optional[str] = None,
     ) -> str:
         """Generate documentation for a parsed solution using configured provider"""
 
@@ -40,6 +42,8 @@ class RAGPipeline:
             user=prompt,
             provider_override=provider,
             model_override=model_to_use,
+            api_key_override=api_key,
+            endpoint_override=endpoint,
         )
 
 

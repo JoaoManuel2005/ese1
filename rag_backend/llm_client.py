@@ -2,7 +2,7 @@ import os
 from typing import Dict, Optional
 
 import requests
-from openai import OpenAI
+from openai import OpenAI, AzureOpenAI
 
 
 DEFAULT_PROVIDER = "cloud"
@@ -32,7 +32,8 @@ def resolve_provider(provider_override: Optional[str] = None) -> str:
 def resolve_model(provider: str, model_override: Optional[str] = None) -> str:
     if provider == "local":
         return model_override or os.getenv("LOCAL_LLM_MODEL", "llama3.1:8b")
-    return model_override or os.getenv("OPENAI_MODEL", "gpt-4")
+    # Check for DEFAULT_MODEL first, then fall back to OPENAI_MODEL
+    return model_override or os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL", "gpt-4")
 
 
 def provider_config(provider_override: Optional[str] = None, model_override: Optional[str] = None) -> Dict[str, str]:
@@ -49,6 +50,7 @@ def chat_complete(
     provider_override: Optional[str] = None,
     model_override: Optional[str] = None,
     api_key_override: Optional[str] = None,
+    endpoint_override: Optional[str] = None,
 ) -> str:
     config = provider_config(provider_override, model_override)
     provider = config["provider"]
@@ -78,19 +80,56 @@ def chat_complete(
         except requests.RequestException as exc:
             raise RuntimeError(
                 f"Local LLM not reachable at {config['base_url']}. "
-                "Please ensure Ollama is running (ollama serve) or set a valid OPENAI_API_KEY in .env file. "
+                "Please ensure Ollama is running (ollama serve) or set a valid API key in Settings or environment. "
                 f"Error: {exc}"
             ) from exc
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"Local LLM error: {exc}") from exc
 
+    # Priority: Use provided API key/endpoint, then fall back to env vars
     api_key = api_key_override or os.getenv("OPENAI_API_KEY")
+    azure_api_key = api_key_override or os.getenv("AZURE_OPENAI_API_KEY")
+    azure_endpoint = endpoint_override or os.getenv("AZURE_OPENAI_ENDPOINT")
+    
+    # Use Azure OpenAI if endpoint is provided (using OpenAI client with custom base_url)
+    # Azure AI Foundry uses OpenAI-compatible format
+    if is_valid_api_key(azure_api_key) and azure_endpoint:
+        client = OpenAI(
+            api_key=azure_api_key,
+            base_url=azure_endpoint.rstrip("/")
+        )
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.3,
+                max_tokens=2000,
+            )
+            return resp.choices[0].message.content
+        except Exception as exc:  # noqa: BLE001
+            error_msg = str(exc).lower()
+            if "invalid api key" in error_msg or "incorrect api key" in error_msg or "401" in error_msg:
+                raise RuntimeError(
+                    f"Invalid Azure OpenAI API key or endpoint. Error: {exc}\n"
+                    "Please verify:\n"
+                    "1. AZURE_OPENAI_API_KEY is correct\n"
+                    "2. AZURE_OPENAI_ENDPOINT is correct (should be like https://...openai.azure.com/openai/v1/)\n"
+                    "3. Your Azure AI Foundry deployment name matches DEFAULT_MODEL"
+                ) from exc
+            if "quota" in error_msg or "billing" in error_msg or "insufficient" in error_msg:
+                raise RuntimeError(
+                    "Azure OpenAI API quota exceeded or billing issue. Please check your Azure account."
+                ) from exc
+            raise RuntimeError(f"Azure OpenAI error: {exc}") from exc
     
     # Validate API key is set and not a placeholder
     if not is_valid_api_key(api_key):
         raise RuntimeError(
-            "OPENAI_API_KEY not configured or using placeholder value. "
-            "Please set a valid OpenAI API key in the .env file, or "
+            "API key not configured or using placeholder value. "
+            "Please set a valid OpenAI API key in Settings or environment, or "
             "set LLM_PROVIDER=local and run Ollama for local LLM."
         )
 
@@ -110,7 +149,7 @@ def chat_complete(
         error_msg = str(exc).lower()
         if "invalid api key" in error_msg or "incorrect api key" in error_msg:
             raise RuntimeError(
-                "Invalid OpenAI API key. Please check your OPENAI_API_KEY in the .env file."
+                "Invalid OpenAI API key. Please check the key in Settings or environment."
             ) from exc
         if "quota" in error_msg or "billing" in error_msg or "insufficient" in error_msg:
             raise RuntimeError(

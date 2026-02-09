@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getRuntimeConfig } from "../../../lib/runtimeConfig";
 
 type IncomingFile = {
   name: string;
@@ -55,12 +56,20 @@ function buildFileContext(files: IncomingFile[] = []) {
 export async function POST(req: Request) {
   const { message, model, systemPrompt, temperature, files } = await req.json();
 
-  const modelToUse = model || process.env.OPENAI_MODEL || "gpt-4";
+  const runtimeConfig = await getRuntimeConfig();
+  const modelToUse = model || runtimeConfig.model || process.env.OPENAI_MODEL || "gpt-4";
   const tempValue = typeof temperature === "number" ? temperature : 0.7;
-  const apiKey = req.headers.get("x-openai-api-key") || process.env.OPENAI_API_KEY;
+  const apiKey =
+    runtimeConfig.openaiApiKey ||
+    req.headers.get("x-openai-api-key") ||
+    process.env.OPENAI_API_KEY;
+  const endpoint =
+    runtimeConfig.azureOpenAiEndpoint ||
+    req.headers.get("x-azure-openai-endpoint") ||
+    process.env.AZURE_OPENAI_ENDPOINT;
 
   if (!apiKey) {
-    return new Response("OpenAI API key is required. Please add it in Advanced options.", { status: 401 });
+    return new Response("OpenAI API key is required. Please add it in Settings.", { status: 401 });
   }
 
   const fileContext = buildFileContext(files);
@@ -74,7 +83,11 @@ export async function POST(req: Request) {
   }
   messages.push({ role: "user", content: message });
 
-  const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+  const baseUrl = endpoint ? endpoint.replace(/\/$/, "") : "https://api.openai.com/v1";
+  const completionsUrl = baseUrl.endsWith("/chat/completions")
+    ? baseUrl
+    : `${baseUrl}/chat/completions`;
+  const openaiRes = await fetch(completionsUrl, {
     method: "POST",
     headers: { 
       "Content-Type": "application/json",

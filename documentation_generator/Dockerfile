@@ -43,6 +43,9 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Runtime settings storage
+RUN mkdir -p /app/runtime-data && chown -R nextjs:nodejs /app/runtime-data
+
 USER nextjs
 
 # Expose port

@@ -19,6 +19,10 @@ type Props = {
   useCustomLocalModel: boolean;
   setUseCustomLocalModel: (b: boolean) => void;
   fetchLocalModels: () => void;
+  apiKey: string;
+  setApiKey: (k: string) => void;
+  endpoint: string;
+  setEndpoint: (e: string) => void;
 };
 
 const SettingsButton: FC<Props> = ({
@@ -37,6 +41,10 @@ const SettingsButton: FC<Props> = ({
   useCustomLocalModel,
   setUseCustomLocalModel,
   fetchLocalModels,
+  apiKey,
+  setApiKey,
+  endpoint,
+  setEndpoint,
 }) => {
   const [open, setOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -49,9 +57,6 @@ const SettingsButton: FC<Props> = ({
     }
     return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
-
-  // Local ephemeral API key (visible only when provider is 'cloud')
-  const [apiKey, setApiKey] = useState<string>("");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -238,17 +243,36 @@ const SettingsButton: FC<Props> = ({
               </div>
 
               {provider === "cloud" && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
-                  <label htmlFor="cloud-api-key" style={{ fontWeight: 600 }}>Cloud API Key</label>
-                  <input
-                    id="cloud-api-key"
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="Enter API key (optional)"
-                    style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, minWidth: 220, background: inputBg, color: textColor }}
-                  />
-                  <div style={{ fontSize: 12, color: smallText }}>This is stored only in your browser session. For production, set keys in the server .env file.</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
+                  <div>
+                    <label htmlFor="cloud-api-key" style={{ fontWeight: 600 }}>Cloud API Key</label>
+                    <input
+                      id="cloud-api-key"
+                      type="password"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      placeholder="Enter API key (optional)"
+                      style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, width: "100%", background: inputBg, color: textColor, marginTop: 6 }}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label htmlFor="cloud-endpoint" style={{ fontWeight: 600 }}>Azure OpenAI Endpoint</label>
+                    <input
+                      id="cloud-endpoint"
+                      type="text"
+                      value={endpoint}
+                      onChange={(e) => setEndpoint(e.target.value)}
+                      placeholder="https://...openai.azure.com/openai/v1/ (optional)"
+                      style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, width: "100%", background: inputBg, color: textColor, marginTop: 6 }}
+                    />
+                  </div>
+
+                  <div style={{ fontSize: 12, color: smallText, background: theme === "dark" ? "#1a1a1a" : "#f8f9fa", padding: 10, borderRadius: 6, border: `1px solid ${borderColor}` }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠️ Rate Limits</div>
+                    <div>• <strong>50,000 tokens</strong> per minute</div>
+                    <div>• <strong>50 requests</strong> per minute</div>
+                  </div>
                 </div>
               )}
             </div>

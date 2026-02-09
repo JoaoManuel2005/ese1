@@ -79,6 +79,8 @@ export default function Page() {
   const [useCustomLocalModel, setUseCustomLocalModel] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [endpoint, setEndpoint] = useState("");
   
   const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number; provider?: string; model?: string; backend_online?: boolean } | null>(null);
   const [corpusType, setCorpusType] = useState<"solution_zip" | "docs" | "unknown" | null>(null);
@@ -868,6 +870,8 @@ export default function Page() {
           model: modelForProvider,
           provider: llmSelection.provider,
           files: buildFilesPayload(),
+          api_key: apiKey || undefined,
+          endpoint: endpoint || undefined,
         }),
       });
 
@@ -1001,6 +1005,8 @@ export default function Page() {
           dataset_id: activeDatasetId,
           focus_files: focusFiles.length ? focusFiles : undefined,
           conversation_history: conversationHistory,
+          api_key: apiKey || undefined,
+          endpoint: endpoint || undefined,
         }),
       });
 
@@ -1136,6 +1142,10 @@ export default function Page() {
             useCustomLocalModel={useCustomLocalModel}
             setUseCustomLocalModel={setUseCustomLocalModel}
             fetchLocalModels={fetchLocalModels}
+            apiKey={apiKey}
+            setApiKey={setApiKey}
+            endpoint={endpoint}
+            setEndpoint={setEndpoint}
           />
           <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation Generator</h1>
         </div>

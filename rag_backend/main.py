@@ -126,6 +126,8 @@ class GenerateDocRequest(BaseModel):
     model: Optional[str] = None
     dataset_id: Optional[str] = None  # For accessing chat context
     user_preferences: Optional[str] = None  # User's document preferences from chat
+    api_key: Optional[str] = None  # Optional API key from frontend
+    endpoint: Optional[str] = None  # Optional endpoint for Azure OpenAI
 
 class GenerateDocResponse(BaseModel):
     documentation: str
@@ -222,14 +224,17 @@ async def generate_documentation(request: GenerateDocRequest):
     print(f"[DEBUG] Resolved provider: {provider}, model: {model}")
 
     if provider == "cloud":
-        # Check for either OpenAI or Azure OpenAI credentials
-        has_openai = bool(os.getenv("OPENAI_API_KEY"))
-        has_azure = bool(os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"))
+        # Check for either OpenAI or Azure OpenAI credentials (from request or env)
+        has_openai = bool(request.api_key or os.getenv("OPENAI_API_KEY"))
+        has_azure = bool(
+            (request.api_key and request.endpoint) or 
+            (os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"))
+        )
         
         if not (has_openai or has_azure):
             raise HTTPException(
                 status_code=500,
-                detail="Cloud provider requires either OPENAI_API_KEY or Azure OpenAI credentials (AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT) in backend .env file",
+                detail="Cloud provider requires either OPENAI_API_KEY or Azure OpenAI credentials (api_key + endpoint), or configure them in backend .env file",
             )
 
     try:
@@ -268,6 +273,8 @@ async def generate_documentation(request: GenerateDocRequest):
             provider_override=provider,
             model_override=model,
             user_preferences=user_preferences,
+            api_key=request.api_key,
+            endpoint=request.endpoint,
         )
 
         return GenerateDocResponse(

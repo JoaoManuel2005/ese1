@@ -481,6 +481,7 @@ class FullRAGPipeline:
         query: str,
         context_chunks: List[Dict],
         api_key: Optional[str] = None,
+        endpoint: Optional[str] = None,
         dataset_mode: str = "generic",
         provider_override: Optional[str] = None,
         model_override: Optional[str] = None,
@@ -528,6 +529,7 @@ Please provide a detailed answer based on the context above."""
             provider_override=provider,
             model_override=model,
             api_key_override=api_key or self.api_key_override,
+            endpoint_override=endpoint,
         )
 
     # ==================== FULL RAG QUERY ====================
@@ -539,6 +541,7 @@ Please provide a detailed answer based on the context above."""
         dataset_id: str = "",
         dataset_mode: str = "generic",
         api_key: Optional[str] = None,
+        endpoint: Optional[str] = None,
         provider_override: Optional[str] = None,
         model_override: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -565,6 +568,7 @@ Please provide a detailed answer based on the context above."""
             question,
             retrieved_chunks,
             api_key=api_key,
+            endpoint=endpoint,
             dataset_mode=dataset_mode,
             provider_override=provider_override,
             model_override=model_override,

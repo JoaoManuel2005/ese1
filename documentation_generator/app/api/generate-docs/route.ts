@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import MarkdownIt from "markdown-it";
 import { chromium } from "playwright";
+import { getRuntimeConfig } from "../../../lib/runtimeConfig";
 
 type IncomingFile = {
   name: string;
@@ -121,17 +122,27 @@ function buildFilePrompt(file: IncomingFile) {
 
 export async function POST(req: Request) {
   try {
-    const { model, systemPrompt, temperature, files, apiKey: bodyApiKey } = await req.json();
-    const apiKey = bodyApiKey || req.headers.get("x-openai-api-key") || process.env.OPENAI_API_KEY;
+    const { model, systemPrompt, temperature, files, apiKey: bodyApiKey, endpoint: bodyEndpoint } = await req.json();
+    const runtimeConfig = await getRuntimeConfig();
+    const apiKey =
+      runtimeConfig.openaiApiKey ||
+      bodyApiKey ||
+      req.headers.get("x-openai-api-key") ||
+      process.env.OPENAI_API_KEY;
+    const endpoint =
+      runtimeConfig.azureOpenAiEndpoint ||
+      bodyEndpoint ||
+      req.headers.get("x-azure-openai-endpoint") ||
+      process.env.AZURE_OPENAI_ENDPOINT;
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "OpenAI API key is required. Please add it in Advanced options." },
+        { error: "OpenAI API key is required. Please add it in Settings." },
         { status: 401 }
       );
     }
 
-    const modelToUse = model || process.env.OPENAI_MODEL || "gpt-4";
+    const modelToUse = model || runtimeConfig.model || process.env.OPENAI_MODEL || "gpt-4";
     const tempValue = typeof temperature === "number" ? temperature : 0.7;
     const fileArray: IncomingFile[] = Array.isArray(files) ? files : [];
 
@@ -151,7 +162,11 @@ export async function POST(req: Request) {
         "Include overview, key entities, assumptions, and a concise summary.",
       ].join("\n\n");
 
-      const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      const baseUrl = endpoint ? endpoint.replace(/\/$/, "") : "https://api.openai.com/v1";
+      const completionsUrl = baseUrl.endsWith("/chat/completions")
+        ? baseUrl
+        : `${baseUrl}/chat/completions`;
+      const openaiRes = await fetch(completionsUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

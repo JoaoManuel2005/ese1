@@ -4,6 +4,9 @@ __pycache__/
 .env.local
 .env.*
 !.env.example
+.runtime-config.json
+documentation_generator/.runtime-config.json
+documentation_generator/runtime-data/
 .venv/
 .vscode/
 dist/
@@ -47,6 +50,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+!documentation_generator/lib/
+!documentation_generator/lib/*.ts
 lib64/
 parts/
 sdist/

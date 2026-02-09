@@ -80,7 +80,7 @@ def chat_complete(
         except requests.RequestException as exc:
             raise RuntimeError(
                 f"Local LLM not reachable at {config['base_url']}. "
-                "Please ensure Ollama is running (ollama serve) or set a valid OPENAI_API_KEY in .env file. "
+                "Please ensure Ollama is running (ollama serve) or set a valid API key in Settings or environment. "
                 f"Error: {exc}"
             ) from exc
         except Exception as exc:  # noqa: BLE001
@@ -128,8 +128,8 @@ def chat_complete(
     # Validate API key is set and not a placeholder
     if not is_valid_api_key(api_key):
         raise RuntimeError(
-            "OPENAI_API_KEY not configured or using placeholder value. "
-            "Please set a valid OpenAI API key in the .env file, or "
+            "API key not configured or using placeholder value. "
+            "Please set a valid OpenAI API key in Settings or environment, or "
             "set LLM_PROVIDER=local and run Ollama for local LLM."
         )
 
@@ -149,7 +149,7 @@ def chat_complete(
         error_msg = str(exc).lower()
         if "invalid api key" in error_msg or "incorrect api key" in error_msg:
             raise RuntimeError(
-                "Invalid OpenAI API key. Please check your OPENAI_API_KEY in the .env file."
+                "Invalid OpenAI API key. Please check the key in Settings or environment."
             ) from exc
         if "quota" in error_msg or "billing" in error_msg or "insufficient" in error_msg:
             raise RuntimeError(

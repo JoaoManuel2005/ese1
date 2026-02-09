@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { formatSources } from "../../../lib/formatSources";
+import { getRuntimeConfig } from "../../../lib/runtimeConfig";
 
 const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8000";
 
@@ -13,7 +14,11 @@ export async function POST(req: Request) {
       );
     }
 
-    // Use FREE RAG retrieval - no OpenAI API key needed!
+    const runtimeConfig = await getRuntimeConfig();
+    const apiKey = runtimeConfig.openaiApiKey;
+    const endpoint = runtimeConfig.azureOpenAiEndpoint;
+
+    // Use RAG retrieval; cloud provider still requires a runtime API key.
     const ragRes = await fetch(`${RAG_BACKEND_URL}/rag/retrieve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -25,6 +30,8 @@ export async function POST(req: Request) {
         dataset_id: datasetId,
         focus_files: focusFiles,
         conversation_history: conversationHistory,
+        api_key: apiKey || undefined,
+        endpoint: endpoint || undefined,
       }),
     });
 

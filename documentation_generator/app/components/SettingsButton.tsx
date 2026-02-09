@@ -57,6 +57,11 @@ const SettingsButton: FC<Props> = ({
     }
     return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
+  const [loadingSettings, setLoadingSettings] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
+  const [maskedApiKey, setMaskedApiKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -86,6 +91,96 @@ const SettingsButton: FC<Props> = ({
       document.body.style.color = "";
     }
   }, [theme]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+
+    async function loadSettings() {
+      setLoadingSettings(true);
+      setSaveState("idle");
+      setSaveMessage(null);
+
+      try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+        const data = await res.json();
+
+        if (cancelled) return;
+        if (data?.provider === "cloud" || data?.provider === "local") {
+          setProvider(data.provider);
+        }
+        if (typeof data?.model === "string" && data.model.trim()) {
+          setSelectedModel(data.model);
+        }
+        if (typeof data?.azureOpenAiEndpoint === "string") {
+          setEndpoint(data.azureOpenAiEndpoint);
+        } else {
+          setEndpoint("");
+        }
+
+        setApiKey("");
+        setApiKeyConfigured(!!data?.openaiApiKeyConfigured);
+        setMaskedApiKey(typeof data?.openaiApiKeyMasked === "string" ? data.openaiApiKeyMasked : null);
+      } catch {
+        if (!cancelled) {
+          setSaveState("error");
+          setSaveMessage("Failed to load settings.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingSettings(false);
+        }
+      }
+    }
+
+    void loadSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, setApiKey, setEndpoint, setProvider, setSelectedModel]);
+
+  async function saveSettings() {
+    setSaveState("saving");
+    setSaveMessage(null);
+
+    const payload: Record<string, any> = {
+      provider,
+      model: selectedModel || null,
+      azureOpenAiEndpoint: endpoint || null,
+    };
+
+    if (apiKey.trim()) {
+      payload.openaiApiKey = apiKey.trim();
+    }
+
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to save settings.");
+      }
+
+      setSaveState("saved");
+      setSaveMessage("Saved");
+      setApiKey("");
+      setApiKeyConfigured(!!data?.openaiApiKeyConfigured);
+      setMaskedApiKey(typeof data?.openaiApiKeyMasked === "string" ? data.openaiApiKeyMasked : null);
+      if (typeof data?.azureOpenAiEndpoint === "string") {
+        setEndpoint(data.azureOpenAiEndpoint);
+      }
+    } catch (err: any) {
+      setSaveState("error");
+      setSaveMessage(err?.message || "Failed to save settings.");
+    }
+  }
 
   const modalBg = theme === "dark" ? "#0a0a0a" : "#fff";
   const textColor = theme === "dark" ? "#ffffff" : "#000000";
@@ -152,8 +247,21 @@ const SettingsButton: FC<Props> = ({
               <h2 style={{ margin: 0, fontSize: 18, color: textColor }}>Settings</h2>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => setOpen(false)} style={{ border: `1px solid ${borderColor}`, background: inputBg, color: textColor, padding: "6px 10px", borderRadius: 8, cursor: "pointer" }}>Close</button>
+                <button
+                  onClick={saveSettings}
+                  disabled={saveState === "saving"}
+                  style={{ border: `1px solid ${borderColor}`, background: inputBg, color: textColor, padding: "6px 10px", borderRadius: 8, cursor: saveState === "saving" ? "not-allowed" : "pointer" }}
+                >
+                  {saveState === "saving" ? "Saving..." : "Save"}
+                </button>
               </div>
             </div>
+
+            {saveMessage && (
+              <div style={{ fontSize: 12, color: saveState === "error" ? "#a00" : smallText }}>
+                {saveMessage}
+              </div>
+            )}
 
             <div style={{ display: "grid", gap: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -161,7 +269,10 @@ const SettingsButton: FC<Props> = ({
                 <select
                   id="theme-select"
                   value={theme}
-                  onChange={(e) => setTheme(e.target.value === "dark" ? "dark" : "light")}
+                  onChange={(e) => {
+                    setSaveState("idle");
+                    setTheme(e.target.value === "dark" ? "dark" : "light");
+                  }}
                   style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, minWidth: 220, background: inputBg, color: textColor }}
                 >
                   <option value="light">Light</option>
@@ -175,7 +286,10 @@ const SettingsButton: FC<Props> = ({
                 <select
                   id="provider-select"
                   value={provider}
-                  onChange={(e) => setProvider(e.target.value === "local" ? "local" : "cloud")}
+                  onChange={(e) => {
+                    setSaveState("idle");
+                    setProvider(e.target.value === "local" ? "local" : "cloud");
+                  }}
                   style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, minWidth: 220, background: inputBg, color: textColor }}
                 >
                   <option value="cloud">Cloud (OpenAI API)</option>
@@ -189,7 +303,10 @@ const SettingsButton: FC<Props> = ({
                   <select
                     id="model-select"
                     value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
+                    onChange={(e) => {
+                      setSaveState("idle");
+                      setSelectedModel(e.target.value);
+                    }}
                     disabled={modelsLoading || (!models.length && !selectedModel)}
                     style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, minWidth: 220, background: inputBg, color: textColor }}
                   >
@@ -207,6 +324,7 @@ const SettingsButton: FC<Props> = ({
                       id="local-model-select"
                       value={useCustomLocalModel ? "custom" : localModel}
                       onChange={(e) => {
+                        setSaveState("idle");
                         const val = e.target.value;
                         if (val === "custom") setUseCustomLocalModel(true);
                         else {
@@ -227,14 +345,32 @@ const SettingsButton: FC<Props> = ({
                   {localModelsError && <span style={{ fontSize: 12, color: "#a00" }}>{localModelsError}</span>}
 
                   {useCustomLocalModel && (
-                    <input id="local-model" value={localModel} onChange={(e) => setLocalModel(e.target.value)} placeholder="llama3.1:8b" style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, minWidth: 220, background: inputBg, color: textColor }} />
+                    <input
+                      id="local-model"
+                      value={localModel}
+                      onChange={(e) => {
+                        setSaveState("idle");
+                        setLocalModel(e.target.value);
+                      }}
+                      placeholder="llama3.1:8b"
+                      style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, minWidth: 220, background: inputBg, color: textColor }}
+                    />
                   )}
                 </div>
               )}
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
                 <div style={{ fontWeight: 600, color: "#0a6b3d" }}>API Key (Secure)</div>
-                <div style={{ fontSize: 12, color: smallText }}>OpenAI API key is stored securely in backend .env file. No browser storage needed.</div>
+                <div style={{ fontSize: 12, color: smallText }}>
+                  Stored server-side for runtime use. Not stored in browser storage.
+                </div>
+                <div style={{ fontSize: 12, color: smallText }}>
+                  {loadingSettings
+                    ? "Loading settings..."
+                    : apiKeyConfigured
+                    ? `Configured (${maskedApiKey || "****"})`
+                    : "Not configured"}
+                </div>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
@@ -250,7 +386,10 @@ const SettingsButton: FC<Props> = ({
                       id="cloud-api-key"
                       type="password"
                       value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
+                      onChange={(e) => {
+                        setSaveState("idle");
+                        setApiKey(e.target.value);
+                      }}
                       placeholder="Enter API key (optional)"
                       style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, width: "100%", background: inputBg, color: textColor, marginTop: 6 }}
                     />
@@ -262,7 +401,10 @@ const SettingsButton: FC<Props> = ({
                       id="cloud-endpoint"
                       type="text"
                       value={endpoint}
-                      onChange={(e) => setEndpoint(e.target.value)}
+                      onChange={(e) => {
+                        setSaveState("idle");
+                        setEndpoint(e.target.value);
+                      }}
                       placeholder="https://...openai.azure.com/openai/v1/ (optional)"
                       style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, width: "100%", background: inputBg, color: textColor, marginTop: 6 }}
                     />

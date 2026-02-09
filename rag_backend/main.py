@@ -138,6 +138,7 @@ class RAGQueryRequest(BaseModel):
     question: str
     n_results: int = 5
     api_key: Optional[str] = None
+    endpoint: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
     dataset_id: Optional[str] = None
@@ -234,7 +235,7 @@ async def generate_documentation(request: GenerateDocRequest):
         if not (has_openai or has_azure):
             raise HTTPException(
                 status_code=500,
-                detail="Cloud provider requires either OPENAI_API_KEY or Azure OpenAI credentials (api_key + endpoint), or configure them in backend .env file",
+                detail="Cloud provider requires an API key or Azure OpenAI credentials (api_key + endpoint). Configure it in Settings or set backend environment variables.",
             )
 
     try:
@@ -248,7 +249,13 @@ async def generate_documentation(request: GenerateDocRequest):
             print(f"[DEBUG] Found {len(chat_history)} messages in conversation memory for dataset {request.dataset_id}")
             if chat_history:
                 # Use ONLY smart LLM-based extraction for natural ChatGPT-like conversation
-                user_preferences = extract_preferences_with_llm(chat_history)
+                user_preferences = extract_preferences_with_llm(
+                    chat_history,
+                    api_key=request.api_key,
+                    endpoint=request.endpoint,
+                    provider_override=provider,
+                    model_override=model,
+                )
                 print(f"[DEBUG] Extracted preferences: {user_preferences[:200] if user_preferences else 'None'}")
 
         # Fallback: If no conversation memory, parse from request
@@ -265,7 +272,13 @@ async def generate_documentation(request: GenerateDocRequest):
 
             if chat_messages:
                 # Use ONLY smart LLM-based extraction for natural ChatGPT-like conversation
-                user_preferences = extract_preferences_with_llm(chat_messages)
+                user_preferences = extract_preferences_with_llm(
+                    chat_messages,
+                    api_key=request.api_key,
+                    endpoint=request.endpoint,
+                    provider_override=provider,
+                    model_override=model,
+                )
 
         documentation = await rag_pipeline.generate(
             solution=request.solution,
@@ -555,6 +568,8 @@ class RAGRetrieveRequest(BaseModel):
     dataset_id: Optional[str] = None
     focus_files: Optional[List[str]] = None
     conversation_history: Optional[List[Dict[str, str]]] = None  # Chat history for context
+    api_key: Optional[str] = None
+    endpoint: Optional[str] = None
 
 class RetrievedChunk(BaseModel):
     source: str
@@ -581,11 +596,16 @@ async def rag_retrieve(request: RAGRetrieveRequest):
     dataset_mode = dataset_info.get("mode", "unknown")
     provider = resolve_provider(request.provider)
     model = resolve_model(provider, request.model)
-    if provider == "cloud" and not os.getenv("OPENAI_API_KEY"):
-        raise HTTPException(
-            status_code=500,
-            detail="Cloud provider selected but OPENAI_API_KEY is not configured. Switch to local or set the key.",
-        )
+    api_key = request.api_key or os.getenv("OPENAI_API_KEY")
+    endpoint = request.endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
+    if provider == "cloud":
+        has_openai = bool(api_key)
+        has_azure = bool(api_key and endpoint)
+        if not (has_openai or has_azure):
+            raise HTTPException(
+                status_code=500,
+                detail="Cloud provider selected but no API key is configured. Switch to local or set the key in Settings.",
+            )
     if dataset_mode == "unknown" or full_rag.get_collection_count(dataset_id) == 0:
         return RAGRetrieveResponse(
             chunks=[],
@@ -666,6 +686,8 @@ Use previous conversation context when relevant to provide better answers."""
                     user_prompt,
                     provider_override=provider,
                     model_override=model,
+                    api_key_override=api_key,
+                    endpoint_override=endpoint,
                 )
 
                 # Store assistant answer in conversation memory
@@ -706,11 +728,12 @@ async def rag_query(request: RAGQueryRequest):
     provider = resolve_provider(request.provider)
     model = resolve_model(provider, request.model)
     api_key = request.api_key or os.getenv("OPENAI_API_KEY")
+    endpoint = request.endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
 
     if provider == "cloud" and not api_key:
         raise HTTPException(
             status_code=400,
-            detail="Valid OpenAI API key required for cloud provider",
+            detail="Valid API key required for cloud provider. Configure it in Settings.",
         )
 
     try:
@@ -722,6 +745,7 @@ async def rag_query(request: RAGQueryRequest):
             dataset_id=dataset_id,
             dataset_mode=dataset_mode,
             api_key=api_key,
+            endpoint=endpoint,
             provider_override=provider,
             model_override=model,
         )

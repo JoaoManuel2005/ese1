@@ -53,9 +53,12 @@ services:
       - NEXT_TELEMETRY_DISABLED=1
       # Connect to RAG backend via Docker network
       - RAG_BACKEND_URL=http://rag-backend:8000
+      - RUNTIME_CONFIG_PATH=/app/runtime-data/.runtime-config.json
       # LLM Provider settings (passed to backend)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ./documentation_generator/runtime-data:/app/runtime-data
     depends_on:
       rag-backend:
         condition: service_healthy

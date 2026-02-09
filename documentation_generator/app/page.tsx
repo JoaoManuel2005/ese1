@@ -100,7 +100,7 @@ export default function Page() {
       lower.includes("invalid api key") ||
       (lower.includes("api key") && (lower.includes("missing") || lower.includes("invalid")))
     ) {
-      return "Cloud unavailable (invalid API key/billing). Switch to Local or set OPENAI_API_KEY.";
+      return "Cloud unavailable (invalid API key/billing). Switch to Local or update Settings.";
     }
     if (status === 429 || lower.includes("insufficient_quota") || lower.includes("quota") || lower.includes("billing")) {
       return "Cloud quota/billing required. Switch to Local or enable billing.";
@@ -680,7 +680,7 @@ export default function Page() {
 
     const parsedSolution = parsePayload?.data || parsePayload;
 
-    // Step 3: Generate documentation with RAG pipeline (API key from backend .env)
+    // Step 3: Generate documentation with RAG pipeline (API key from runtime settings)
     const modelForProvider = llmSelection.model;
 
     // Extract user preferences from chat history
@@ -870,8 +870,6 @@ export default function Page() {
           model: modelForProvider,
           provider: llmSelection.provider,
           files: buildFilesPayload(),
-          api_key: apiKey || undefined,
-          endpoint: endpoint || undefined,
         }),
       });
 
@@ -1005,8 +1003,6 @@ export default function Page() {
           dataset_id: activeDatasetId,
           focus_files: focusFiles.length ? focusFiles : undefined,
           conversation_history: conversationHistory,
-          api_key: apiKey || undefined,
-          endpoint: endpoint || undefined,
         }),
       });
 

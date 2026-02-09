@@ -44,6 +44,13 @@ services:
       - RAG_BACKEND_URL=http://rag-backend:8000
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # NextAuth settings
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      # Azure AD OAuth settings
+      - AZURE_AD_CLIENT_ID=${AZURE_AD_CLIENT_ID:-}
+      - AZURE_AD_CLIENT_SECRET=${AZURE_AD_CLIENT_SECRET:-}
+      - AZURE_AD_TENANT_ID=${AZURE_AD_TENANT_ID:-}
     volumes:
       # Mount source code for hot reload
       - ./documentation_generator:/app

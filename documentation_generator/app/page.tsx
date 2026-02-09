@@ -14,6 +14,7 @@ import SettingsButton from "./components/SettingsButton";
 import ChatWindow from "./components/ChatWindow";
 import OutputsList from "./components/OutputsList";
 import PreviewPanel from "./components/PreviewPanel";
+import SignInButton from "./components/SignInButton";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -1165,6 +1166,7 @@ export default function Page() {
               <span style={{ color: "#666" }}>RAG Backend Offline</span>
             )}
           </div>
+          <SignInButton />
         </div>
       </div>
       {isClient && process.env.NODE_ENV === "development" && datasetId && (

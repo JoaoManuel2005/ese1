@@ -1,25 +1,99 @@
-# GitLab CI/CD Pipeline for RAG Demo
-# This is a simple pipeline that validates the Python code
+# GitLab CI/CD Pipeline for Documentation Generator
+# Builds Docker containers and runs basic integration tests
 
 stages:
+  - build
   - test
+  - cleanup
 
-# Python validation job
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  COMPOSE_PROJECT_NAME: ci-test
+
+# Build Docker images
+build:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - docker info
+    - docker compose version
+  script:
+    - echo "Building Docker containers..."
+    - docker compose build --no-cache
+    - echo "✅ Docker build completed successfully"
+  artifacts:
+    expire_in: 1 hour
+    paths:
+      - docker-compose.yml
+
+# Test that containers start successfully
 test:
   stage: test
-  image: python:3.9
+  image: docker:24-dind
+  services:
+    - docker:24-dind
   before_script:
-    - pip install --upgrade pip
-    - pip install -r requirements.txt
+    - docker info
+    - docker compose version
+    - apk add --no-cache curl
   script:
-    - echo "Running basic validation..."
-    - python --version
-    - pip list
-    - echo "✅ Dependencies installed successfully"
-    - echo "✅ RAG demo validation passed"
-  allow_failure: false
+    - echo "Building Docker containers..."
+    - docker compose build --no-cache
+    - echo "✅ Docker build completed successfully"
+    - echo "Starting containers..."
+    - docker compose up -d
+    - echo "Waiting for services to be ready..."
+    - sleep 30
+    - echo "Checking container status..."
+    - docker compose ps
+    - echo "Testing RAG backend health endpoint..."
+    - |
+      for i in {1..30}; do
+        if curl -f http://localhost:8000/health > /dev/null 2>&1; then
+          echo "✅ RAG backend is healthy"
+          break
+        fi
+        if [ $i -eq 30 ]; then
+          echo "❌ RAG backend health check failed"
+          docker compose logs rag-backend
+          exit 1
+        fi
+        echo "Waiting for RAG backend... ($i/30)"
+        sleep 2
+      done
+    - echo "Testing documentation generator..."
+    - |
+      for i in {1..30}; do
+        if curl -f http://localhost:3000 > /dev/null 2>&1; then
+          echo "✅ Documentation generator is responding"
+          break
+        fi
+        if [ $i -eq 30 ]; then
+          echo "❌ Documentation generator health check failed"
+          docker compose logs documentation-generator
+          exit 1
+        fi
+        echo "Waiting for documentation generator... ($i/30)"
+        sleep 2
+      done
+    - echo "✅ All containers started successfully and are healthy"
+  after_script:
+    - echo "Collecting logs..."
+    - docker compose logs --tail=100 || true
+    - echo "Stopping containers..."
+    - docker compose down -v || true
 
-# Skip the default Heroku-based test
-# Override default test behavior
-default:
-  interruptible: true
+# Cleanup stage
+cleanup:
+  stage: cleanup
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  script:
+    - echo "Cleaning up Docker resources..."
+    - docker compose down -v || true
+    - docker system prune -f || true
+  when: always

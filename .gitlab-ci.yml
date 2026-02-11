@@ -1,196 +1,46 @@
-# GitLab CI/CD Pipeline for Documentation Generator
-# Builds Docker containers and runs basic integration tests
-
 stages:
   - build
   - test
   - cleanup
 
 variables:
+  DOCKER_HOST: unix:///var/run/docker.sock
   DOCKER_DRIVER: overlay2
-  DOCKER_TLS_CERTDIR: "/certs"
   COMPOSE_PROJECT_NAME: ci-test
-  FF_NETWORK_PER_BUILD: "true"
 
-# Build Docker images
+default:
+  image: docker:24
+  before_script:
+    - docker info
+    - docker compose version
+
+# ---------------- BUILD ----------------
+
 build:
   stage: build
-  image: docker:24
-  services:
-    - name: docker:24-dind
-      alias: docker
-  tags:
-    - docker
-  before_script:
-    - |
-      echo "Checking Docker configuration..."
-      # Check if Docker socket is available (preferred method)
-      if [ -S /var/run/docker.sock ]; then
-        echo "✅ Docker socket found at /var/run/docker.sock"
-        export DOCKER_HOST=unix:///var/run/docker.sock
-        unset DOCKER_TLS_CERTDIR
-      else
-        echo "Docker socket not found, using Docker-in-Docker..."
-        export DOCKER_HOST=tcp://docker:2375
-        echo "Waiting for Docker-in-Docker service to be ready..."
-        timeout=120
-        elapsed=0
-        while ! docker info > /dev/null 2>&1; do
-          if [ $elapsed -ge $timeout ]; then
-            echo "❌ Docker daemon failed to start within ${timeout}s"
-            echo "Attempting to diagnose..."
-            netstat -an | grep 2375 || true
-            ping -c 1 docker || true
-            exit 1
-          fi
-          if [ $((elapsed % 10)) -eq 0 ]; then
-            echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
-          fi
-          sleep 2
-          elapsed=$((elapsed + 2))
-        done
-        echo "✅ Docker daemon is ready"
-      fi
-    - docker info
-    - docker compose version
   script:
-    - echo "Building Docker containers..."
+    - echo "Building containers..."
     - docker compose build --no-cache
-    - echo "✅ Docker build completed successfully"
-  artifacts:
-    expire_in: 1 hour
-    paths:
-      - docker-compose.yml
 
-# Test that containers start successfully
+# ---------------- TEST ----------------
+
 test:
   stage: test
-  image: docker:24
-  services:
-    - name: docker:24-dind
-      alias: docker
-  tags:
-    - docker
-  before_script:
-    - |
-      echo "Checking Docker configuration..."
-      # Check if Docker socket is available (preferred method)
-      if [ -S /var/run/docker.sock ]; then
-        echo "✅ Docker socket found at /var/run/docker.sock"
-        export DOCKER_HOST=unix:///var/run/docker.sock
-        unset DOCKER_TLS_CERTDIR
-      else
-        echo "Docker socket not found, using Docker-in-Docker..."
-        export DOCKER_HOST=tcp://docker:2375
-        echo "Waiting for Docker-in-Docker service to be ready..."
-        timeout=120
-        elapsed=0
-        while ! docker info > /dev/null 2>&1; do
-          if [ $elapsed -ge $timeout ]; then
-            echo "❌ Docker daemon failed to start within ${timeout}s"
-            echo "Checking service status..."
-            docker ps -a || true
-            exit 1
-          fi
-          if [ $((elapsed % 10)) -eq 0 ]; then
-            echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
-          fi
-          sleep 2
-          elapsed=$((elapsed + 2))
-        done
-        echo "✅ Docker daemon is ready"
-      fi
-    - docker info
-    - docker compose version
-    - apk add --no-cache curl
   script:
-    - echo "Building Docker containers..."
-    - docker compose build --no-cache
-    - echo "✅ Docker build completed successfully"
     - echo "Starting containers..."
     - docker compose up -d
-    - echo "Waiting for services to be ready..."
-    - sleep 30
-    - echo "Checking container status..."
+    - sleep 20
     - docker compose ps
-    - echo "Testing RAG backend health endpoint..."
-    - |
-      for i in {1..30}; do
-        if curl -f http://localhost:8000/health > /dev/null 2>&1; then
-          echo "✅ RAG backend is healthy"
-          break
-        fi
-        if [ $i -eq 30 ]; then
-          echo "❌ RAG backend health check failed"
-          docker compose logs rag-backend
-          exit 1
-        fi
-        echo "Waiting for RAG backend... ($i/30)"
-        sleep 2
-      done
-    - echo "Testing documentation generator..."
-    - |
-      for i in {1..30}; do
-        if curl -f http://localhost:3000 > /dev/null 2>&1; then
-          echo "✅ Documentation generator is responding"
-          break
-        fi
-        if [ $i -eq 30 ]; then
-          echo "❌ Documentation generator health check failed"
-          docker compose logs documentation-generator
-          exit 1
-        fi
-        echo "Waiting for documentation generator... ($i/30)"
-        sleep 2
-      done
-    - echo "✅ All containers started successfully and are healthy"
+    - apk add --no-cache curl
+    - curl -f http://localhost:8000/health
+    - curl -f http://localhost:3000
   after_script:
-    - echo "Collecting logs..."
-    - docker compose logs --tail=100 || true
-    - echo "Stopping containers..."
-    - docker compose down -v || true
+    - docker compose down -v
 
-# Cleanup stage
+# ---------------- CLEANUP ----------------
+
 cleanup:
   stage: cleanup
-  image: docker:24
-  services:
-    - name: docker:24-dind
-      alias: docker
-  tags:
-    - docker
-  before_script:
-    - |
-      echo "Checking Docker configuration..."
-      # Check if Docker socket is available (preferred method)
-      if [ -S /var/run/docker.sock ]; then
-        echo "✅ Docker socket found at /var/run/docker.sock"
-        export DOCKER_HOST=unix:///var/run/docker.sock
-        unset DOCKER_TLS_CERTDIR
-      else
-        echo "Docker socket not found, using Docker-in-Docker..."
-        export DOCKER_HOST=tcp://docker:2375
-        echo "Waiting for Docker-in-Docker service to be ready..."
-        timeout=120
-        elapsed=0
-        while ! docker info > /dev/null 2>&1; do
-          if [ $elapsed -ge $timeout ]; then
-            echo "❌ Docker daemon failed to start within ${timeout}s"
-            echo "Attempting to diagnose..."
-            netstat -an | grep 2375 || true
-            ping -c 1 docker || true
-            exit 1
-          fi
-          if [ $((elapsed % 10)) -eq 0 ]; then
-            echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
-          fi
-          sleep 2
-          elapsed=$((elapsed + 2))
-        done
-        echo "✅ Docker daemon is ready"
-      fi
   script:
-    - echo "Cleaning up Docker resources..."
-    - docker compose down -v || true
-    - docker system prune -f || true
+    - docker system prune -af || true
   when: always

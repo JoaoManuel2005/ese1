@@ -22,7 +22,10 @@ build:
   stage: build
   script:
     - echo "Building containers..."
-    - docker-compose build --no-cache
+    # - docker-compose build --no-cache
+    - docker build documentation_generator/
+    - docker build pac-cli/
+    - docker build rag_backend/
   # tags:
   #   - docker
 

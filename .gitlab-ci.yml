@@ -3,16 +3,16 @@ stages:
   - test
   - cleanup
 
-variables:
-  DOCKER_HOST: unix:///var/run/docker.sock
-  DOCKER_DRIVER: overlay2
-  COMPOSE_PROJECT_NAME: ci-test
+# variables:
+#   # DOCKER_HOST: unix:///var/run/docker.sock
+#   DOCKER_DRIVER: overlay2
+#   COMPOSE_PROJECT_NAME: ci-test
 
 default:
   image: docker:24
   before_script:
-    - docker info
-    - docker compose version
+    # - docker info
+    - docker-compose version
 
 # ---------------- BUILD ----------------
 
@@ -20,7 +20,7 @@ build:
   stage: build
   script:
     - echo "Building containers..."
-    - docker compose build --no-cache
+    - docker-compose build --no-cache
 
 # ---------------- TEST ----------------
 

@@ -9,7 +9,6 @@ stages:
 variables:
   DOCKER_DRIVER: overlay2
   DOCKER_TLS_CERTDIR: "/certs"
-  DOCKER_HOST: tcp://docker:2375
   COMPOSE_PROJECT_NAME: ci-test
   FF_NETWORK_PER_BUILD: "true"
 
@@ -24,25 +23,34 @@ build:
     - docker
   before_script:
     - |
-      echo "Waiting for Docker-in-Docker service to be ready..."
-      echo "DOCKER_HOST: ${DOCKER_HOST}"
-      timeout=120
-      elapsed=0
-      while ! docker info > /dev/null 2>&1; do
-        if [ $elapsed -ge $timeout ]; then
-          echo "❌ Docker daemon failed to start within ${timeout}s"
-          echo "Attempting to diagnose..."
-          netstat -an | grep 2375 || true
-          ping -c 1 docker || true
-          exit 1
-        fi
-        if [ $((elapsed % 10)) -eq 0 ]; then
-          echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
-        fi
-        sleep 2
-        elapsed=$((elapsed + 2))
-      done
-      echo "✅ Docker daemon is ready"
+      echo "Checking Docker configuration..."
+      # Check if Docker socket is available (preferred method)
+      if [ -S /var/run/docker.sock ]; then
+        echo "✅ Docker socket found at /var/run/docker.sock"
+        export DOCKER_HOST=unix:///var/run/docker.sock
+        unset DOCKER_TLS_CERTDIR
+      else
+        echo "Docker socket not found, using Docker-in-Docker..."
+        export DOCKER_HOST=tcp://docker:2375
+        echo "Waiting for Docker-in-Docker service to be ready..."
+        timeout=120
+        elapsed=0
+        while ! docker info > /dev/null 2>&1; do
+          if [ $elapsed -ge $timeout ]; then
+            echo "❌ Docker daemon failed to start within ${timeout}s"
+            echo "Attempting to diagnose..."
+            netstat -an | grep 2375 || true
+            ping -c 1 docker || true
+            exit 1
+          fi
+          if [ $((elapsed % 10)) -eq 0 ]; then
+            echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
+          fi
+          sleep 2
+          elapsed=$((elapsed + 2))
+        done
+        echo "✅ Docker daemon is ready"
+      fi
     - docker info
     - docker compose version
   script:
@@ -66,14 +74,16 @@ test:
   before_script:
     - |
       echo "Checking Docker configuration..."
-      echo "DOCKER_HOST: ${DOCKER_HOST}"
-      echo "Checking if Docker socket is available..."
+      # Check if Docker socket is available (preferred method)
       if [ -S /var/run/docker.sock ]; then
         echo "✅ Docker socket found at /var/run/docker.sock"
         export DOCKER_HOST=unix:///var/run/docker.sock
+        unset DOCKER_TLS_CERTDIR
       else
+        echo "Docker socket not found, using Docker-in-Docker..."
+        export DOCKER_HOST=tcp://docker:2375
         echo "Waiting for Docker-in-Docker service to be ready..."
-        timeout=90
+        timeout=120
         elapsed=0
         while ! docker info > /dev/null 2>&1; do
           if [ $elapsed -ge $timeout ]; then
@@ -82,7 +92,9 @@ test:
             docker ps -a || true
             exit 1
           fi
-          echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
+          if [ $((elapsed % 10)) -eq 0 ]; then
+            echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
+          fi
           sleep 2
           elapsed=$((elapsed + 2))
         done
@@ -149,25 +161,34 @@ cleanup:
     - docker
   before_script:
     - |
-      echo "Waiting for Docker-in-Docker service to be ready..."
-      echo "DOCKER_HOST: ${DOCKER_HOST}"
-      timeout=120
-      elapsed=0
-      while ! docker info > /dev/null 2>&1; do
-        if [ $elapsed -ge $timeout ]; then
-          echo "❌ Docker daemon failed to start within ${timeout}s"
-          echo "Attempting to diagnose..."
-          netstat -an | grep 2375 || true
-          ping -c 1 docker || true
-          exit 1
-        fi
-        if [ $((elapsed % 10)) -eq 0 ]; then
-          echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
-        fi
-        sleep 2
-        elapsed=$((elapsed + 2))
-      done
-      echo "✅ Docker daemon is ready"
+      echo "Checking Docker configuration..."
+      # Check if Docker socket is available (preferred method)
+      if [ -S /var/run/docker.sock ]; then
+        echo "✅ Docker socket found at /var/run/docker.sock"
+        export DOCKER_HOST=unix:///var/run/docker.sock
+        unset DOCKER_TLS_CERTDIR
+      else
+        echo "Docker socket not found, using Docker-in-Docker..."
+        export DOCKER_HOST=tcp://docker:2375
+        echo "Waiting for Docker-in-Docker service to be ready..."
+        timeout=120
+        elapsed=0
+        while ! docker info > /dev/null 2>&1; do
+          if [ $elapsed -ge $timeout ]; then
+            echo "❌ Docker daemon failed to start within ${timeout}s"
+            echo "Attempting to diagnose..."
+            netstat -an | grep 2375 || true
+            ping -c 1 docker || true
+            exit 1
+          fi
+          if [ $((elapsed % 10)) -eq 0 ]; then
+            echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
+          fi
+          sleep 2
+          elapsed=$((elapsed + 2))
+        done
+        echo "✅ Docker daemon is ready"
+      fi
   script:
     - echo "Cleaning up Docker resources..."
     - docker compose down -v || true

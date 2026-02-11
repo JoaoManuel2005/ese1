@@ -57,6 +57,13 @@ services:
       # LLM Provider settings (passed to backend)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # NextAuth settings
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      # Azure AD OAuth settings
+      - AZURE_AD_CLIENT_ID=${AZURE_AD_CLIENT_ID:-}
+      - AZURE_AD_CLIENT_SECRET=${AZURE_AD_CLIENT_SECRET:-}
+      - AZURE_AD_TENANT_ID=${AZURE_AD_TENANT_ID:-}
     volumes:
       - ./documentation_generator/runtime-data:/app/runtime-data
     depends_on:

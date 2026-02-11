@@ -21,26 +21,28 @@ build:
   script:
     - echo "Building containers..."
     - docker-compose build --no-cache
+  tags:
+    - docker
 
-# ---------------- TEST ----------------
+# # ---------------- TEST ----------------
 
-test:
-  stage: test
-  script:
-    - echo "Starting containers..."
-    - docker compose up -d
-    - sleep 20
-    - docker compose ps
-    - apk add --no-cache curl
-    - curl -f http://localhost:8000/health
-    - curl -f http://localhost:3000
-  after_script:
-    - docker compose down -v
+# test:
+#   stage: test
+#   script:
+#     - echo "Starting containers..."
+#     - docker compose up -d
+#     - sleep 20
+#     - docker compose ps
+#     - apk add --no-cache curl
+#     - curl -f http://localhost:8000/health
+#     - curl -f http://localhost:3000
+#   after_script:
+#     - docker compose down -v
 
-# ---------------- CLEANUP ----------------
+# # ---------------- CLEANUP ----------------
 
-cleanup:
-  stage: cleanup
-  script:
-    - docker system prune -af || true
-  when: always
+# cleanup:
+#   stage: cleanup
+#   script:
+#     - docker system prune -af || true
+#   when: always

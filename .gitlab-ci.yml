@@ -9,15 +9,31 @@ stages:
 variables:
   DOCKER_DRIVER: overlay2
   DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_HOST: tcp://docker:2375
   COMPOSE_PROJECT_NAME: ci-test
 
 # Build Docker images
 build:
   stage: build
-  image: docker:24-dind
+  image: docker:24
   services:
-    - docker:24-dind
+    - name: docker:24-dind
+      alias: docker
   before_script:
+    - |
+      echo "Waiting for Docker daemon to be ready..."
+      timeout=60
+      elapsed=0
+      while ! docker info > /dev/null 2>&1; do
+        if [ $elapsed -ge $timeout ]; then
+          echo "❌ Docker daemon failed to start within ${timeout}s"
+          exit 1
+        fi
+        echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
+        sleep 2
+        elapsed=$((elapsed + 2))
+      done
+      echo "✅ Docker daemon is ready"
     - docker info
     - docker compose version
   script:
@@ -32,10 +48,25 @@ build:
 # Test that containers start successfully
 test:
   stage: test
-  image: docker:24-dind
+  image: docker:24
   services:
-    - docker:24-dind
+    - name: docker:24-dind
+      alias: docker
   before_script:
+    - |
+      echo "Waiting for Docker daemon to be ready..."
+      timeout=60
+      elapsed=0
+      while ! docker info > /dev/null 2>&1; do
+        if [ $elapsed -ge $timeout ]; then
+          echo "❌ Docker daemon failed to start within ${timeout}s"
+          exit 1
+        fi
+        echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
+        sleep 2
+        elapsed=$((elapsed + 2))
+      done
+      echo "✅ Docker daemon is ready"
     - docker info
     - docker compose version
     - apk add --no-cache curl
@@ -89,9 +120,25 @@ test:
 # Cleanup stage
 cleanup:
   stage: cleanup
-  image: docker:24-dind
+  image: docker:24
   services:
-    - docker:24-dind
+    - name: docker:24-dind
+      alias: docker
+  before_script:
+    - |
+      echo "Waiting for Docker daemon to be ready..."
+      timeout=60
+      elapsed=0
+      while ! docker info > /dev/null 2>&1; do
+        if [ $elapsed -ge $timeout ]; then
+          echo "❌ Docker daemon failed to start within ${timeout}s"
+          exit 1
+        fi
+        echo "Waiting for Docker... (${elapsed}s/${timeout}s)"
+        sleep 2
+        elapsed=$((elapsed + 2))
+      done
+      echo "✅ Docker daemon is ready"
   script:
     - echo "Cleaning up Docker resources..."
     - docker compose down -v || true

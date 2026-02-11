@@ -1,28 +1,30 @@
+image: docker:24.0.5
+ 
+services:
+- docker:24.0.5-dind
+
 stages:
   - build
-  - test
-  - cleanup
 
 # variables:
 #   # DOCKER_HOST: unix:///var/run/docker.sock
 #   DOCKER_DRIVER: overlay2
 #   COMPOSE_PROJECT_NAME: ci-test
 
-default:
-  image: docker:24
-  before_script:
-    # - docker info
-    - docker-compose version
+# default:
+#   image: docker:24
+#   before_script:
+#     # - docker info
+#     - docker-compose version
 
 # ---------------- BUILD ----------------
-
 build:
   stage: build
   script:
     - echo "Building containers..."
     - docker-compose build --no-cache
-  tags:
-    - docker
+  # tags:
+  #   - docker
 
 # # ---------------- TEST ----------------
 

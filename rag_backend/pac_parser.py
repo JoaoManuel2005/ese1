@@ -7,6 +7,7 @@ from collections import defaultdict
 from typing import Dict, List, Any, Optional, Set, Tuple 
 from datetime import datetime, timezone
 import zipfile
+from sharepoint_analyzer import analyze_sharepoint
 
 
 DATAVERSE_API_ID = "shared_commondataserviceforapps"
@@ -231,7 +232,14 @@ class PacParser:
         self._parse_directory(extract_dir, "WebResources", "webresource", solution_data)
         self._parse_directory(extract_dir, "PluginAssemblies", "plugin", solution_data)
         self._parse_directory(extract_dir, "Reports", "report", solution_data)
-        
+
+        try:
+            analyze_sharepoint(Path(extract_dir), solution_data)
+        except Exception as e:
+            analysis = solution_data.setdefault("analysis", {})
+            sp = analysis.setdefault("sharepoint", {})
+            sp.setdefault("errors", []).append(f"sharepoint_analyzer_failed:{type(e).__name__}:{e}")
+
         return solution_data
     
     def _parse_solution_xml(self, xml_path: str) -> Dict[str, str]:
@@ -435,6 +443,14 @@ class DataverseParser:
             result["dependencies"] = self._build_dependencies(result)
 
         result["summary"] = self._build_summary(result)
+
+        try:
+            analyze_sharepoint(self.extract_dir, result)
+        except Exception as e:
+            analysis = result.setdefault("analysis", {})
+            sp = analysis.setdefault("sharepoint", {})
+            sp.setdefault("errors", []).append(f"sharepoint_analyzer_failed:{type(e).__name__}:{e}")
+
         return result
 
     def _inventory_folders(self) -> Dict[str, Any]:

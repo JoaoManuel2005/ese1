@@ -68,7 +68,7 @@ def chat_complete(
                     ],
                     "stream": False,
                 },
-                timeout=120,
+                timeout=600,  # Increased timeout for local models (10 minutes)
             )
             resp.raise_for_status()
             data = resp.json()

@@ -49,7 +49,7 @@ def main():
             for t in tables:
                 table = t.get('table', 'Unknown')
                 op = t.get('operation', 'Unknown')
-                print(f"    → {table} ({op})")
+                print(f"    -> {table} ({op})")
                 
                 if table not in all_tables:
                     all_tables[table] = {'count': 0, 'operations': set()}

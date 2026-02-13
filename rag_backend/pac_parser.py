@@ -189,7 +189,7 @@ class PacParser:
         return self._parse_unpacked_solution(extract_dir)
     
     def _parse_unpacked_solution(self, extract_dir: str) -> Dict[str, Any]:
-        """Parse an unpacked solution directory"""
+        """Parse an unpacked solution directory with enhanced DataverseParser"""
         solution_data = {
             "name": "Unknown Solution",
             "version": "1.0.0",
@@ -224,13 +224,33 @@ class PacParser:
                     solution_data.update(parsed)
                     break
         
-        # Parse all component types
+        # Parse all component types (basic)
         self._parse_directory(extract_dir, "Workflows", "flow", solution_data)
         self._parse_directory(extract_dir, "CanvasApps", "canvasapp", solution_data)
         self._parse_directory(extract_dir, "Entities", "entity", solution_data)
         self._parse_directory(extract_dir, "WebResources", "webresource", solution_data)
         self._parse_directory(extract_dir, "PluginAssemblies", "plugin", solution_data)
         self._parse_directory(extract_dir, "Reports", "report", solution_data)
+        
+        # ✨ NEW: Use DataverseParser for comprehensive parsing
+        print(f"[PAC Parser] Running DataverseParser for enhanced data...")
+        try:
+            dv_parser = DataverseParser(extract_dir, verbose=False)
+            enhanced_data = dv_parser.parse_all()
+            
+            # Merge enhanced data into solution_data
+            solution_data["enhanced"] = {
+                "metadata": enhanced_data.get("metadata", {}),
+                "artifacts": enhanced_data.get("artifacts", {}),
+                "automation": enhanced_data.get("automation", {}),
+                "security": enhanced_data.get("security", {}),
+                "summary": enhanced_data.get("summary", {}),
+            }
+            print(f"[PAC Parser] Enhanced data added: {len(enhanced_data.get('artifacts', {}).get('dv_searches', []))} knowledge sources, "
+                  f"{len(enhanced_data.get('automation', {}).get('cloud_flows', []))} flows")
+        except Exception as e:
+            print(f"[PAC Parser] DataverseParser failed: {e}, continuing with basic data")
+            solution_data["enhanced"] = None
         
         return solution_data
     

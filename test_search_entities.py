@@ -40,4 +40,4 @@ if searches and entities:
         search_id = entity.get('dvtablesearch_id')
         matching_search = next((s for s in searches if s.get('id') == search_id), None)
         if matching_search:
-            print(f'   ✅ Entity "{entity.get("name")}" → Search "{matching_search.get("name")}"')
+            print(f'   ✅ Entity "{entity.get("name")}" -> Search "{matching_search.get("name")}"')

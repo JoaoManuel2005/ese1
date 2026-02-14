@@ -10,6 +10,55 @@ The solution aims to simplify documentation production for consultants, develope
 
 ---
 
+## 🔐 Secrets Management (Azure Key Vault)
+
+This project does **not** store API keys or client secrets in the repository.
+
+All sensitive configuration is centrally managed via **Azure Key Vault** and injected into Docker containers at runtime.
+
+### Prerequisites
+
+Before running locally, ensure you have:
+
+- Docker Desktop installed and running  
+- Azure CLI installed  
+- Access to the Azure Key Vault (`docgenvault`) with the role:
+  - **Key Vault Secrets User** (read access)  
+  - or **Key Vault Administrator** (manage access)
+
+---
+
+### Install Azure CLI (Windows)
+
+```powershell
+winget install --id Microsoft.AzureCLI --exact --source winget
+
+Restart your terminal after installation.
+
+Verify installation:
+az --version
+
+First-Time Setup
+
+Login to Azure:
+az login
+
+Running the Full Application (Docker)
+
+To fetch secrets from Azure Key Vault and start all services:
+.\scripts\up.ps1
+
+This script will:
+- Fetch required secrets from Azure Key Vault
+- Generate a local .env.generated file (gitignored)
+- Build and start all Docker containers
+
+If secrets are rotated in Azure, simply re-run the script.
+
+Important:
+- .env.generated is automatically created and must never be committed.
+- Secrets are centrally managed in Azure Key Vault.
+
 ## 2. Core Features & Requirements
 
 ### Must Haves

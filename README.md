@@ -21,15 +21,17 @@ All sensitive configuration is managed via Azure Key Vault and injected into Doc
 
 Before running locally, ensure you have:
 
-- Docker Desktop installed and running
-- Azure CLI installed
-- Access to the Azure Key Vault (`docgenvault`) with one of the following roles:
+- Docker Desktop installed and running  
+- Azure CLI installed  
+- Access to the Azure Key Vault (docgenvault) with one of the following roles:
   - Key Vault Secrets User (read access)
   - Key Vault Administrator (manage access)
 
 ---
 
-### Install Azure CLI (Windows)
+## Install Azure CLI
+
+### Windows
 
 Run:
 
@@ -41,30 +43,70 @@ Verify installation:
 
     az --version
 
+---
+
+### macOS (Homebrew)
+
+Run:
+
+    brew update
+    brew install azure-cli
+
+Verify installation:
+
+    az --version
+
+---
+
+### Linux (Ubuntu / Debian)
+
+Run:
+
+    curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+Verify installation:
+
+    az --version
+
+---
+
+## First-Time Setup
+
 Login to Azure:
 
     az login
 
+If prompted, select the correct subscription.
+
 ---
 
-### Running the Full Application (Docker)
+## Running the Full Application (Docker)
 
 To fetch secrets from Azure Key Vault and start all services:
 
+Windows:
+
     .\scripts\up.ps1
+
+macOS / Linux:
+
+    chmod +x scripts/up.sh
+    ./scripts/up.sh
 
 This script will:
 
-- Fetch required secrets from Azure Key Vault
-- Generate a local `.env.generated` file (gitignored)
-- Build and start all Docker containers
+- Fetch required secrets from Azure Key Vault  
+- Generate a local .env.generated file (gitignored)  
+- Build and start all Docker containers  
+
+Secrets are pulled from the Azure Key Vault named docgenvault. Make sure you have run `az login` first.  
 
 If secrets are rotated in Azure, simply re-run the script.
 
 Important:
 
-- `.env.generated` is automatically created and must NEVER be committed.
-- Secrets are centrally managed in Azure Key Vault.
+- .env.generated is automatically created and must NEVER be committed.  
+- Secrets are centrally managed in Azure Key Vault.  
 
 ---
 
@@ -100,21 +142,21 @@ Documentation + ERD + Architecture Output
 
 ## 5. Target Users
 
-- Power Platform Developers
-- Solution Architects
-- Documentation Teams
-- Business Analysts
-- Non-technical stakeholders
+- Power Platform Developers  
+- Solution Architects  
+- Documentation Teams  
+- Business Analysts  
+- Non-technical stakeholders  
 
 ---
 
 ## 6. Success Criteria
 
-- Generates technical documentation from solution files with minimal interaction
-- Produces valid ERDs and architecture diagrams
-- Output importable into target system
-- Works with customer tech stack
-- Usable without technical training
+- Generates technical documentation from solution files with minimal interaction  
+- Produces valid ERDs and architecture diagrams  
+- Output importable into target system  
+- Works with customer tech stack  
+- Usable without technical training  
 
 ---
 
@@ -124,12 +166,12 @@ Each upload session uses a dataset_id.
 
 All ingestion and retrieval calls include the active dataset_id to prevent data leakage between sessions.
 
-Clearing files resets the dataset server-side via `/rag/reset`.
+Clearing files resets the dataset server-side via /rag/reset.
 
 ---
 
 ## Debugging
 
-- Confirm active dataset ID in the UI
-- Check `/rag/status?dataset_id=<id>` for document count
-- If sources are incorrect, reset and re-ingest
+- Confirm active dataset ID in the UI  
+- Check /rag/status?dataset_id=<id> for document count  
+- If sources are incorrect, reset and re-ingest  

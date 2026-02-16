@@ -26,10 +26,13 @@
 #   tags:
 #     - docker
 
+stages:
+  - build
+
 build:
   stage: build
   image:
-    name: gcr.io/kaniko-project/executor:v1.23.2
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
   script:
     - mkdir -p /kaniko/.docker
@@ -49,4 +52,3 @@ build:
         --context $CI_PROJECT_DIR/pac_cli \
         --dockerfile $CI_PROJECT_DIR/pac_cli/Dockerfile \
         --destination $CI_REGISTRY_IMAGE/pac_cli:latest
-

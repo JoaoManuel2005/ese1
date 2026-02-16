@@ -38,17 +38,9 @@ build:
     - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
 
-    - /kaniko/executor \
-        --context $CI_PROJECT_DIR/rag_backend \
-        --dockerfile $CI_PROJECT_DIR/rag_backend/Dockerfile \
-        --destination $CI_REGISTRY_IMAGE/rag_backend:latest
+    - /kaniko/executor --context $CI_PROJECT_DIR/rag_backend --dockerfile $CI_PROJECT_DIR/rag_backend/Dockerfile --destination $CI_REGISTRY_IMAGE/rag_backend:latest
 
-    - /kaniko/executor \
-        --context $CI_PROJECT_DIR/documentation_generator \
-        --dockerfile $CI_PROJECT_DIR/documentation_generator/Dockerfile \
-        --destination $CI_REGISTRY_IMAGE/documentation_generator:latest
+    - /kaniko/executor --context $CI_PROJECT_DIR/documentation_generator --dockerfile $CI_PROJECT_DIR/documentation_generator/Dockerfile --destination $CI_REGISTRY_IMAGE/documentation_generator:latest
 
-    - /kaniko/executor \
-        --context $CI_PROJECT_DIR/pac_cli \
-        --dockerfile $CI_PROJECT_DIR/pac_cli/Dockerfile \
-        --destination $CI_REGISTRY_IMAGE/pac_cli:latest
+    - /kaniko/executor --context $CI_PROJECT_DIR/pac_cli --dockerfile $CI_PROJECT_DIR/pac_cli/Dockerfile --destination $CI_REGISTRY_IMAGE/pac_cli:latest
+

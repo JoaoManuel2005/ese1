@@ -7,15 +7,14 @@ services:
     container_name: rag-backend
     ports:
       - "8000:8000"
+    env_file:
+      - .env.generated
     environment:
       - PYTHONUNBUFFERED=1
       - CLEAR_DB_ON_START=${CLEAR_DB_ON_START:-false}
       - DOCKER_API_VERSION=1.44
+      - DISABLE_TELEMETRY=true
       # LLM Provider settings
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
-      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
       # Model settings
       - LLM_PROVIDER=${LLM_PROVIDER:-cloud}
       - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-openai}
@@ -39,6 +38,7 @@ services:
       retries: 3
       start_period: 60s
     restart: unless-stopped
+    
 
   # Documentation Generator - Next.js frontend
   documentation-generator:
@@ -48,6 +48,8 @@ services:
     container_name: documentation-generator
     ports:
       - "3000:3000"
+    env_file:
+      - .env.generated
     environment:
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
@@ -55,15 +57,12 @@ services:
       - RAG_BACKEND_URL=http://rag-backend:8000
       - RUNTIME_CONFIG_PATH=/app/runtime-data/.runtime-config.json
       # LLM Provider settings (passed to backend)
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      
       # NextAuth settings
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
+      
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
       # Azure AD OAuth settings
-      - AZURE_AD_CLIENT_ID=${AZURE_AD_CLIENT_ID:-}
-      - AZURE_AD_CLIENT_SECRET=${AZURE_AD_CLIENT_SECRET:-}
-      - AZURE_AD_TENANT_ID=${AZURE_AD_TENANT_ID:-}
+      
     volumes:
       - ./documentation_generator/runtime-data:/app/runtime-data
       - ./documentation_generator/data:/app/data
@@ -94,3 +93,4 @@ networks:
 volumes:
   rag_chroma_data:
     driver: local
+    

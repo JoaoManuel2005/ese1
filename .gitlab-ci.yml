@@ -43,4 +43,5 @@ build:
     - /kaniko/executor --context $CI_PROJECT_DIR/documentation_generator --dockerfile $CI_PROJECT_DIR/documentation_generator/Dockerfile --destination $CI_REGISTRY_IMAGE/documentation_generator:latest
 
     - /kaniko/executor --context $CI_PROJECT_DIR/pac_cli --dockerfile $CI_PROJECT_DIR/pac_cli/Dockerfile --destination $CI_REGISTRY_IMAGE/pac_cli:latest
-
+  tags:
+    - docker

@@ -26,30 +26,27 @@
 #   tags:
 #     - docker
 
-image:
-  name: gcr.io/kaniko-project/executor:latest
-  entrypoint: [""]
-
-stages:
-  - build
-
 build:
   stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2
+    entrypoint: [""]
   script:
     - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
 
     - /kaniko/executor \
-        --context ./rag_backend \
-        --dockerfile ./rag_backend/Dockerfile \
+        --context $CI_PROJECT_DIR/rag_backend \
+        --dockerfile $CI_PROJECT_DIR/rag_backend/Dockerfile \
         --destination $CI_REGISTRY_IMAGE/rag_backend:latest
 
     - /kaniko/executor \
-        --context ./documentation_generator \
-        --dockerfile ./documentation_generator/Dockerfile \
+        --context $CI_PROJECT_DIR/documentation_generator \
+        --dockerfile $CI_PROJECT_DIR/documentation_generator/Dockerfile \
         --destination $CI_REGISTRY_IMAGE/documentation_generator:latest
 
     - /kaniko/executor \
-        --context ./pac_cli \
-        --dockerfile ./pac_cli/Dockerfile \
+        --context $CI_PROJECT_DIR/pac_cli \
+        --dockerfile $CI_PROJECT_DIR/pac_cli/Dockerfile \
         --destination $CI_REGISTRY_IMAGE/pac_cli:latest
+

@@ -6,48 +6,20 @@ services:
 stages:
   - build
 
-# variables:
-#   # DOCKER_HOST: unix:///var/run/docker.sock
-#   DOCKER_DRIVER: overlay2
-#   COMPOSE_PROJECT_NAME: ci-test
-
-# default:
-#   image: docker:24
-#   before_script:
-#     # - docker info
-#     - docker-compose version
-
-# ---------------- BUILD ----------------
 build:
   stage: build
   script:
-    - echo "Building containers..."
-    # - docker-compose build --no-cache
-    - docker build documentation_generator/
-    - docker build pac-cli/
-    - docker build rag_backend/
-  # tags:
-  #   - docker
+    - echo "Logging into container registry"
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    
+    - echo "Building rag_backend image..."
+    - docker build -t $CI_REGISTRY_IMAGE/rag_backend:latest ./rag_backend
+    - docker push $CI_REGISTRY_IMAGE/rag_backend:latest
 
-# # ---------------- TEST ----------------
+    - echo "Building documentation_generator image..."
+    - docker build -t $CI_REGISTRY_IMAGE/documentation_generator:latest ./documentation_generator
+    - docker push $CI_REGISTRY_IMAGE/documentation_generator:latest
 
-# test:
-#   stage: test
-#   script:
-#     - echo "Starting containers..."
-#     - docker compose up -d
-#     - sleep 20
-#     - docker compose ps
-#     - apk add --no-cache curl
-#     - curl -f http://localhost:8000/health
-#     - curl -f http://localhost:3000
-#   after_script:
-#     - docker compose down -v
-
-# # ---------------- CLEANUP ----------------
-
-# cleanup:
-#   stage: cleanup
-#   script:
-#     - docker system prune -af || true
-#   when: always
+    - echo "Building pac_cli image..."
+    - docker build -t $CI_REGISTRY_IMAGE/pac_cli:latest ./pac_cli
+    - docker push $CI_REGISTRY_IMAGE/pac_cli:latest

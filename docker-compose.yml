@@ -66,6 +66,7 @@ services:
       - AZURE_AD_TENANT_ID=${AZURE_AD_TENANT_ID:-}
     volumes:
       - ./documentation_generator/runtime-data:/app/runtime-data
+      - ./documentation_generator/data:/app/data
     depends_on:
       rag-backend:
         condition: service_healthy

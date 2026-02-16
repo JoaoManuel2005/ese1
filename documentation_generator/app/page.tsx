@@ -853,8 +853,23 @@ export default function Page() {
         });
         yPosition -= 20;
         
+        // Sanitize documentation to remove WinAnsi-incompatible characters
+        const sanitizeForPdf = (text: string): string => {
+          return text
+            .replace(/→/g, '->')  // Arrow
+            .replace(/←/g, '<-')  // Left arrow
+            .replace(/↑/g, '^')   // Up arrow
+            .replace(/↓/g, 'v')   // Down arrow
+            .replace(/✓|✔/g, 'v') // Checkmarks
+            .replace(/✗|✘/g, 'x') // X marks
+            .replace(/•/g, '*')   // Bullet (actually this one should work, but just in case)
+            .replace(/[^\x00-\xFF]/g, '?'); // Replace any other non-WinAnsi characters with ?
+        };
+        
+        const sanitizedDocumentation = sanitizeForPdf(documentation);
+        
         // Process documentation content
-        const lines = documentation.split('\n');
+        const lines = sanitizedDocumentation.split('\n');
         for (const line of lines) {
           if (line.startsWith('# ')) {
             yPosition -= 10;

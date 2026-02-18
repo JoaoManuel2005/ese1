@@ -44,7 +44,7 @@ body {
   max-width: 1680px;
   margin: 16px auto;
   padding: 0 12px 20px;
-  min-height: 100vh;
+  min-height: 80%;
 }
 
 .app-grid {
@@ -77,6 +77,10 @@ body {
   overflow: auto;
 }
 
+/* Input File box styling */
+#input_file_box {
+  max-width: 80%;
+}
 /* Chat wrapping: prevent long strings/paths from overflowing */
 .chat-message,
 .chat-message p,

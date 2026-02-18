@@ -127,7 +127,7 @@ export default function FileUploader({
                       <div style={{ fontSize: 12, color: "#555" }}>
                         {file.type || "unknown"} • {formatSize(file.size)}
                       </div>
-                      <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12 }}>
+                      <div id = "input_file_box" style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12 }}>
                         {file.error ? (
                           <span style={{ color: "var(--danger)" }}>{file.error}</span>
                         ) : file.name.toLowerCase().endsWith(".zip") ? (

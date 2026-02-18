@@ -1,47 +1,34 @@
-# image: docker:24.0.5
+image: docker:24.0.5
  
-# services:
-# - docker:24.0.5-dind
-
-# stages:
-#   - build
-
-# build:
-#   stage: build
-#   script:
-#     - echo "Logging into container registry"
-#     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    
-#     - echo "Building rag_backend image..."
-#     - docker build -t $CI_REGISTRY_IMAGE/rag_backend:latest ./rag_backend
-#     - docker push $CI_REGISTRY_IMAGE/rag_backend:latest
-
-#     - echo "Building documentation_generator image..."
-#     - docker build -t $CI_REGISTRY_IMAGE/documentation_generator:latest ./documentation_generator
-#     - docker push $CI_REGISTRY_IMAGE/documentation_generator:latest
-
-#     - echo "Building pac_cli image..."
-#     - docker build -t $CI_REGISTRY_IMAGE/pac_cli:latest ./pac_cli
-#     - docker push $CI_REGISTRY_IMAGE/pac_cli:latest
-#   tags:
-#     - docker
+services:
+- docker:24.0.5-dind
 
 stages:
   - build
 
 build:
   stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug
-    entrypoint: [""]
   script:
-    - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    - echo "Building rag_backend image..."
+    - docker build -t rag_backend:latest ./rag_backend
+    - docker save rag_backend:latest -o rag_backend.tar
 
-    - /kaniko/executor --context $CI_PROJECT_DIR/rag_backend --dockerfile $CI_PROJECT_DIR/rag_backend/Dockerfile --destination $CI_REGISTRY_IMAGE/rag_backend:latest
+    - echo "Building documentation_generator image..."
+    - docker build -t documentation_generator:latest ./documentation_generator
+    - docker save documentation_generator:latest -o documentation_generator.tar
 
-    - /kaniko/executor --context $CI_PROJECT_DIR/documentation_generator --dockerfile $CI_PROJECT_DIR/documentation_generator/Dockerfile --destination $CI_REGISTRY_IMAGE/documentation_generator:latest
+    - echo "Building pac_cli image..."
+    - docker build -t pac_cli:latest ./pac_cli
+    - docker save pac_cli:latest -o pac_cli.tar
 
-    - /kaniko/executor --context $CI_PROJECT_DIR/pac_cli --dockerfile $CI_PROJECT_DIR/pac_cli/Dockerfile --destination $CI_REGISTRY_IMAGE/pac_cli:latest
+  artifacts:
+    name: "docker-images-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - rag_backend.tar
+      - documentation_generator.tar
+      - pac_cli.tar
+    expire_in: 1 week
+
   tags:
     - docker
+

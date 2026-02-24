@@ -37,7 +37,6 @@ export default function FileUploader({
   const placeholderBox: React.CSSProperties = { padding: 12, color: "var(--muted)" };
 
   return (
-    <div>
         <section className="panel">
           <div className="panel-header">Input Files</div>
           <div
@@ -107,7 +106,7 @@ export default function FileUploader({
                   </button>
                 )}
               </div>
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
+              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", overflow: "scroll", gap: 8 }}>
                 {files.map((file, index) => (
                   <li
                     key={`${file.name}-${index}-${file.size}`}
@@ -183,6 +182,5 @@ export default function FileUploader({
             <div style={{ ...placeholderBox, marginTop: 12 }}>No files selected yet.</div>
           )}
         </section>
-    </div>
   );
 }

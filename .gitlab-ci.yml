@@ -3,6 +3,14 @@
 stages:
   - test
 
+# Runner checkout hardening:
+# this runner has intermittent failures fetching ephemeral refs/pipelines/* refs.
+# Use fresh clone + full history + prune to avoid stale cached refs.
+variables:
+  GIT_STRATEGY: clone
+  GIT_DEPTH: "0"
+  GIT_FETCH_EXTRA_FLAGS: "--prune"
+
 # Python validation job
 test:
   stage: test
@@ -20,8 +28,14 @@ test:
     - python --version
     # Repository-wide syntax/import bytecode compilation check.
     - python -m compileall .
-    # Keep scope lightweight and stable for CI.
-    - pytest -q rag_backend/tests
+    - pytest -q
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
   allow_failure: false
 
 default:

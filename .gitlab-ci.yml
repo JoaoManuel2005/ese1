@@ -28,7 +28,16 @@ test:
     - pip install --no-cache-dir -r requirements-ci.txt
     - df -h .
     - python -m pip check
-    - python -c "import importlib.util,sys; ok=importlib.util.find_spec('torch') is None; print('OK: torch not installed in lightweight CI' if ok else 'ERROR: torch is installed in lightweight CI; remove it from CI deps and keep ML deps in requirements-ml.txt or backend image instead'); sys.exit(0 if ok else 1)"
+    - |
+      python - <<'PY'
+      import importlib.util, sys
+      ok = importlib.util.find_spec("torch") is None
+      if ok:
+          print("OK: torch not installed in lightweight CI")
+      else:
+          print("ERROR: torch is installed in lightweight CI; remove it from CI deps and keep ML deps in requirements-ml.txt or backend image instead")
+      sys.exit(0 if ok else 1)
+      PY
   script:
     - python --version
     # Repository-wide syntax/import bytecode compilation check.

@@ -8,13 +8,14 @@ test:
   stage: test
   image: python:3.9
   variables:
-    # Do not keep pip cache on runner disks.
+    # Avoid pip wheel caching to prevent runner disk exhaustion
+    # ("no space left on device"), especially from large ML wheels.
     PIP_NO_CACHE_DIR: "1"
     PIP_DISABLE_PIP_VERSION_CHECK: "1"
   before_script:
-    - pip install --upgrade pip
+    - pip install --no-cache-dir --upgrade pip
     # Install only CI dependencies (avoids ML/GPU packages like torch/CUDA).
-    - pip install -r requirements-ci.txt
+    - pip install --no-cache-dir -r requirements-ci.txt
   script:
     - python --version
     # Repository-wide syntax/import bytecode compilation check.

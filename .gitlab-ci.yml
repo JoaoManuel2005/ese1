@@ -1,5 +1,4 @@
-# GitLab CI/CD Pipeline for RAG Demo
-# This is a simple pipeline that validates the Python code
+# GitLab CI/CD pipeline for lightweight Python validation
 
 stages:
   - test
@@ -8,18 +7,21 @@ stages:
 test:
   stage: test
   image: python:3.9
+  variables:
+    # Do not keep pip cache on runner disks.
+    PIP_NO_CACHE_DIR: "1"
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
   before_script:
     - pip install --upgrade pip
-    - pip install -r requirements.txt
+    # Install only CI dependencies (avoids ML/GPU packages like torch/CUDA).
+    - pip install -r requirements-ci.txt
   script:
-    - echo "Running basic validation..."
     - python --version
-    - pip list
-    - echo "✅ Dependencies installed successfully"
-    - echo "✅ RAG demo validation passed"
+    # Repository-wide syntax/import bytecode compilation check.
+    - python -m compileall .
+    # Keep scope lightweight and stable for CI.
+    - pytest -q rag_backend/tests
   allow_failure: false
 
-# Skip the default Heroku-based test
-# Override default test behavior
 default:
   interruptible: true

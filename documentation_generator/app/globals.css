@@ -41,7 +41,7 @@ body {
 
 /* Layout: responsive 4/2/1 grid with stable panel sizing */
 .app-shell {
-  max-width: 1680px;
+  max-width: 100%;
   margin: 16px auto;
   padding: 0 12px 20px;
   height: 70%;
@@ -75,6 +75,15 @@ body {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+/* Utility: hide visible scrollbars but keep element scrollable */
+.hide-scrollbar {
+  -ms-overflow-style: none; /* IE, Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 /* Input File box styling */

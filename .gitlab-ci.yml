@@ -54,3 +54,41 @@ test:
 
 default:
   interruptible: true
+
+test_selfhosted:
+  stage: test
+  image: python:3.9
+  tags:
+    - docker-runner
+  variables:
+    PIP_NO_CACHE_DIR: "1"
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  before_script:
+    - df -h .
+    - pip install --no-cache-dir --upgrade pip
+    - pip install --no-cache-dir -r requirements-ci.txt
+    - df -h .
+    - python -m pip check
+    - |
+        python - <<'PY'
+        import importlib.util, sys
+        ok = importlib.util.find_spec("torch") is None
+        print("OK: torch not installed in lightweight CI" if ok else "ERROR: torch installed in lightweight CI")
+        sys.exit(0 if ok else 1)
+        PY
+  script:
+    - python --version
+    - python -m compileall .
+    - pytest -q
+  rules:
+    - if: '$USE_SELF_HOSTED == "true"'
+    - when: never
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+  allow_failure: false
+

@@ -11,11 +11,19 @@ variables:
   GIT_DEPTH: "0"
   GIT_FETCH_EXTRA_FLAGS: "--prune"
 
-# Python validation job
+default:
+  interruptible: true
+
+# Python validation job (university/shared runners by default)
 test:
   stage: test
   image: python:3.9
+  # Skip this job when:
+  # - We're in a merge request pipeline (uni runners currently unreliable/out-of-space)
+  # - Self-hosted fallback is explicitly enabled
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
     - if: '$USE_SELF_HOSTED == "true"'
       when: never
     - when: on_success
@@ -33,15 +41,15 @@ test:
     - df -h .
     - python -m pip check
     - |
-      python - <<'PY'
-      import importlib.util, sys
-      ok = importlib.util.find_spec("torch") is None
-      if ok:
-          print("OK: torch not installed in lightweight CI")
-      else:
-          print("ERROR: torch is installed in lightweight CI; remove it from CI deps and keep ML deps in requirements-ml.txt or backend image instead")
-      sys.exit(0 if ok else 1)
-      PY
+        python - <<'PY'
+        import importlib.util, sys
+        ok = importlib.util.find_spec("torch") is None
+        if ok:
+            print("OK: torch not installed in lightweight CI")
+        else:
+            print("ERROR: torch is installed in lightweight CI; remove it from CI deps and keep ML deps in requirements-ml.txt or backend image instead")
+        sys.exit(0 if ok else 1)
+        PY
   script:
     - python --version
     # Repository-wide syntax/import bytecode compilation check.
@@ -56,14 +64,21 @@ test:
       - unknown_failure
   allow_failure: false
 
-default:
-  interruptible: true
-
+# Self-hosted fallback job (runs on your runner tag)
 test_selfhosted:
   stage: test
   image: python:3.9
   tags:
     - docker-runner
+  # Behaviour:
+  # - In merge request pipelines: show as a manual "play" job (explicit, avoids false greens)
+  # - In branch/manual pipelines: run automatically if USE_SELF_HOSTED=true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+    - if: '$USE_SELF_HOSTED == "true"'
+      when: on_success
+    - when: never
   variables:
     PIP_NO_CACHE_DIR: "1"
     PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -84,9 +99,6 @@ test_selfhosted:
     - python --version
     - python -m compileall .
     - pytest -q
-  rules:
-    - if: '$USE_SELF_HOSTED == "true"'
-    - when: never
   retry:
     max: 2
     when:
@@ -95,4 +107,3 @@ test_selfhosted:
       - api_failure
       - unknown_failure
   allow_failure: false
-

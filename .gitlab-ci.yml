@@ -15,6 +15,10 @@ variables:
 test:
   stage: test
   image: python:3.9
+  rules:
+    - if: '$USE_SELF_HOSTED == "true"'
+      when: never
+    - when: on_success
   variables:
     # Avoid pip wheel caching to prevent runner disk exhaustion
     # ("no space left on device"), especially from large ML wheels.

@@ -164,7 +164,7 @@ async def health_check():
 
 @app.post("/parse-solution", response_model=ParsedSolution)
 async def parse_solution(file: UploadFile = File(...)):
-    """Parse a Power Platform solution using PAC CLI"""
+    """Parse a Power Platform solution using PAC CLI with enhanced DataverseParser"""
     
     if not file.filename.endswith('.zip'):
         return json_error(
@@ -189,22 +189,120 @@ async def parse_solution(file: UploadFile = File(...)):
                 "Ensure the zip contains solution.xml or [Content_Types].xml.",
             )
         
-        # Parse solution using PAC CLI
+        # Parse solution using PAC CLI + DataverseParser (enhanced)
         parsed_data = pac_parser.parse_solution(zip_path, temp_dir)
+        
+        # Build enhanced component list
+        components = []
+        
+        # Add basic components
+        for comp in parsed_data.get("components", []):
+            components.append(SolutionComponent(
+                name=comp.get("name"),
+                type=comp.get("type"),
+                description=comp.get("description"),
+                metadata=comp.get("metadata") if isinstance(comp.get("metadata"), dict) else {}
+            ))
+        
+        # ✨ Add enhanced data as special components
+        enhanced = parsed_data.get("enhanced")
+        if enhanced:
+            # Add knowledge sources (dvtablesearch)
+            for search in enhanced.get("artifacts", {}).get("dv_searches", []):
+                for source in search.get("knowledge_sources", []):
+                    components.append(SolutionComponent(
+                        name=source.get("display_name", "Knowledge Source"),
+                        type="knowledge_source",
+                        description=f"SharePoint: {source.get('web_url', 'N/A')}",
+                        metadata={
+                            "search_id": search.get("id"),
+                            "search_name": search.get("name"),
+                            "web_url": source.get("web_url"),
+                            "sharepoint": source.get("sharepoint", {})
+                        }
+                    ))
+            
+            # Add search entities
+            for entity in enhanced.get("artifacts", {}).get("dv_search_entities", []):
+                components.append(SolutionComponent(
+                    name=entity.get("name", "Search Entity"),
+                    type="search_entity",
+                    description=f"Search-enabled entity: {entity.get('entity_logical_name', 'N/A')}",
+                    metadata={
+                        "entity_id": entity.get("id"),
+                        "dvtablesearch_id": entity.get("dvtablesearch_id"),
+                        "entity_logical_name": entity.get("entity_logical_name")
+                    }
+                ))
+            
+            # Add cloud flows with enhanced metadata
+            for flow in enhanced.get("automation", {}).get("cloud_flows", []):
+                flow_meta = {
+                    "flow_id": flow.get("id"),
+                    "trigger_count": len(flow.get("triggers", [])),
+                    "action_count": flow.get("action_count", 0),
+                    "dataverse_tables": flow.get("dataverse_tables", []),
+                    "child_flows": flow.get("child_flow_calls", [])
+                }
+                
+                # Create description with Dataverse operations
+                tables_used = [t.get("table") for t in flow.get("dataverse_tables", [])]
+                desc_parts = [f"Cloud Flow"]
+                if tables_used:
+                    desc_parts.append(f"Uses Dataverse tables: {', '.join(set(tables_used))}")
+                
+                components.append(SolutionComponent(
+                    name=flow.get("name") or flow.get("id", "Unnamed Flow")[:50],
+                    type="cloud_flow_enhanced",
+                    description=" | ".join(desc_parts),
+                    metadata=flow_meta
+                ))
+            
+            # Add environment variables
+            for env_var in enhanced.get("automation", {}).get("environment_variables", []):
+                components.append(SolutionComponent(
+                    name=env_var.get("name", "Environment Variable"),
+                    type="environment_variable",
+                    description=f"{env_var.get('display_name', 'N/A')} (Type: {env_var.get('type', 'N/A')})",
+                    metadata={
+                        "display_name": env_var.get("display_name"),
+                        "type": env_var.get("type"),
+                        "default_value": env_var.get("default_value")
+                    }
+                ))
+            
+            # Add bot details
+            for bot in enhanced.get("artifacts", {}).get("bots", []):
+                components.append(SolutionComponent(
+                    name=bot.get("display_name") or bot.get("name", "Bot"),
+                    type="bot",
+                    description=f"Copilot Studio Bot: {bot.get('schema_name', 'N/A')}",
+                    metadata={
+                        "schema_name": bot.get("schema_name"),
+                        "file_count": bot.get("file_count", 0)
+                    }
+                ))
+            
+            # Add bot components (topics)
+            topic_count = 0
+            for comp in enhanced.get("artifacts", {}).get("bot_components", []):
+                if comp.get("type") == "topic":
+                    topic_count += 1
+                    components.append(SolutionComponent(
+                        name=comp.get("topic_name", comp.get("name", "Topic")),
+                        type="bot_topic",
+                        description=f"Copilot Studio Topic",
+                        metadata={
+                            "component_name": comp.get("name"),
+                            "file_count": comp.get("file_count", 0)
+                        }
+                    ))
         
         return ParsedSolution(
             solution_name=parsed_data.get("name", "Unknown"),
             version=parsed_data.get("version", "1.0.0"),
             publisher=parsed_data.get("publisher", "Unknown"),
-            components=[
-                SolutionComponent(
-                    name=comp.get("name"),
-                    type=comp.get("type"),
-                    description=comp.get("description"),
-                    metadata=comp.get("metadata") if isinstance(comp.get("metadata"), dict) else {}
-                )
-                for comp in parsed_data.get("components", [])
-            ]
+            components=components
         )
     except Exception as e:
         return json_error(

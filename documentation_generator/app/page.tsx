@@ -15,6 +15,7 @@ import ChatWindow from "./components/ChatWindow";
 import OutputsList from "./components/OutputsList";
 import PreviewPanel from "./components/PreviewPanel";
 import SignInButton from "./components/SignInButton";
+import { useSession, getSession } from "next-auth/react";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -90,9 +91,13 @@ export default function Page() {
   const [docsIngestSignature, setDocsIngestSignature] = useState<string | null>(null);
   const [solutionIngestSignature, setSolutionIngestSignature] = useState<string | null>(null);
   const [datasetId, setDatasetId] = useState("");
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  type ConversationListItem = { id: string; dataset_id: string | null; title: string | null; created_at: number; updated_at: number };
+  const [conversationList, setConversationList] = useState<ConversationListItem[]>([]);
   const [isClient, setIsClient] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
+  const { data: session, status } = useSession();
 
   function mapProviderError(msg: string, status?: number) {
     const lower = msg.toLowerCase();
@@ -219,6 +224,46 @@ export default function Page() {
     if (!isClient || !datasetId) return;
     localStorage.setItem("datasetId", datasetId);
   }, [datasetId, isClient]);
+
+  // Restore most recent conversation when user is signed in
+  useEffect(() => {
+    if (status !== "authenticated" || !session?.user) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const listRes = await fetch("/api/conversations");
+        if (!listRes.ok || cancelled) return;
+        const listData = await listRes.json();
+        const convs = listData.conversations || [];
+        setConversationList(convs);
+        if (convs.length === 0 || cancelled) return;
+
+        const firstId = convs[0].id;
+        const convRes = await fetch(`/api/conversations/${firstId}`);
+        if (!convRes.ok || cancelled) return;
+        const convData = await convRes.json();
+        const msgs = convData.messages || [];
+
+        if (cancelled) return;
+        setChat(
+          msgs.map((m: { id: string; role: string; content: string }) => ({
+            id: m.id,
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          }))
+        );
+        if (convData.dataset_id) setDatasetId(convData.dataset_id);
+        setConversationId(convData.id);
+      } catch {
+        // ignore restore errors
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user, status]);  
 
   useEffect(() => {
     let cancelled = false;
@@ -808,8 +853,23 @@ export default function Page() {
         });
         yPosition -= 20;
         
+        // Sanitize documentation to remove WinAnsi-incompatible characters
+        const sanitizeForPdf = (text: string): string => {
+          return text
+            .replace(/→/g, '->')  // Arrow
+            .replace(/←/g, '<-')  // Left arrow
+            .replace(/↑/g, '^')   // Up arrow
+            .replace(/↓/g, 'v')   // Down arrow
+            .replace(/✓|✔/g, 'v') // Checkmarks
+            .replace(/✗|✘/g, 'x') // X marks
+            .replace(/•/g, '*')   // Bullet (actually this one should work, but just in case)
+            .replace(/[^\x00-\xFF]/g, '?'); // Replace any other non-WinAnsi characters with ?
+        };
+        
+        const sanitizedDocumentation = sanitizeForPdf(documentation);
+        
         // Process documentation content
-        const lines = documentation.split('\n');
+        const lines = sanitizedDocumentation.split('\n');
         for (const line of lines) {
           if (line.startsWith('# ')) {
             yPosition -= 10;
@@ -1080,7 +1140,31 @@ export default function Page() {
             : m
         )
       );
-
+      // Persist this exchange when user is signed in
+      const currentSession = await getSession();
+      if (currentSession?.user) {
+        const toSave = [
+          { role: "user" as const, content: text },
+          { role: "assistant" as const, content: assistantMessage },
+        ];
+        try {
+          const res = await fetch("/api/conversations/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              conversation_id: conversationId ?? undefined,
+              dataset_id: activeDatasetId,
+              messages: toSave,
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.conversation_id) setConversationId(data.conversation_id);
+          }
+        } catch {
+          // ignore save errors
+        }
+      }
       if (shouldRegenerate && hasSolutionFile() && outputs.length > 0) {
         // Automatically regenerate documentation with current chat context
         setTimeout(() => {
@@ -1101,6 +1185,41 @@ export default function Page() {
       );
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadConversation(id: string) {
+    try {
+      const res = await fetch(`/api/conversations/${id}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const msgs = data.messages || [];
+      setChat(
+        msgs.map((m: { id: string; role: string; content: string }) => ({
+          id: m.id,
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }))
+      );
+      if (data.dataset_id) setDatasetId(data.dataset_id);
+      setConversationId(data.id);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function deleteConversation(id: string) {
+    try {
+      const res = await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+      if (!res.ok) return;
+      setConversationList((prev) => prev.filter((c) => c.id !== id));
+      if (conversationId === id) {
+        setChat([]);
+        setMessage("");
+        setConversationId(null);
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -1214,11 +1333,77 @@ export default function Page() {
             </div>
           </div>
 
+          {status === "authenticated" && conversationList.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#555" }}>Past conversations</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto" }}>
+                {conversationList.map((conv) => (
+                    <div
+                      key={conv.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => loadConversation(conv.id)}
+                        style={{
+                          flex: 1,
+                          padding: "6px 10px",
+                          textAlign: "left",
+                          fontSize: 12,
+                          border: conversationId === conv.id ? "1px solid #1f7aec" : "1px solid #ddd",
+                          borderRadius: 6,
+                          background: conversationId === conv.id ? "#e8f0fe" : "#fafafa",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {conv.title || "Chat"} · {new Date(conv.updated_at * 1000).toLocaleDateString()}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id); }}
+                        title="Delete conversation"
+                        style={{
+                          padding: "4px 8px",
+                          fontSize: 12,
+                          border: "1px solid #ccc",
+                          borderRadius: 6,
+                          background: "#fff",
+                          cursor: "pointer",
+                          color: "#666",
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
           <ChatWindow
             chat={chat}
             loading={loading}
             onSend={(txt) => void send(txt)}
-            onClear={() => { setChat([]); setMessage(""); }}
+            onClear={async () => {
+              if (conversationId) {
+                try {
+                  const res = await fetch("/api/conversations");
+                  if (res.ok) {
+                    const data = await res.json();
+                    setConversationList(data.conversations || []);
+                  }
+                } catch {
+                  // ignore
+                }
+              }
+              setChat([]);
+              setMessage("");
+              setConversationId(null);
+            }}
             expandedSources={expandedSources}
             onToggleSources={(id) => setExpandedSources((prev) => ({ ...prev, [id]: !prev[id] }))}
             bottomRef={bottomRef}

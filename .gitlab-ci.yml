@@ -1,7 +1,11 @@
-# GitLab CI/CD pipeline for lightweight Python validation
+image: docker:latest
+
+variables:
+  DOCKER_HOST: unix:///var/run/docker.sock
 
 stages:
   - test
+  - build
 
 # Runner checkout hardening:
 # this runner has intermittent failures fetching ephemeral refs/pipelines/* refs.
@@ -69,7 +73,7 @@ test_selfhosted:
   stage: test
   image: python:3.9
   tags:
-    - docker-runner
+    - docker-build
   # Behaviour:
   # - In merge request pipelines: show as a manual "play" job (explicit, avoids false greens)
   # - In branch/manual pipelines: run automatically if USE_SELF_HOSTED=true
@@ -107,3 +111,32 @@ test_selfhosted:
       - api_failure
       - unknown_failure
   allow_failure: false
+
+
+build:
+  stage: build
+  tags: 
+    - docker-build
+  # Behaviour:
+  # - In merge request pipelines: show as a manual "play" job (explicit, avoids false greens)
+  # - In branch/manual pipelines: run automatically if USE_SELF_HOSTED=true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+    - if: '$USE_SELF_HOSTED == "true"'
+      when: on_success
+    - when: never
+  script:
+    - echo "Building rag_backend image..."
+    - docker build -t rag_backend:latest ./rag_backend
+
+    - echo "Building documentation_generator image..."
+    - docker build -t documentation_generator:latest ./documentation_generator
+
+    - echo "Building pac_cli image..."
+    - docker build -t pac_cli:latest ./pac-cli
+
+
+
+
+

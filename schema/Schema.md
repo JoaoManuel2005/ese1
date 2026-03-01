@@ -136,22 +136,6 @@ erDiagram
 
 ```
 
-
-## Connector dependency map format
-
-```mermaid
-flowchart LR
-
-    APP_Main --> CONN_SharePoint
-    APP_Main --> CONN_Dataverse
-
-    FLOW_Process --> CONN_Outlook
-    FLOW_Process --> CONN_HTTP
-    FLOW_Process --> CONN_SQL
-
-```
-
-
 ## Solution Component Map
 ```mermaid
 flowchart TB
@@ -167,41 +151,59 @@ flowchart TB
 
 ```
 
-
-
-## Security Role Mapping
-
-```mermaid
-flowchart LR
-
-    ROLE_Admin --> APP_FullAccess
-    ROLE_User --> APP_ReadOnly
-    ROLE_Approver --> FLOW_ApprovalAction
-
-    ROLE_Admin --> TABLE_All
-    ROLE_User --> TABLE_Limited
-
-```
-
-
-## Flow Execution Pattern
+## Flow Execution + Connector Dependency Map
 
 ```mermaid
 flowchart TB
 
-    Trigger[Trigger: PowerApps]
+    %% ==============================
+    %% TRIGGER SOURCE
+    %% ==============================
 
-    Validate[Validate Input]
-    GetData[Retrieve Data]
-    Process[Process Logic]
-    Store[Update Data Source]
-    Notify[Send Notification]
+    APP[APP_MainApplication]
+    USER[End User]
 
-    Trigger --> Validate
-    Validate --> GetData
-    GetData --> Process
-    Process --> Store
-    Store --> Notify
+    USER --> APP
+    APP --> FLOW
 
+    %% ==============================
+    %% FLOW EXECUTION
+    %% ==============================
+
+    subgraph FLOW[FLOW_PrimaryAutomation]
+
+        Trigger[Trigger: PowerApps]
+
+        Validate[Validate Input]
+        GetData[Retrieve Data]
+        Process[Process Logic]
+        Store[Update Data Source]
+        Notify[Send Notification]
+
+        Trigger --> Validate
+        Validate --> GetData
+        GetData --> Process
+        Process --> Store
+        Store --> Notify
+
+    end
+
+    %% ==============================
+    %% CONNECTOR DEPENDENCIES
+    %% ==============================
+
+    Validate --> CONN_Dataverse
+    GetData --> CONN_SQL
+    Process --> CONN_HTTP
+    Store --> CONN_SharePoint
+    Notify --> CONN_Outlook
+
+    %% ==============================
+    %% EXTERNAL SYSTEM DEPENDENCIES
+    %% ==============================
+
+    CONN_HTTP --> EXT_ExternalAPI
+    CONN_Outlook --> EXT_EmailService
+    CONN_SQL --> EXT_SQLDatabase
 ```
 

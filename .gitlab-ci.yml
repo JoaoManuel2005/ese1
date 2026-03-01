@@ -29,7 +29,7 @@ build:
     - docker save documentation_generator:latest -o documentation_generator.tar
 
     - echo "Building pac_cli image..."
-    - docker build -t pac_cli:latest ./pac_cli
+    - docker build -t pac_cli:latest ./pac-cli
     - docker save pac_cli:latest -o pac_cli.tar
 
   artifacts:

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8000";
+const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8001";
 
 // Configure route for long-running operations
 export const maxDuration = 900; // 15 minutes

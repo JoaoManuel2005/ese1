@@ -5,6 +5,7 @@
   --foreground: #000000;
   --border: #e0e0e5;
   --panel-bg: #fff;
+  --panel-bg-selected: #f0f6ff;
   --input-bg: #fff;
   --muted: #555;
   --danger: #a00;
@@ -26,6 +27,7 @@
     --foreground: #ffffff;
     --border: #333;
     --panel-bg: #0f0f0f;
+    --panel-bg-selected: #1a2744;
     --input-bg: #111;
     --muted: #bbb;
     --danger: #ff6b6b;

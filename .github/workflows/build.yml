@@ -1,0 +1,45 @@
+name: Build Docker Images
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+jobs:
+  build:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build rag_backend
+        run: |
+          docker build -t rag_backend:latest ./rag_backend
+          docker save rag_backend:latest -o rag_backend.tar
+
+      - name: Build documentation_generator
+        run: |
+          docker build -t documentation_generator:latest ./documentation_generator
+          docker save documentation_generator:latest -o documentation_generator.tar
+
+      - name: Build pac_cli
+        run: |
+          docker build -t pac_cli:latest ./pac-cli
+          docker save pac_cli:latest -o pac_cli.tar
+
+      - name: Upload Docker image artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images
+          path: |
+            rag_backend.tar
+            documentation_generator.tar
+            pac_cli.tar
+          retention-days: 7

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Change to project root directory
+cd "$(dirname "$0")/.."
+
 VAULT="docgenvault"
 
 get_secret() {
@@ -31,6 +34,9 @@ mask_secret() {
 
 openai_key="$(get_secret "AI-API-KEY")"
 azure_endpoint="$(get_secret "AZURE-OPENAI-ENDPOINT")"
+# Strip /openai/v1/ suffix if present (SDK adds its own path)
+azure_endpoint="${azure_endpoint%/openai/v1/}"
+azure_endpoint="${azure_endpoint%/openai/v1}"
 nextauth_secret="$(get_secret "NEXTAUTH-SECRET")"
 azure_client_id="$(get_secret "AZURE-AD-CLIENT-ID")"
 azure_client_secret="$(get_secret "AZURE-AD-CLIENT-SECRET")"
@@ -40,6 +46,8 @@ cat > .env.generated <<EOF
 OPENAI_API_KEY=$openai_key
 AZURE_OPENAI_API_KEY=$openai_key
 AZURE_OPENAI_ENDPOINT=$azure_endpoint
+OPENAI_MODEL=gpt4.1
+LLM_PROVIDER=cloud
 NEXTAUTH_SECRET=$nextauth_secret
 AZURE_AD_CLIENT_ID=$azure_client_id
 AZURE_AD_CLIENT_SECRET=$azure_client_secret
@@ -50,12 +58,14 @@ echo "Wrote .env.generated with secrets:"
 echo "OPENAI_API_KEY=$(mask_secret "$openai_key")"
 echo "AZURE_OPENAI_API_KEY=$(mask_secret "$openai_key")"
 echo "AZURE_OPENAI_ENDPOINT=$(mask_secret "$azure_endpoint")"
+echo "OPENAI_MODEL=gpt4.1"
+echo "LLM_PROVIDER=cloud"
 echo "NEXTAUTH_SECRET=$(mask_secret "$nextauth_secret")"
 echo "AZURE_AD_CLIENT_ID=$(mask_secret "$azure_client_id")"
 echo "AZURE_AD_CLIENT_SECRET=$(mask_secret "$azure_client_secret")"
 echo "AZURE_AD_TENANT_ID=$(mask_secret "$azure_tenant_id")"
 
-docker compose up -d --build --force-recreate
+docker compose --env-file .env.generated -f docker-compose.dotnet.yml up -d --build --force-recreate
 
 required_vars=(
   "NEXTAUTH_SECRET"

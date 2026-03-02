@@ -983,9 +983,9 @@ export default function Page() {
         code: e?.code,
         hint: e?.hint,
       });
+      setGenerateProgress(null);
     } finally {
       setGenerating(false);
-      setGenerateProgress(null);
     }
   }
 
@@ -1453,7 +1453,7 @@ export default function Page() {
                 : "Uses attached files with current model/system prompt/temperature."}
               </div>
             </div>
-            {generating && generateProgress && (
+            {generateProgress && (
               <div style={{ marginTop: 10, marginBottom: 0 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12, color: "#555" }}>
                   <span>{generateProgress.stage}</span>

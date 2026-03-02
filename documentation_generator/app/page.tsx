@@ -66,7 +66,7 @@ export default function Page() {
   const [outputs, setOutputs] = useState<OutputFile[]>([]);
   const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [generateProgress, setGenerateProgress] = useState<{ stage: string; percent: number } | null>(null);
+  const [generateProgress, setGenerateProgress] = useState<{ stage: string; percent: number; failed?: boolean } | null>(null);
   const [generateError, setGenerateError] = useState<GenerateError | null>(null);
   const [pdfRenderError, setPdfRenderError] = useState<string | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
@@ -983,7 +983,7 @@ export default function Page() {
         code: e?.code,
         hint: e?.hint,
       });
-      setGenerateProgress(null);
+      setGenerateProgress({ stage: "Failed", percent: 0, failed: true });
     } finally {
       setGenerating(false);
     }
@@ -1463,19 +1463,19 @@ export default function Page() {
                   style={{
                     height: 6,
                     borderRadius: 3,
-                    background: "#e8e8ec",
+                    background: generateProgress.failed ? "#ffe0e0" : "#e8e8ec",
                     overflow: "hidden",
                   }}
                 >
-                  <div
-                    style={{
-                      height: "100%",
-                      width: `${Math.min(generateProgress.percent, 100)}%`,
-                      background: hasSolution ? "#0a6b3d" : "#1f7aec",
-                      borderRadius: 3,
-                      transition: "width 0.3s ease-out",
-                    }}
-                  />
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${Math.min(generateProgress.percent, 100)}%`,
+                    background: generateProgress.failed ? "#c41e3a" : hasSolution ? "#0a6b3d" : "#1f7aec",
+                    borderRadius: 3,
+                    transition: "width 0.3s ease-out",
+                  }}
+                />
                 </div>
               </div>
             )}

@@ -17,8 +17,8 @@ const OutputsList: FC<Props> = ({ outputs, selectedOutputId, onSelect, onDownloa
   return (
     <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8 }}>
       {outputs.map((out) => (
-        <li key={out.id} onClick={() => onSelect(out.id)} style={{ border: out.id === selectedOutputId ? "1px solid var(--primary)" : "1px solid var(--border)", background: out.id === selectedOutputId ? "#f0f6ff" : "var(--panel-bg)", borderRadius: 10, padding: 10, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-          <div>
+        <li key={out.id} onClick={() => onSelect(out.id)} style={{ border: out.id === selectedOutputId ? "1px solid var(--primary)" : "1px solid var(--border)", background: out.id === selectedOutputId ? "var(--panel-bg-selected)" : "var(--panel-bg)", borderRadius: 10, padding: 10, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div style={{ color: "var(--foreground)" }}>
             <div style={{ fontWeight: 600 }}>{out.filename}</div>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>{new Date(out.createdAt).toLocaleTimeString()}</div>
           </div>

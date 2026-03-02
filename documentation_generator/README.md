@@ -34,3 +34,70 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Mermaid Diagram Rendering
+
+This project includes client-side Mermaid diagram rendering capabilities using [mermaid.js](https://mermaid.js.org/).
+
+### Components
+
+#### `MermaidDiagram`
+
+A React component for rendering Mermaid diagrams directly from source code:
+
+```tsx
+import MermaidDiagram from "@/app/components/MermaidDiagram";
+
+function MyComponent() {
+  return (
+    <MermaidDiagram
+      source={`
+        graph TD
+          A[Start] --> B[End]
+      `}
+    />
+  );
+}
+```
+
+**Props:**
+- `source` (string, required): Mermaid diagram source code
+- `className` (string, optional): CSS class for the container
+- `fallback` (ReactNode, optional): Custom fallback UI when rendering fails
+
+#### `MarkdownWithMermaid`
+
+A Markdown renderer that automatically converts ````mermaid` code blocks into interactive diagrams:
+
+```tsx
+import MarkdownWithMermaid from "@/app/components/MarkdownWithMermaid";
+
+function DocumentationView() {
+  const markdown = `
+    # My Documentation
+    
+    \`\`\`mermaid
+    graph LR
+      A --> B
+    \`\`\`
+  `;
+  
+  return <MarkdownWithMermaid content={markdown} />;
+}
+```
+
+**Props:**
+- `content` (string, required): Markdown content with optional mermaid blocks
+- `className` (string, optional): CSS class for the markdown container
+
+### Testing
+
+Visit `/test/mermaid` in development mode to see examples of all diagram types.
+
+### Benefits of Client-Side Rendering
+
+✅ **No server dependencies**: No need for mmdc CLI or Puppeteer  
+✅ **Better performance**: Rendering happens in the browser, offloading the server  
+✅ **Interactive**: Diagrams can be styled and potentially made interactive  
+✅ **Scalable**: Each client renders their own diagrams
+

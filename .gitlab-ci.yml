@@ -18,10 +18,10 @@ variables:
 default:
   interruptible: true
 
-# Python validation job (university/shared runners by default)
+# .NET validation job (university/shared runners by default)
 test:
   stage: test
-  image: python:3.9
+  image: mcr.microsoft.com/dotnet/sdk:8.0
   # Skip this job when:
   # - We're in a merge request pipeline (uni runners currently unreliable/out-of-space)
   # - Self-hosted fallback is explicitly enabled
@@ -31,34 +31,17 @@ test:
     - if: '$USE_SELF_HOSTED == "true"'
       when: never
     - when: on_success
-  variables:
-    # Avoid pip wheel caching to prevent runner disk exhaustion
-    # ("no space left on device"), especially from large ML wheels.
-    PIP_NO_CACHE_DIR: "1"
-    PIP_DISABLE_PIP_VERSION_CHECK: "1"
   before_script:
     # Quick disk telemetry to debug runner space issues.
     - df -h .
-    - pip install --no-cache-dir --upgrade pip
-    # Install only CI dependencies (avoids ML/GPU packages like torch/CUDA).
-    - pip install --no-cache-dir -r requirements-ci.txt
-    - df -h .
-    - python -m pip check
-    - |
-        python - <<'PY'
-        import importlib.util, sys
-        ok = importlib.util.find_spec("torch") is None
-        if ok:
-            print("OK: torch not installed in lightweight CI")
-        else:
-            print("ERROR: torch is installed in lightweight CI; remove it from CI deps and keep ML deps in requirements-ml.txt or backend image instead")
-        sys.exit(0 if ok else 1)
-        PY
+    - dotnet --version
   script:
-    - python --version
-    # Repository-wide syntax/import bytecode compilation check.
-    - python -m compileall .
-    - pytest -q
+    # Restore dependencies for all projects
+    - dotnet restore ese1.sln
+    # Build the solution
+    - dotnet build ese1.sln --no-restore --configuration Release
+    # Run tests
+    - dotnet test ese1.sln --no-build --configuration Release --verbosity normal
   retry:
     max: 2
     when:
@@ -71,7 +54,7 @@ test:
 # Self-hosted fallback job (runs on your runner tag)
 test_selfhosted:
   stage: test
-  image: python:3.9
+  image: mcr.microsoft.com/dotnet/sdk:8.0
   tags:
     - docker-build
   # Behaviour:
@@ -83,26 +66,16 @@ test_selfhosted:
     - if: '$USE_SELF_HOSTED == "true"'
       when: on_success
     - when: never
-  variables:
-    PIP_NO_CACHE_DIR: "1"
-    PIP_DISABLE_PIP_VERSION_CHECK: "1"
   before_script:
     - df -h .
-    - pip install --no-cache-dir --upgrade pip
-    - pip install --no-cache-dir -r requirements-ci.txt
-    - df -h .
-    - python -m pip check
-    - |
-        python - <<'PY'
-        import importlib.util, sys
-        ok = importlib.util.find_spec("torch") is None
-        print("OK: torch not installed in lightweight CI" if ok else "ERROR: torch installed in lightweight CI")
-        sys.exit(0 if ok else 1)
-        PY
+    - dotnet --version
   script:
-    - python --version
-    - python -m compileall .
-    - pytest -q
+    # Restore dependencies for all projects
+    - dotnet restore ese1.sln
+    # Build the solution
+    - dotnet build ese1.sln --no-restore --configuration Release
+    # Run tests
+    - dotnet test ese1.sln --no-build --configuration Release --verbosity normal
   retry:
     max: 2
     when:

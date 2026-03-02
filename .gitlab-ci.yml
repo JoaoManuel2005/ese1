@@ -101,7 +101,7 @@ build:
     - when: never
   script:
     - echo "Building rag_backend image..."
-    - docker build -t rag_backend:latest ./rag_backend
+    - docker build -t rag_backend:latest ./dotnet-backend
 
     - echo "Building documentation_generator image..."
     - docker build -t documentation_generator:latest ./documentation_generator

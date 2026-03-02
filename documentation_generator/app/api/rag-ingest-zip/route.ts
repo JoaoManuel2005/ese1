@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 
 const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8000";
 
+// Configure route for long-running operations
+export const maxDuration = 900; // 15 minutes
+
 export async function POST(req: Request) {
   try {
     // Get the form data with the ZIP file
@@ -29,10 +32,17 @@ export async function POST(req: Request) {
       backendFormData.append("dataset_id", datasetId);
     }
 
+    // Set 15-minute timeout for large ZIP ingestion
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15 * 60 * 1000);
+
     const response = await fetch(`${RAG_BACKEND_URL}/rag/ingest-solution`, {
       method: "POST",
       body: backendFormData,
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text();

@@ -1,0 +1,65 @@
+services:
+  rag-backend-dotnet:
+    build:
+      context: ./dotnet-backend
+      dockerfile: Dockerfile
+    container_name: rag-backend-dotnet
+    ports:
+      - "8001:8001"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://0.0.0.0:8001
+      - DOC_GENERATION_MODE=${DOC_GENERATION_MODE:-llm}
+      - LLM_PROVIDER=${LLM_PROVIDER:-local}
+      - LOCAL_LLM_BASE_URL=${LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434}
+      - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-llama3.1:8b}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      - ONNX_MODEL_PATH=/app/Models/all-MiniLM-L6-v2.onnx
+    volumes:
+      - ./pac-workspace:/pac-workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  documentation-generator:
+    build:
+      context: ./documentation_generator
+      dockerfile: Dockerfile
+    container_name: documentation-generator
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - RAG_BACKEND_URL=http://rag-backend-dotnet:8001
+      - RUNTIME_CONFIG_PATH=/app/runtime-data/.runtime-config.json
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - AZURE_AD_CLIENT_ID=${AZURE_AD_CLIENT_ID:-}
+      - AZURE_AD_CLIENT_SECRET=${AZURE_AD_CLIENT_SECRET:-}
+      - AZURE_AD_TENANT_ID=${AZURE_AD_TENANT_ID:-}
+    volumes:
+      - ./documentation_generator/runtime-data:/app/runtime-data
+    depends_on:
+      rag-backend-dotnet:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Keep the existing pac-cli container for PAC CLI support
+  pac-cli:
+    build:
+      context: ./pac-cli
+      dockerfile: Dockerfile
+    container_name: pac-cli
+    volumes:
+      - ./pac-workspace:/pac-workspace
+    restart: unless-stopped

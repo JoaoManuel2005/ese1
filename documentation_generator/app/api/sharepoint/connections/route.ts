@@ -4,7 +4,12 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
 import { sharePointConnectionStore } from "../../../../lib/sharePointConnections";
 
-function resolveTenantId(session: Awaited<ReturnType<typeof getServerSession>>): string {
+type ServerSessionLike = {
+  tenantId?: string;
+  user?: { email?: string | null } | null;
+} | null;
+
+function resolveTenantId(session: ServerSessionLike): string {
   if (session?.tenantId && session.tenantId.trim().length > 0) {
     return session.tenantId;
   }
@@ -18,7 +23,7 @@ function resolveTenantId(session: Awaited<ReturnType<typeof getServerSession>>):
 }
 
 export async function POST() {
-  const session = await getServerSession(authOptions);
+  const session = (await getServerSession(authOptions)) as ServerSessionLike;
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

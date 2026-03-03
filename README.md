@@ -80,6 +80,30 @@ If prompted, select the correct subscription.
 
 ---
 
+## Python Dependency Profiles
+
+This repository uses split Python dependency sets:
+
+- `requirements.txt`: core runtime dependencies only (no heavyweight ML embedding stack).
+- `requirements-ml.txt`: optional ML/RAG extras (LlamaIndex, ChromaDB, FAISS, sentence-transformers).
+- `requirements-ci.txt`: minimal CI test dependencies.
+
+Install by use case:
+
+    pip install -r requirements.txt
+
+For full ML/RAG workflows:
+
+    pip install -r requirements.txt -r requirements-ml.txt
+
+For CI-only checks:
+
+    pip install -r requirements-ci.txt
+
+Note: existing Docker/dev backend setup uses `rag_backend/requirements.txt` and remains unchanged.
+
+---
+
 ## Running the Full Application (Docker)
 
 To fetch secrets from Azure Key Vault and start all services:

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { validateSolutionZip } from "../../../lib/validateSolutionZip";
 
-const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8000";
+const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8001";
 
 export async function POST(req: Request) {
   try {

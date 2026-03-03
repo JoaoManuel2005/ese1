@@ -1,0 +1,14 @@
+# Optional ML/RAG dependencies.
+# Install these only when running embedding/vector search workflows.
+
+# LlamaIndex Stack
+llama-index==0.14.5
+llama-index-core==0.14.5
+llama-index-llms-openai==0.6.5
+llama-index-embeddings-openai==0.5.1
+llama-index-readers-file==0.5.4
+
+# Vector Databases & Embeddings
+chromadb==1.2.0
+faiss-cpu==1.12.0
+sentence-transformers

@@ -1,5 +1,8 @@
 $ErrorActionPreference = "Stop"
 
+# Change to project root directory
+Set-Location (Join-Path $PSScriptRoot "..")
+
 $vault = "docgenvault"
 
 function Get-Secret {
@@ -30,6 +33,8 @@ function Mask-Secret {
 # Fetch secrets from Key Vault
 $openAiKey = Get-Secret -Vault $vault -Name "AI-API-KEY"
 $azureEndpoint = Get-Secret -Vault $vault -Name "AZURE-OPENAI-ENDPOINT"
+# Strip /openai/v1/ suffix if present (SDK adds its own path)
+$azureEndpoint = $azureEndpoint -replace '/openai/v1/?$', ''
 $nextAuthSecret = Get-Secret -Vault $vault -Name "NEXTAUTH-SECRET"
 $azureClientID = Get-Secret -Vault $vault -Name "AZURE-AD-CLIENT-ID"
 $azureClientSecret = Get-Secret -Vault $vault -Name "AZURE-AD-CLIENT-SECRET"
@@ -40,6 +45,8 @@ $azureTenantID = Get-Secret -Vault $vault -Name "AZURE-AD-TENANT-ID"
 OPENAI_API_KEY=$openAiKey
 AZURE_OPENAI_API_KEY=$openAiKey
 AZURE_OPENAI_ENDPOINT=$azureEndpoint
+OPENAI_MODEL=gpt4.1
+LLM_PROVIDER=cloud
 NEXTAUTH_SECRET=$nextAuthSecret
 AZURE_AD_CLIENT_ID=$azureClientID
 AZURE_AD_CLIENT_SECRET=$azureClientSecret
@@ -50,13 +57,15 @@ Write-Host "Wrote .env.generated with secrets:"
 Write-Host ("OPENAI_API_KEY=" + (Mask-Secret $openAiKey))
 Write-Host ("AZURE_OPENAI_API_KEY=" + (Mask-Secret $openAiKey))
 Write-Host ("AZURE_OPENAI_ENDPOINT=" + (Mask-Secret $azureEndpoint))
+Write-Host "OPENAI_MODEL=gpt4.1"
+Write-Host "LLM_PROVIDER=cloud"
 Write-Host ("NEXTAUTH_SECRET=" + (Mask-Secret $nextAuthSecret))
 Write-Host ("AZURE_AD_CLIENT_ID=" + (Mask-Secret $azureClientID))
 Write-Host ("AZURE_AD_CLIENT_SECRET=" + (Mask-Secret $azureClientSecret))
 Write-Host ("AZURE_AD_TENANT_ID=" + (Mask-Secret $azureTenantID))
 
 # Run stack
-docker compose up -d --build --force-recreate
+docker compose --env-file .env.generated -f docker-compose.dotnet.yml up -d --build --force-recreate
 if ($LASTEXITCODE -ne 0) {
   throw "docker compose up failed."
 }

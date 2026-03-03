@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { validateSolutionZip } from "../../../lib/validateSolutionZip";
+import { isSharePointEnrichmentEnabled } from "../../../lib/featureFlags";
 
 const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8001";
 
@@ -57,7 +58,11 @@ export async function POST(req: Request) {
     }
 
     const data = await response.json();
-    return NextResponse.json({ ok: true, data });
+    return NextResponse.json({
+      ok: true,
+      data,
+      sharePointEnrichmentEnabled: isSharePointEnrichmentEnabled(),
+    });
   } catch (error: any) {
     console.error("Parse solution error:", error);
     return jsonError("SERVER_ERROR", error?.message || "Internal server error", undefined, 500);

@@ -52,6 +52,26 @@ type GenerateError = {
   hint?: string;
 };
 
+type SharePointRef = {
+  url: string;
+  kind: "site" | "list" | "library" | "unknown";
+  source: string;
+};
+
+type ParsedSolutionResult = {
+  solution_name?: string;
+  version?: string;
+  publisher?: string;
+  components?: unknown[];
+  sharepointRefs?: SharePointRef[];
+  [key: string]: unknown;
+};
+
+type PendingSolutionGeneration = {
+  parsedSolution: ParsedSolutionResult;
+  activeDatasetId: string;
+};
+
 const MAX_TEXT_CHARS = 200 * 1024; // ~200KB cap for in-memory text
 const TEXT_EXTS = ["txt", "md", "json", "csv", "js", "ts", "py"];
 const SOLUTION_EXT = "zip"; // Power Platform solution files
@@ -82,6 +102,9 @@ export default function Page() {
   const [modelsError, setModelsError] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [endpoint, setEndpoint] = useState("");
+  const [showSharePointModal, setShowSharePointModal] = useState(false);
+  const [sharePointModalNotice, setSharePointModalNotice] = useState<string | null>(null);
+  const [pendingSolutionGeneration, setPendingSolutionGeneration] = useState<PendingSolutionGeneration | null>(null);
   
   const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number; provider?: string; model?: string; backend_online?: boolean } | null>(null);
   const [corpusType, setCorpusType] = useState<"solution_zip" | "docs" | "unknown" | null>(null);
@@ -672,8 +695,8 @@ export default function Page() {
     return uploadClassification?.type === "power_platform_solution_zip";
   }
 
-  // Generate docs for Power Platform solution using PAC CLI + RAG
-  async function generateSolutionDocs(onProgress?: (stage: string, percent: number) => void) {
+  // Base parse path for Power Platform solution (ingest + parse).
+  async function runBaseSolutionParse(onProgress?: (stage: string, percent: number) => void) {
     const activeDatasetId = datasetId || createDatasetId();
     if (!datasetId) {
       setDatasetId(activeDatasetId);
@@ -725,9 +748,17 @@ export default function Page() {
       throw err;
     }
 
-    const parsedSolution = parsePayload?.data || parsePayload;
+    const parsedSolution = (parsePayload?.data || parsePayload) as ParsedSolutionResult;
+    const sharePointEnrichmentEnabled = Boolean(parsePayload?.sharePointEnrichmentEnabled);
 
-    // Step 3: Generate documentation with RAG pipeline (API key from runtime settings)
+    return { parsedSolution, activeDatasetId, sharePointEnrichmentEnabled };
+  }
+
+  async function generateDocumentationFromParsedSolution(
+    parsedSolution: ParsedSolutionResult,
+    activeDatasetId: string,
+    onProgress?: (stage: string, percent: number) => void
+  ) {
     onProgress?.("Generating documentation with AI...", 65);
     const modelForProvider = llmSelection.model;
 
@@ -760,73 +791,125 @@ export default function Page() {
     }
 
     const docResult = await genRes.json();
-    
-    return { parsedSolution, documentation: docResult.documentation };
+    return docResult.documentation as string;
+  }
+
+  async function createSolutionOutput(parsedSolution: ParsedSolutionResult, documentation: string) {
+    const solutionName = parsedSolution.solution_name || "solution";
+    const componentsCount = Array.isArray(parsedSolution.components) ? parsedSolution.components.length : 0;
+    const filename = `${solutionName}_documentation.pdf`;
+    const metadata = `Version: ${parsedSolution.version || "N/A"} | Publisher: ${parsedSolution.publisher || "Unknown"} | Components: ${componentsCount}`;
+
+    const pdfResponse = await fetch("/api/markdown-to-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        markdown: documentation,
+        title: `${solutionName} Documentation`,
+        metadata,
+      }),
+    });
+
+    if (!pdfResponse.ok) {
+      const errorData = await pdfResponse.json().catch(() => ({}));
+      throw new Error(errorData.error || "Failed to generate PDF");
+    }
+
+    const pdfData = await pdfResponse.json();
+    const output: OutputFile = {
+      id: `${filename}-${Date.now()}`,
+      filename,
+      bytesBase64: pdfData.pdfBase64,
+      mime: "application/pdf",
+      createdAt: Date.now(),
+      htmlPreview: pdfData.html,
+      markdownContent: documentation,
+    };
+    upsertOutput(output);
+    setSelectedOutputId(output.id);
+
+    if (chat.length > 0) {
+      const successId = createMessageId();
+      setChat((c) => [
+        ...c,
+        {
+          id: successId,
+          role: "assistant",
+          content: "Document regenerated successfully. Your preferences have been applied. Check the Output Files panel to view the updated PDF.",
+        },
+      ]);
+    }
+  }
+
+  async function continueWithoutSharePointEnrichment() {
+    if (!pendingSolutionGeneration) {
+      setShowSharePointModal(false);
+      return;
+    }
+
+    setShowSharePointModal(false);
+    setSharePointModalNotice(null);
+    setGenerateError(null);
+    setGenerating(true);
+
+    try {
+      const { parsedSolution, activeDatasetId } = pendingSolutionGeneration;
+      const documentation = await generateDocumentationFromParsedSolution(
+        parsedSolution,
+        activeDatasetId,
+        (stage, percent) => setGenerateProgress({ stage, percent })
+      );
+      await createSolutionOutput(parsedSolution, documentation);
+      setGenerateProgress({ stage: "Complete", percent: 100 });
+    } catch (e: any) {
+      setGenerateError({
+        message: e?.message ?? "Failed to generate documentation",
+        code: e?.code,
+        hint: e?.hint,
+      });
+      setGenerateProgress({ stage: "Failed", percent: 0, failed: true });
+    } finally {
+      setGenerating(false);
+      setPendingSolutionGeneration(null);
+    }
+  }
+
+  function handleConnectSharePoint() {
+    setSharePointModalNotice("SharePoint connection flow is coming next. Continue without SharePoint enrichment for now.");
   }
 
   async function generateDocs() {
     if (generating || files.length === 0) return;
     setGenerating(true);
     setGenerateError(null);
+    setShowSharePointModal(false);
+    setSharePointModalNotice(null);
+    setPendingSolutionGeneration(null);
     setGenerateProgress(hasSolutionFile() ? { stage: "Starting...", percent: 0 } : { stage: "Generating...", percent: 0 });
 
     try {
-      // Check if we have a solution file - use PAC CLI + RAG pipeline
       if (hasSolutionFile()) {
-        const { parsedSolution, documentation } = await generateSolutionDocs((stage, percent) =>
+        const { parsedSolution, activeDatasetId, sharePointEnrichmentEnabled } = await runBaseSolutionParse((stage, percent) =>
           setGenerateProgress({ stage, percent })
         );
-        
-        // Create output with the generated documentation
-        const createdAt = new Date().toISOString();
-        const filename = `${parsedSolution.solution_name || "solution"}_documentation.pdf`;
-        
-        // Generate PDF with Mermaid support using the markdown-to-pdf API
-        const metadata = `Version: ${parsedSolution.version} | Publisher: ${parsedSolution.publisher} | Components: ${parsedSolution.components?.length || 0}`;
-        const pdfResponse = await fetch("/api/markdown-to-pdf", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            markdown: documentation,
-            title: `${parsedSolution.solution_name} Documentation`,
-            metadata: metadata,
-          }),
-        });
 
-        if (!pdfResponse.ok) {
-          const errorData = await pdfResponse.json().catch(() => ({}));
-          throw new Error(errorData.error || "Failed to generate PDF");
+        const sharepointRefs = Array.isArray(parsedSolution?.sharepointRefs)
+          ? parsedSolution.sharepointRefs
+          : [];
+
+        if (sharePointEnrichmentEnabled && sharepointRefs.length > 0) {
+          setPendingSolutionGeneration({ parsedSolution, activeDatasetId });
+          setShowSharePointModal(true);
+          setGenerateProgress({ stage: "SharePoint references detected", percent: 55 });
+          return;
         }
 
-        const pdfData = await pdfResponse.json();
-        const pdfBase64 = pdfData.pdfBase64;
-        const htmlContent = pdfData.html;
-
-        const output: OutputFile = {
-          id: `${filename}-${Date.now()}`,
-          filename: filename,
-          bytesBase64: pdfBase64,
-          mime: "application/pdf",
-          createdAt: Date.now(),
-          htmlPreview: htmlContent,
-          markdownContent: documentation, // Store original markdown for Mermaid rendering
-        };
-        upsertOutput(output);
-        setSelectedOutputId(output.id);
-
-        // Add success message to chat if there are existing chat messages
-        if (chat.length > 0) {
-          const successId = createMessageId();
-          setChat((c) => [
-            ...c,
-            {
-              id: successId,
-              role: "assistant",
-              content: `✅ Document regenerated successfully! Your preferences have been applied. Check the Output Files panel to view the updated PDF.`,
-            },
-          ]);
-        }
-
+        const documentation = await generateDocumentationFromParsedSolution(
+          parsedSolution,
+          activeDatasetId,
+          (stage, percent) => setGenerateProgress({ stage, percent })
+        );
+        await createSolutionOutput(parsedSolution, documentation);
         setGenerateProgress({ stage: "Complete", percent: 100 });
         return;
       }
@@ -1419,6 +1502,87 @@ export default function Page() {
           />
         </section>
       </div>
+
+      {showSharePointModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              width: "min(560px, 100%)",
+              borderRadius: 12,
+              background: "#fff",
+              border: "1px solid #ddd",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+              padding: 18,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 700 }}>SharePoint References Detected</div>
+            <div style={{ fontSize: 14, color: "#444", lineHeight: 1.45 }}>
+              This solution references SharePoint. You can continue with the current static parse, or connect to SharePoint for enrichment.
+            </div>
+            {sharePointModalNotice && (
+              <div
+                style={{
+                  fontSize: 13,
+                  color: "#7a1a1a",
+                  background: "#fff5f5",
+                  border: "1px solid #f5c2c7",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                }}
+              >
+                {sharePointModalNotice}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => void continueWithoutSharePointEnrichment()}
+                disabled={generating}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #1f7aec",
+                  background: "#1f7aec",
+                  color: "#fff",
+                  cursor: generating ? "not-allowed" : "pointer",
+                  opacity: generating ? 0.7 : 1,
+                }}
+              >
+                Continue without SharePoint enrichment
+              </button>
+              <button
+                type="button"
+                onClick={handleConnectSharePoint}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #aaa",
+                  background: "#fff",
+                  color: "#222",
+                  cursor: "pointer",
+                }}
+              >
+                Connect to SharePoint
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -1431,3 +1595,4 @@ const placeholderBox: React.CSSProperties = {
   color: "#6b6b75",
   fontSize: 14,
 };
+

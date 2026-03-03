@@ -38,6 +38,12 @@ public class PacParserDataverseSharePointTests
 
             var ksItem = parsed.Components.First(c => c.Type == "knowledge_source_item");
             Assert.Contains("https://example.sharepoint.com/sites/Reply", ksItem.Description ?? "");
+
+            Assert.NotEmpty(parsed.SharepointRefs);
+            Assert.Contains(parsed.SharepointRefs, r =>
+                r.Url == "https://example.sharepoint.com/sites/Reply/Lists/Projects"
+                && r.Kind == "list"
+                && r.Source.Contains("knowledge_source_item:", StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
@@ -60,6 +66,7 @@ public class PacParserDataverseSharePointTests
 
             Assert.Contains(parsed.Components, c => c.Type == "environment_variable" && c.Name == "wmreply_Replybrary_SP_Site");
             Assert.Contains(parsed.Components, c => c.Type == "bot_topic" && c.Name == "Greeting");
+            Assert.Empty(parsed.SharepointRefs);
         }
         finally
         {

@@ -37,7 +37,7 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
           : "Chat answers from the knowledge base once files are ingested."}
       </div>
 
-      <div className="panel-scroll" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--panel-bg)", overflowY: "auto", overflowX: "hidden", minWidth: 0, minHeight: 0 }}>
+      <div className="panel-scroll" style={{ display: "flex", flexDirection: "column", border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--panel-bg)", overflowY: "auto", overflowX: "hidden", minWidth: 0, minHeight: 0 }}>
         {chat.map((m) => (
           <div key={m.id} style={{ margin: "12px 0", minWidth: 0 }}>
             <b>{m.role}:</b>
@@ -77,7 +77,7 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
         <div ref={bottomRef} />
       </div>
 
-      <div style={{ display: "flex", gap: 8, width: "100%", boxSizing: "border-box", flexShrink: 0 }}>
+      <div style={{ display: "flex", paddingLeft: 1, paddingBottom: 1, gap: 8, width: "100%", boxSizing: "border-box", flexShrink: 0 }}>
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
@@ -89,11 +89,11 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
           }}
           placeholder="Type a message"
           rows={2}
-          style={{ flex: 1, padding: 12, borderRadius: 10, border: "1px solid var(--border)", resize: "none", lineHeight: 1.4, background: "var(--input-bg)", minWidth: 0, boxSizing: "border-box" }}
+          style={{ flex: 1, padding: 12, borderRadius: 10, border: "1px solid var(--border)", resize: "none", lineHeight: 1.4, background: "var(--input-bg)", width: "50%", minWidth: 0, boxSizing: "border-box"}}
         />
 
-        <button onClick={() => void send()} disabled={loading} style={{ padding: "12px 16px", borderRadius: 10, opacity: loading ? 0.6 : 1, cursor: loading ? "not-allowed" : "pointer", background: "var(--primary)", color: "var(--foreground)", border: "none", flexShrink: 0, whiteSpace: "nowrap" }}>{loading ? "Sending..." : "Send"}</button>
-        <button onClick={onClear} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)", flexShrink: 0, whiteSpace: "nowrap" }}>Clear</button>
+        <button onClick={() => void send()} disabled={loading} style={{ padding: "12px 16px", borderRadius: 10, opacity: loading ? 0.6 : 1, cursor: loading ? "not-allowed" : "pointer", background: "var(--primary)", color: "var(--foreground)", border: "none", flexShrink: 0, whiteSpace: "nowrap", width: "20%" }}>{loading ? "Sending..." : "Send"}</button>
+        <button onClick={onClear} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)", flexShrink: 0, whiteSpace: "nowrap", width: "20%" }}>Clear</button>
       </div>
     </div>
   );

@@ -30,6 +30,12 @@ function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON conversation_sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+
+    CREATE TABLE IF NOT EXISTS user_settings (
+      user_id TEXT PRIMARY KEY,
+      system_prompt TEXT,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
   `);
   return db;
 }

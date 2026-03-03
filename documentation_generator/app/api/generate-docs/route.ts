@@ -60,6 +60,23 @@ function wrapText(text: string, maxWidth: number, font: any, size: number) {
 
 async function markdownToHtml(markdown: string) {
   const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
+  
+  // Override fence renderer to handle mermaid blocks
+  const defaultFence = md.renderer.rules.fence!;
+  md.renderer.rules.fence = (tokens, idx, options, env, slf) => {
+    const token = tokens[idx];
+    const info = token.info ? token.info.trim() : '';
+    const langName = info ? info.split(/\s+/g)[0] : '';
+    
+    if (langName === 'mermaid') {
+      // Render mermaid blocks with the class that mermaid.js will pick up
+      return `<pre class="mermaid">${token.content}</pre>\n`;
+    }
+    
+    // Use default renderer for other code blocks
+    return defaultFence(tokens, idx, options, env, slf);
+  };
+  
   return md.render(markdown || "");
 }
 
@@ -69,6 +86,10 @@ function htmlDocumentTemplate(title: string, timestamp: string, bodyHtml: string
 <head>
   <meta charset="utf-8" />
   <title>${title}</title>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+  </script>
   <style>
     body { font-family: "Helvetica Neue", Arial, sans-serif; margin: 24px; line-height: 1.55; color: #1d1d1f; }
     h1 { font-size: 24px; margin-bottom: 8px; }
@@ -80,6 +101,7 @@ function htmlDocumentTemplate(title: string, timestamp: string, bodyHtml: string
     code { background: #f6f8fa; padding: 2px 4px; border-radius: 4px; font-family: "SFMono-Regular", Consolas, monospace; }
     pre { background: #f6f8fa; padding: 10px; border-radius: 6px; overflow: auto; }
     .meta { font-size: 12px; color: #666; margin-bottom: 12px; }
+    .mermaid { margin: 16px 0; text-align: center; }
   </style>
 </head>
 <body>
@@ -94,6 +116,10 @@ async function htmlToPdf(html: string) {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   await page.setContent(html, { waitUntil: "networkidle" });
+  
+  // Wait for Mermaid diagrams to render
+  await page.waitForTimeout(2000); // Give Mermaid time to initialize and render
+  
   const pdfBuffer = await page.pdf({
     format: "A4",
     margin: { top: "20mm", bottom: "20mm", left: "16mm", right: "16mm" },
@@ -210,6 +236,7 @@ export async function POST(req: Request) {
         bytesBase64: pdfBase64,
         createdAt,
         htmlPreview: html,
+        markdownContent: markdown, // Store original markdown for Mermaid rendering
       });
     }
 

@@ -1,12 +1,9 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { useEffect, useRef, useState } from "react";
 import useFiles from "./hooks/useFiles";
 import useModels from "./hooks/useModels";
 import useRag from "./hooks/useRag";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { classifyUploads, UploadClassification } from "../lib/classifyUploads";
 import FileUploader from "./components/FileUploader";
 import ModelProviderControls from "./components/ModelProviderControls";
@@ -39,6 +36,7 @@ type OutputFile = {
   createdAt: number;
   bytesBase64: string;
   htmlPreview?: string;
+  markdownContent?: string;
 };
 
 type ChatMessage = {
@@ -776,124 +774,26 @@ export default function Page() {
         const createdAt = new Date().toISOString();
         const filename = `${parsedSolution.solution_name || "solution"}_documentation.pdf`;
         
-        // Convert markdown to HTML for preview
-        const htmlContent = `
-          <div style="font-family: system-ui; line-height: 1.6; padding: 20px;">
-            <h1>${parsedSolution.solution_name}</h1>
-            <p><strong>Version:</strong> ${parsedSolution.version} | <strong>Publisher:</strong> ${parsedSolution.publisher}</p>
-            <p><strong>Components:</strong> ${parsedSolution.components?.length || 0}</p>
-            <hr style="margin: 20px 0;" />
-            <div style="white-space: pre-wrap;">${documentation.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>')}</div>
-          </div>
-        `;
-
-        // Generate actual PDF using pdf-lib
-        const pdfDoc = await PDFDocument.create();
-        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-        const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-        
-        const pageWidth = 612; // Letter size
-        const pageHeight = 792;
-        const margin = 50;
-        const lineHeight = 14;
-        const maxWidth = pageWidth - margin * 2;
-        
-        let currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-        let yPosition = pageHeight - margin;
-        
-        // Helper function to add text with word wrapping
-        const addText = (text: string, fontSize: number, isBold: boolean = false, color = rgb(0, 0, 0)) => {
-          const currentFont = isBold ? boldFont : font;
-          const words = text.split(' ');
-          let line = '';
-          
-          for (const word of words) {
-            const testLine = line + (line ? ' ' : '') + word;
-            const testWidth = currentFont.widthOfTextAtSize(testLine, fontSize);
-            
-            if (testWidth > maxWidth && line) {
-              if (yPosition < margin + lineHeight) {
-                currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-                yPosition = pageHeight - margin;
-              }
-              currentPage.drawText(line, { x: margin, y: yPosition, size: fontSize, font: currentFont, color });
-              yPosition -= lineHeight;
-              line = word;
-            } else {
-              line = testLine;
-            }
-          }
-          
-          if (line) {
-            if (yPosition < margin + lineHeight) {
-              currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-              yPosition = pageHeight - margin;
-            }
-            currentPage.drawText(line, { x: margin, y: yPosition, size: fontSize, font: currentFont, color });
-            yPosition -= lineHeight;
-          }
-        };
-        
-        // Add title
-        addText(`${parsedSolution.solution_name || 'Solution'} Documentation`, 20, true);
-        yPosition -= 10;
-        
-        // Add metadata
-        addText(`Version: ${parsedSolution.version || 'N/A'}  |  Publisher: ${parsedSolution.publisher || 'N/A'}`, 10, false, rgb(0.4, 0.4, 0.4));
-        addText(`Generated: ${new Date().toLocaleString()}`, 10, false, rgb(0.4, 0.4, 0.4));
-        addText(`Components: ${parsedSolution.components?.length || 0}`, 10, false, rgb(0.4, 0.4, 0.4));
-        yPosition -= 15;
-        
-        // Add horizontal line
-        currentPage.drawLine({
-          start: { x: margin, y: yPosition },
-          end: { x: pageWidth - margin, y: yPosition },
-          thickness: 1,
-          color: rgb(0.8, 0.8, 0.8),
+        // Generate PDF with Mermaid support using the markdown-to-pdf API
+        const metadata = `Version: ${parsedSolution.version} | Publisher: ${parsedSolution.publisher} | Components: ${parsedSolution.components?.length || 0}`;
+        const pdfResponse = await fetch("/api/markdown-to-pdf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            markdown: documentation,
+            title: `${parsedSolution.solution_name} Documentation`,
+            metadata: metadata,
+          }),
         });
-        yPosition -= 20;
-        
-        // Sanitize documentation to remove WinAnsi-incompatible characters
-        const sanitizeForPdf = (text: string): string => {
-          return text
-            .replace(/→/g, '->')  // Arrow
-            .replace(/←/g, '<-')  // Left arrow
-            .replace(/↑/g, '^')   // Up arrow
-            .replace(/↓/g, 'v')   // Down arrow
-            .replace(/✓|✔/g, 'v') // Checkmarks
-            .replace(/✗|✘/g, 'x') // X marks
-            .replace(/•/g, '*')   // Bullet (actually this one should work, but just in case)
-            .replace(/[^\x00-\xFF]/g, '?'); // Replace any other non-WinAnsi characters with ?
-        };
-        
-        const sanitizedDocumentation = sanitizeForPdf(documentation);
-        
-        // Process documentation content
-        const lines = sanitizedDocumentation.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('# ')) {
-            yPosition -= 10;
-            addText(line.substring(2), 16, true);
-            yPosition -= 5;
-          } else if (line.startsWith('## ')) {
-            yPosition -= 8;
-            addText(line.substring(3), 14, true);
-            yPosition -= 3;
-          } else if (line.startsWith('### ')) {
-            yPosition -= 5;
-            addText(line.substring(4), 12, true);
-          } else if (line.startsWith('- ') || line.startsWith('* ')) {
-            addText('• ' + line.substring(2), 10);
-          } else if (line.trim() === '') {
-            yPosition -= 8;
-          } else {
-            addText(line, 10);
-          }
+
+        if (!pdfResponse.ok) {
+          const errorData = await pdfResponse.json().catch(() => ({}));
+          throw new Error(errorData.error || "Failed to generate PDF");
         }
-        
-        // Generate PDF bytes
-        const pdfBytes = await pdfDoc.save();
-        const pdfBase64 = btoa(String.fromCharCode(...pdfBytes));
+
+        const pdfData = await pdfResponse.json();
+        const pdfBase64 = pdfData.pdfBase64;
+        const htmlContent = pdfData.html;
 
         const output: OutputFile = {
           id: `${filename}-${Date.now()}`,
@@ -902,6 +802,7 @@ export default function Page() {
           mime: "application/pdf",
           createdAt: Date.now(),
           htmlPreview: htmlContent,
+          markdownContent: documentation, // Store original markdown for Mermaid rendering
         };
         upsertOutput(output);
         setSelectedOutputId(output.id);
@@ -964,6 +865,7 @@ export default function Page() {
           mime: o.mime || "application/pdf",
           createdAt: created,
           htmlPreview: o.htmlPreview || "",
+          markdownContent: o.markdownContent, // Store original markdown for Mermaid rendering
         };
         upsertOutput(output);
       });

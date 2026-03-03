@@ -12,7 +12,7 @@ import ChatWindow from "./components/ChatWindow";
 import OutputsList from "./components/OutputsList";
 import PreviewPanel from "./components/PreviewPanel";
 import SignInButton from "./components/SignInButton";
-import { useSession, getSession } from "next-auth/react";
+import { useSession, getSession, signIn } from "next-auth/react";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -72,6 +72,16 @@ type PendingSolutionGeneration = {
   activeDatasetId: string;
 };
 
+type SharePointConnection = {
+  id: string;
+  label: string;
+  tenantId: string;
+  accountEmail: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  status: "active" | "expired" | "revoked";
+};
+
 const MAX_TEXT_CHARS = 200 * 1024; // ~200KB cap for in-memory text
 const TEXT_EXTS = ["txt", "md", "json", "csv", "js", "ts", "py"];
 const SOLUTION_EXT = "zip"; // Power Platform solution files
@@ -105,6 +115,9 @@ export default function Page() {
   const [showSharePointModal, setShowSharePointModal] = useState(false);
   const [sharePointModalNotice, setSharePointModalNotice] = useState<string | null>(null);
   const [pendingSolutionGeneration, setPendingSolutionGeneration] = useState<PendingSolutionGeneration | null>(null);
+  const [sharePointConnections, setSharePointConnections] = useState<SharePointConnection[]>([]);
+  const [selectedSharePointConnectionId, setSelectedSharePointConnectionId] = useState<string>("");
+  const [savingSharePointConnection, setSavingSharePointConnection] = useState(false);
   
   const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number; provider?: string; model?: string; backend_online?: boolean } | null>(null);
   const [corpusType, setCorpusType] = useState<"solution_zip" | "docs" | "unknown" | null>(null);
@@ -874,8 +887,65 @@ export default function Page() {
     }
   }
 
-  function handleConnectSharePoint() {
-    setSharePointModalNotice("SharePoint connection flow is coming next. Continue without SharePoint enrichment for now.");
+  async function createSharePointConnectionFromSession() {
+    const response = await fetch("/api/sharepoint/connections", {
+      method: "POST",
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error || "Failed to create SharePoint connection.");
+    }
+
+    const connection = payload?.connection as SharePointConnection | undefined;
+    if (!connection) {
+      throw new Error("SharePoint connection was not returned by the server.");
+    }
+
+    setSharePointConnections((prev) => {
+      const next = [connection, ...prev.filter((c) => c.id !== connection.id)];
+      return next.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    });
+    setSelectedSharePointConnectionId(connection.id);
+    return connection;
+  }
+
+  async function handleConnectSharePoint() {
+    if (savingSharePointConnection) return;
+    setSavingSharePointConnection(true);
+    setSharePointModalNotice(null);
+
+    try {
+      if (status !== "authenticated") {
+        const result = await signIn("azure-ad", {
+          redirect: false,
+          callbackUrl: window.location.href,
+        });
+
+        if (result?.error) {
+          setSharePointModalNotice(`Sign-in failed: ${result.error}`);
+          return;
+        }
+
+        if (result?.url && !result.ok) {
+          window.location.href = result.url;
+          return;
+        }
+
+        const refreshedSession = await getSession();
+        if (!refreshedSession?.user?.email) {
+          setSharePointModalNotice("Sign in is required before adding a SharePoint connection.");
+          return;
+        }
+      }
+
+      const connection = await createSharePointConnectionFromSession();
+      setSharePointModalNotice(`Connected: ${connection.label}`);
+    } catch (error: any) {
+      setSharePointModalNotice(error?.message || "Failed to create SharePoint connection.");
+    } finally {
+      setSavingSharePointConnection(false);
+    }
   }
 
   async function generateDocs() {
@@ -1548,6 +1618,31 @@ export default function Page() {
                 {sharePointModalNotice}
               </div>
             )}
+            {sharePointConnections.length > 0 && (
+              <div style={{ display: "grid", gap: 6 }}>
+                <label htmlFor="sharepoint-connection-select" style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>
+                  Saved SharePoint connections
+                </label>
+                <select
+                  id="sharepoint-connection-select"
+                  value={selectedSharePointConnectionId}
+                  onChange={(e) => setSelectedSharePointConnectionId(e.target.value)}
+                  style={{
+                    border: "1px solid #ccc",
+                    borderRadius: 8,
+                    padding: "8px 10px",
+                    fontSize: 14,
+                    background: "#fff",
+                  }}
+                >
+                  {sharePointConnections.map((connection) => (
+                    <option key={connection.id} value={connection.id}>
+                      {connection.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
               <button
                 type="button"
@@ -1567,17 +1662,19 @@ export default function Page() {
               </button>
               <button
                 type="button"
-                onClick={handleConnectSharePoint}
+                onClick={() => void handleConnectSharePoint()}
+                disabled={savingSharePointConnection}
                 style={{
                   padding: "8px 12px",
                   borderRadius: 8,
                   border: "1px solid #aaa",
                   background: "#fff",
                   color: "#222",
-                  cursor: "pointer",
+                  cursor: savingSharePointConnection ? "not-allowed" : "pointer",
+                  opacity: savingSharePointConnection ? 0.7 : 1,
                 }}
               >
-                Connect to SharePoint
+                {savingSharePointConnection ? "Connecting..." : "Connect to SharePoint"}
               </button>
             </div>
           </div>

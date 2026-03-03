@@ -64,6 +64,7 @@ export default function Page() {
   const [outputs, setOutputs] = useState<OutputFile[]>([]);
   const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [generateProgress, setGenerateProgress] = useState<{ stage: string; percent: number; failed?: boolean } | null>(null);
   const [generateError, setGenerateError] = useState<GenerateError | null>(null);
   const [pdfRenderError, setPdfRenderError] = useState<string | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
@@ -672,7 +673,7 @@ export default function Page() {
   }
 
   // Generate docs for Power Platform solution using PAC CLI + RAG
-  async function generateSolutionDocs() {
+  async function generateSolutionDocs(onProgress?: (stage: string, percent: number) => void) {
     const activeDatasetId = datasetId || createDatasetId();
     if (!datasetId) {
       setDatasetId(activeDatasetId);
@@ -684,6 +685,7 @@ export default function Page() {
 
     // Step 1: FIRST - Ingest the ZIP file into ChromaDB (parses ALL files, FREE with Sentence-BERT)
     // This happens BEFORE doc generation so RAG chat can use the full solution content
+    onProgress?.("Ingesting solution into RAG...", 15);
     const ingestFormData = new FormData();
     ingestFormData.append("file", solutionFile.file);
     ingestFormData.append("dataset_id", activeDatasetId);
@@ -705,6 +707,7 @@ export default function Page() {
     }
 
     // Step 2: Parse solution with PAC CLI (for doc generation metadata)
+    onProgress?.("Parsing solution with PAC CLI...", 40);
     const formData = new FormData();
     formData.append("file", solutionFile.file);
 
@@ -725,6 +728,7 @@ export default function Page() {
     const parsedSolution = parsePayload?.data || parsePayload;
 
     // Step 3: Generate documentation with RAG pipeline (API key from runtime settings)
+    onProgress?.("Generating documentation with AI...", 65);
     const modelForProvider = llmSelection.model;
 
     // Extract user preferences from chat history
@@ -764,11 +768,14 @@ export default function Page() {
     if (generating || files.length === 0) return;
     setGenerating(true);
     setGenerateError(null);
+    setGenerateProgress(hasSolutionFile() ? { stage: "Starting...", percent: 0 } : { stage: "Generating...", percent: 0 });
 
     try {
       // Check if we have a solution file - use PAC CLI + RAG pipeline
       if (hasSolutionFile()) {
-        const { parsedSolution, documentation } = await generateSolutionDocs();
+        const { parsedSolution, documentation } = await generateSolutionDocs((stage, percent) =>
+          setGenerateProgress({ stage, percent })
+        );
         
         // Create output with the generated documentation
         const createdAt = new Date().toISOString();
@@ -820,10 +827,12 @@ export default function Page() {
           ]);
         }
 
+        setGenerateProgress({ stage: "Complete", percent: 100 });
         return;
       }
 
       // Regular file processing (existing flow)
+      setGenerateProgress({ stage: "Generating documentation...", percent: 50 });
       const modelForProvider = llmSelection.provider === "cloud" ? llmSelection.model : undefined;
       const res = await fetch("/api/generate-docs", {
         method: "POST",
@@ -855,6 +864,7 @@ export default function Page() {
       }
 
       setSelectedOutputId(null); // user chooses what to preview
+      setGenerateProgress({ stage: "Complete", percent: 100 });
 
       outputsFromApi.forEach((o) => {
         const created = Date.parse(o.createdAt || "") || Date.now();
@@ -875,6 +885,7 @@ export default function Page() {
         code: e?.code,
         hint: e?.hint,
       });
+      setGenerateProgress({ stage: "Failed", percent: 0, failed: true });
     } finally {
       setGenerating(false);
     }
@@ -1315,25 +1326,26 @@ export default function Page() {
 
         <section className="panel">
           <div className="panel-header">Output Files</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-            <button
-              onClick={generateDocs}
-              disabled={!hasFiles || generating}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 8,
-                border: hasSolution ? "1px solid #0a6b3d" : "1px solid #1f7aec",
-                background: generating ? "#9dc2f7" : hasSolution ? "#0a6b3d" : "#1f7aec",
-                color: "#fff",
-                cursor: !hasFiles || generating ? "not-allowed" : "pointer",
-                opacity: !hasFiles || generating ? 0.7 : 1,
-              }}
-            >
-              {generating 
-                ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
-                : (hasSolution ? "Parse & Generate Docs" : "Generate docs")}
-            </button>
-            <div style={{ fontSize: 12, color: "#555" }}>
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button
+                onClick={generateDocs}
+                disabled={!hasFiles || generating}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: hasSolution ? "1px solid #0a6b3d" : "1px solid #1f7aec",
+                  background: generating ? "#9dc2f7" : hasSolution ? "#0a6b3d" : "#1f7aec",
+                  color: "#fff",
+                  cursor: !hasFiles || generating ? "not-allowed" : "pointer",
+                  opacity: !hasFiles || generating ? 0.7 : 1,
+                }}
+              >
+                {generating 
+                  ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
+                  : (hasSolution ? "Parse & Generate Docs" : "Generate docs")}
+              </button>
+              <div style={{ fontSize: 12, color: "#555" }}>
               {hasInvalidZip
                 ? "Solution docs require a Power Platform solution (.zip export). For other files, use Chat/RAG mode."
                 : !hasFiles
@@ -1341,7 +1353,34 @@ export default function Page() {
                 : hasSolution
                 ? "Will parse solution with PAC CLI, then generate docs with RAG pipeline."
                 : "Uses attached files with current model/system prompt/temperature."}
+              </div>
             </div>
+            {generateProgress && (
+              <div style={{ marginTop: 10, marginBottom: 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12, color: "#555" }}>
+                  <span>{generateProgress.stage}</span>
+                  <span>{generateProgress.percent}%</span>
+                </div>
+                <div
+                  style={{
+                    height: 6,
+                    borderRadius: 3,
+                    background: generateProgress.failed ? "#ffe0e0" : "#e8e8ec",
+                    overflow: "hidden",
+                  }}
+                >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${Math.min(generateProgress.percent, 100)}%`,
+                    background: generateProgress.failed ? "#c41e3a" : hasSolution ? "#0a6b3d" : "#1f7aec",
+                    borderRadius: 3,
+                    transition: "width 0.3s ease-out",
+                  }}
+                />
+                </div>
+              </div>
+            )}
           </div>
           {hasOnlyNonSolution && (
             <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>

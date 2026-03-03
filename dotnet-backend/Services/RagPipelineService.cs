@@ -749,6 +749,7 @@ public class RagPipelineService
     public async Task<string> GenerateDocumentationAsync(
         Models.ParsedSolution solution,
         string docType        = "markdown",
+        string? systemPromptOverride = null,
         string? provider      = null,
         string? model         = null,
         string? userPrefs     = null,
@@ -763,7 +764,12 @@ public class RagPipelineService
 
         var context = BuildSolutionContext(solution);
         var prompt  = BuildDocumentationPrompt(solution, context, docType, userPrefs);
-        var system  = GetDocSystemPrompt(userPrefs);
+        var system  = GetDocSystemPrompt(systemPromptOverride, userPrefs);
+
+        var usedCustom = !string.IsNullOrWhiteSpace(systemPromptOverride);
+        var systemPreview = system.Length > 80 ? system.AsSpan(0, 80).ToString() + "..." : system;
+        Console.WriteLine("[GenerateDocumentation] System string sent to LLM: usedCustomOverride={0}, length={1}, preview=\"{2}\"",
+            usedCustom, system.Length, systemPreview.Replace("\"", "'"));
 
         return await _llm.ChatCompleteAsync(
             system, prompt,
@@ -972,14 +978,16 @@ public class RagPipelineService
         return sb.ToString();
     }
 
-    private static string GetDocSystemPrompt(string? userPrefs)
+    private static string GetDocSystemPrompt(string? systemPromptOverride, string? userPrefs)
     {
-        var base_ = "You are a technical documentation assistant for Microsoft Power Platform solutions. "
-                  + "Produce comprehensive documentation that is exhaustive and component-driven. "
-                  + "Every component provided must appear in the output under the correct type. "
-                  + "Use only provided component evidence and metadata; if a detail is missing, write 'Not found in solution export'. "
-                  + "Never omit component types, and preserve exact component names. "
-                  + "Mermaid diagrams are mandatory and must be valid fenced mermaid code blocks.";
+        var base_ = !string.IsNullOrWhiteSpace(systemPromptOverride)
+            ? systemPromptOverride.Trim()
+            : "You are a technical documentation assistant for Microsoft Power Platform solutions. "
+              + "Produce comprehensive documentation that is exhaustive and component-driven. "
+              + "Every component provided must appear in the output under the correct type. "
+              + "Use only provided component evidence and metadata; if a detail is missing, write 'Not found in solution export'. "
+              + "Never omit component types, and preserve exact component names. "
+              + "Mermaid diagrams are mandatory and must be valid fenced mermaid code blocks.";
 
         if (!string.IsNullOrEmpty(userPrefs))
             base_ += $"\n\nUSER INSTRUCTIONS:\n{userPrefs}\n\nFollow them precisely.";

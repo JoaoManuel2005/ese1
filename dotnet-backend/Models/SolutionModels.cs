@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace RagBackend.Models;
 
 public class SolutionComponent
@@ -14,6 +16,18 @@ public class ParsedSolution
     public string Version { get; set; } = "1.0.0";
     public string Publisher { get; set; } = string.Empty;
     public List<SolutionComponent> Components { get; set; } = new();
+    [JsonPropertyName("sharepointRefs")]
+    public List<SharePointRef> SharepointRefs { get; set; } = new();
+}
+
+public class SharePointRef
+{
+    [JsonPropertyName("url")]
+    public string Url { get; set; } = string.Empty;
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "unknown";
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = string.Empty;
 }
 
 public class GenerateDocRequest

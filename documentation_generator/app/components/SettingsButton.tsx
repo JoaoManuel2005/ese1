@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import type { FC } from "react";
 
 type Props = {
+  isAuthenticated: boolean;
   provider: "cloud" | "local";
   setProvider: (p: "cloud" | "local") => void;
   models: string[];
@@ -23,9 +24,13 @@ type Props = {
   setApiKey: (k: string) => void;
   endpoint: string;
   setEndpoint: (e: string) => void;
+  systemPrompt: string;
+  setSystemPrompt: (v: string) => void;
+  systemPromptDefault: string;
 };
 
 const SettingsButton: FC<Props> = ({
+  isAuthenticated,
   provider,
   setProvider,
   models,
@@ -45,6 +50,9 @@ const SettingsButton: FC<Props> = ({
   setApiKey,
   endpoint,
   setEndpoint,
+  systemPrompt,
+  setSystemPrompt,
+  systemPromptDefault,
 }) => {
   const [open, setOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -124,6 +132,14 @@ const SettingsButton: FC<Props> = ({
         setApiKey("");
         setApiKeyConfigured(!!data?.openaiApiKeyConfigured);
         setMaskedApiKey(typeof data?.openaiApiKeyMasked === "string" ? data.openaiApiKeyMasked : null);
+        if (typeof data?.systemPrompt === "string" && data.systemPrompt.trim().length > 0) {
+          setSystemPrompt(data.systemPrompt);
+        } else if (!isAuthenticated && typeof window !== "undefined") {
+          try {
+            const stored = sessionStorage.getItem("systemPrompt");
+            if (stored != null && stored.trim().length > 0) setSystemPrompt(stored);
+          } catch { /* ignore */ }
+        }
       } catch {
         if (!cancelled) {
           setSaveState("error");
@@ -140,16 +156,25 @@ const SettingsButton: FC<Props> = ({
     return () => {
       cancelled = true;
     };
-  }, [open, setApiKey, setEndpoint, setProvider, setSelectedModel]);
+  }, [open, setApiKey, setEndpoint, setProvider, setSelectedModel, setSystemPrompt]);
 
-  async function saveSettings() {
+  async function saveSettings(systemPromptOverride?: string) {
     setSaveState("saving");
     setSaveMessage(null);
 
-    const payload: Record<string, any> = {
+    const promptToSave = systemPromptOverride !== undefined ? systemPromptOverride : systemPrompt;
+
+    if (typeof window !== "undefined" && !isAuthenticated) {
+      try {
+        sessionStorage.setItem("systemPrompt", promptToSave ?? "");
+      } catch { /* ignore */ }
+    }
+
+    const payload: Record<string, unknown> = {
       provider,
       model: selectedModel || null,
       azureOpenAiEndpoint: endpoint || null,
+      systemPrompt: promptToSave ?? "",
     };
 
     if (apiKey.trim()) {
@@ -175,6 +200,14 @@ const SettingsButton: FC<Props> = ({
       setMaskedApiKey(typeof data?.openaiApiKeyMasked === "string" ? data.openaiApiKeyMasked : null);
       if (typeof data?.azureOpenAiEndpoint === "string") {
         setEndpoint(data.azureOpenAiEndpoint);
+      }
+      if (data && "systemPrompt" in data) {
+        setSystemPrompt(typeof data.systemPrompt === "string" ? data.systemPrompt : "");
+      }
+      if (systemPromptOverride !== undefined) {
+        setSaveMessage(isAuthenticated ? "Restored to default prompt." : "Restored to default prompt. Saved for this browser session.");
+      } else if (!isAuthenticated) {
+        setSaveMessage("Saved for this browser session.");
       }
     } catch (err: any) {
       setSaveState("error");
@@ -248,7 +281,7 @@ const SettingsButton: FC<Props> = ({
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => setOpen(false)} style={{ border: `1px solid ${borderColor}`, background: inputBg, color: textColor, padding: "6px 10px", borderRadius: 8, cursor: "pointer" }}>Close</button>
                 <button
-                  onClick={saveSettings}
+                  onClick={() => saveSettings()}
                   disabled={saveState === "saving"}
                   style={{ border: `1px solid ${borderColor}`, background: inputBg, color: textColor, padding: "6px 10px", borderRadius: 8, cursor: saveState === "saving" ? "not-allowed" : "pointer" }}
                 >
@@ -358,6 +391,40 @@ const SettingsButton: FC<Props> = ({
                   )}
                 </div>
               )}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
+                <label htmlFor="system-prompt" style={{ fontWeight: 600 }}>System Prompt (Solution Docs)</label>
+                <div style={{ fontSize: 12, color: smallText }}>
+                  {isAuthenticated
+                    ? "Saved to your account. Used when generating solution documentation."
+                    : "Saved for this browser session only (clears when tab/session ends)."}
+                </div>
+                <textarea
+                  id="system-prompt"
+                  value={systemPrompt}
+                  onChange={(e) => { setSaveState("idle"); setSystemPrompt(e.target.value); }}
+                  rows={6}
+                  placeholder="Optional: customise the system instruction for solution doc generation. Leave blank to use the default."
+                  style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, width: "100%", background: inputBg, color: textColor, resize: "vertical", fontFamily: "inherit", lineHeight: 1.4 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => saveSettings(systemPromptDefault)}
+                  disabled={saveState === "saving"}
+                  style={{
+                    alignSelf: "flex-start",
+                    padding: "6px 12px",
+                    borderRadius: 8,
+                    border: `1px solid ${borderColor}`,
+                    background: inputBg,
+                    color: textColor,
+                    cursor: saveState === "saving" ? "not-allowed" : "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  Restore to default
+                </button>
+              </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
                 <div style={{ fontWeight: 600, color: "#0a6b3d" }}>API Key (Secure)</div>

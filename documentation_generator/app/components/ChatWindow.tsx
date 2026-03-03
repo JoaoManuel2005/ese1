@@ -1,10 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { FC } from "react";
 import type { ChatMessage } from "../types";
+import MarkdownWithMermaid from "./MarkdownWithMermaid";
 
 type Props = {
   chat: ChatMessage[];
@@ -45,7 +44,7 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
               {m.role === "assistant" ? (
                 <div style={{ display: "grid", gap: 8 }}>
                   <div className="chat-message">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                    <MarkdownWithMermaid content={m.content} />
                   </div>
                   {m.sources && m.sources.length > 0 && (
                     <div>

@@ -3,6 +3,7 @@
 import React from "react";
 import type { FC } from "react";
 import type { OutputFile } from "../types";
+import MarkdownWithMermaid from "./MarkdownWithMermaid";
 
 type Props = {
   out: OutputFile | null;
@@ -27,7 +28,13 @@ const PreviewPanel: FC<Props> = ({ out, previewBlobUrl, pdfRenderError, onDownlo
 
       {pdfRenderError && <div style={{ color: "var(--danger)", fontSize: 12 }}>{pdfRenderError}. You can still open the PDF in a new tab.</div>}
 
-      <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 10, background: "var(--panel-bg)", maxHeight: 500, overflowY: "auto" }} dangerouslySetInnerHTML={{ __html: out.htmlPreview || "<p>Preview unavailable.</p>" }} />
+      <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 10, background: "var(--panel-bg)", maxHeight: 500, overflowY: "auto" }}>
+        {out.markdownContent ? (
+          <MarkdownWithMermaid content={out.markdownContent} containerClassName="documentation-preview" />
+        ) : (
+          <div dangerouslySetInnerHTML={{ __html: out.htmlPreview || "<p>Preview unavailable.</p>" }} />
+        )}
+      </div>
     </div>
   );
 };

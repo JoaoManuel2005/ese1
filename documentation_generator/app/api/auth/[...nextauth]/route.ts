@@ -15,6 +15,23 @@ export const authOptions: NextAuthOptions = {
       },
     })
   ],
+  callbacks: {
+    async jwt({ token, account }) {
+      if (account) {
+        token.access_token = account.access_token;
+        token.expires_at = account.expires_at;
+        if (account.refresh_token) {
+          token.refresh_token = account.refresh_token;
+        }
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      session.access_token = typeof token.access_token === "string" ? token.access_token : undefined;
+      session.expires_at = typeof token.expires_at === "number" ? token.expires_at : undefined;
+      return session;
+    },
+  },
   secret: process.env.NEXTAUTH_SECRET,
 };
 

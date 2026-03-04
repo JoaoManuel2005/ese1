@@ -36,6 +36,11 @@ export async function POST(req: Request) {
       if (!row) {
         return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
       }
+      if (datasetId !== undefined) {
+        db.prepare(
+          "UPDATE conversation_sessions SET dataset_id = ?, updated_at = unixepoch() WHERE id = ?"
+        ).run(datasetId ?? null, sessionId);
+      }
     }
 
     const insert = db.prepare(

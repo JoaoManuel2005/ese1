@@ -52,6 +52,22 @@ type GenerateError = {
   hint?: string;
 };
 
+type ApiErrorPayload = {
+  error?: string | { message?: string; code?: string; hint?: string };
+  detail?: string | { message?: string };
+};
+
+type AppError = Error & { code?: string; hint?: string };
+
+type ApiOutput = {
+  filename?: string;
+  bytesBase64?: string;
+  mime?: string;
+  createdAt?: string;
+  htmlPreview?: string;
+  markdownContent?: string;
+};
+
 const MAX_TEXT_CHARS = 200 * 1024; // ~200KB cap for in-memory text
 const TEXT_EXTS = ["txt", "md", "json", "csv", "js", "ts", "py"];
 const SOLUTION_EXT = "zip"; // Power Platform solution files
@@ -134,18 +150,22 @@ export default function Page() {
     return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  function parseApiError(payload: any, fallback: string): GenerateError {
-    if (payload?.error?.message) {
-      return { message: payload.error.message, code: payload.error.code, hint: payload.error.hint };
+  function parseApiError(payload: ApiErrorPayload | undefined, fallback: string): GenerateError {
+    if (!payload) return { message: fallback };
+
+    const { error, detail } = payload;
+
+    if (typeof error === "object" && error?.message) {
+      return { message: error.message, code: error.code, hint: error.hint };
     }
-    if (payload?.error) {
-      return { message: payload.error };
+    if (typeof error === "string" && error) {
+      return { message: error };
     }
-    if (payload?.detail?.message) {
-      return { message: payload.detail.message };
+    if (typeof detail === "object" && detail?.message) {
+      return { message: detail.message };
     }
-    if (payload?.detail) {
-      return { message: payload.detail };
+    if (typeof detail === "string" && detail) {
+      return { message: detail };
     }
     return { message: fallback };
   }
@@ -245,6 +265,9 @@ export default function Page() {
         const msgs = convData.messages || [];
 
         if (cancelled) return;
+
+        if (files.length > 0 || chat.length > 0) return;
+        
         setChat(
           msgs.map((m: { id: string; role: string; content: string }) => ({
             id: m.id,
@@ -262,7 +285,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, [session?.user, status]);  
+  }, [session?.user, status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -359,7 +382,7 @@ export default function Page() {
         setDatasetId(activeDatasetId);
       }
 
-      const signature = textFiles.map((f) => `${f.name}:${f.size}`).join("|");
+      const signature = `${activeDatasetId}:${textFiles.map((f) => `${f.name}:${f.size}`).join("|")}`;
       if (signature === docsIngestSignature) return;
 
       try {
@@ -411,7 +434,7 @@ export default function Page() {
         setDatasetId(activeDatasetId);
       }
 
-      const signature = `${solutionFile.name}:${solutionFile.size}`;
+      const signature = `${activeDatasetId}:${solutionFile.name}:${solutionFile.size}`;
       if (signature === solutionIngestSignature) return;
 
       const ingestFormData = new FormData();
@@ -431,6 +454,16 @@ export default function Page() {
           }
           return;
         }
+        
+        const stored = data?.details?.chunks_stored ?? data?.chunks_stored ?? 0;
+        if (stored <= 0) {
+          if (!cancelled) {
+            setCorpusType("unknown");
+            setCorpusReason("Solution parsed but no chunks were indexed for chat.");
+          }
+          return;
+        }
+        
         if (!cancelled) {
           setSolutionIngestSignature(signature);
           setCorpusType(data?.corpus_type || "solution_zip");
@@ -464,7 +497,11 @@ export default function Page() {
         return;
       }
 
-      const models = Array.isArray(data?.models) ? data.models.map((m: any) => m?.name).filter(Boolean) : [];
+      const models = Array.isArray(data?.models)
+        ? data.models
+            .map((m: { name?: string }) => m?.name)
+            .filter((name: string | undefined): name is string => Boolean(name))
+        : [];
       setLocalModels(models);
 
       // Default selection logic
@@ -479,7 +516,7 @@ export default function Page() {
         setUseCustomLocalModel(true);
       }
 
-    } catch (err: any) {
+    } catch {
       setLocalModels([]);
       setUseCustomLocalModel(true);
       setLocalModelsError("Couldn't detect local models. Ensure Ollama is running.");
@@ -561,6 +598,7 @@ export default function Page() {
     if (files.length === 0) {
       setDatasetId(createDatasetId());
       setDocsIngestSignature(null);
+      setConversationId(null);
     }
     const incoming = Array.isArray(fileList) ? fileList : Array.from(fileList);
 
@@ -591,7 +629,7 @@ export default function Page() {
             truncated = true;
           }
           return { ...base, isText: true, text, truncated };
-        } catch (e: any) {
+        } catch {
           return { ...base, error: "Failed to read file", isText: false };
         }
       })
@@ -682,28 +720,41 @@ export default function Page() {
     if (!solutionFile?.file) {
       throw new Error("No solution file found");
     }
+    const currentSignature = `${activeDatasetId}:${solutionFile.name}:${solutionFile.size}`;
+    const alreadyIngested = solutionIngestSignature === currentSignature;
 
     // Step 1: FIRST - Ingest the ZIP file into ChromaDB (parses ALL files, FREE with Sentence-BERT)
     // This happens BEFORE doc generation so RAG chat can use the full solution content
-    onProgress?.("Ingesting solution into RAG...", 15);
-    const ingestFormData = new FormData();
-    ingestFormData.append("file", solutionFile.file);
-    ingestFormData.append("dataset_id", activeDatasetId);
-    
-    const ingestRes = await fetch("/api/rag-ingest-zip", {
-      method: "POST",
-      body: ingestFormData,
-    });
-    
-    if (ingestRes.ok) {
-      const ingestData = await ingestRes.json();
-      const type = ingestData?.corpus_type || ingestData?.details?.corpus_type || null;
-      const reason = ingestData?.corpus_reason || ingestData?.details?.corpus_reason || null;
-      setCorpusType(type);
-      setCorpusReason(reason);
-      console.log("Solution ingested into ChromaDB:", ingestData);
-    } else {
-      console.warn("Failed to ingest solution into ChromaDB - continuing with doc generation");
+    if (!alreadyIngested) {
+      onProgress?.("Ingesting solution into RAG...", 15);
+      const ingestFormData = new FormData();
+      ingestFormData.append("file", solutionFile.file);
+      ingestFormData.append("dataset_id", activeDatasetId);
+
+      const ingestRes = await fetch("/api/rag-ingest-zip", {
+        method: "POST",
+        body: ingestFormData,
+      });
+
+      if (ingestRes.ok) {
+        const ingestData = await ingestRes.json();
+        const stored = ingestData?.details?.chunks_stored ?? ingestData?.chunks_stored ?? 0;
+
+        if (stored <= 0) {
+          throw new Error("Solution parsed but no chunks were indexed for chat.");
+        }
+
+        const type = ingestData?.corpus_type || ingestData?.details?.corpus_type || null;
+        const reason = ingestData?.corpus_reason || ingestData?.details?.corpus_reason || null;
+        setCorpusType(type);
+        setCorpusReason(reason);
+        setSolutionIngestSignature(currentSignature);
+        console.log("Solution ingested into ChromaDB:", ingestData);
+      } else if (ingestRes.status === 409) {
+        console.warn("Ingest already in progress for this dataset. Continuing.");
+      } else {
+        throw new Error("Failed to ingest solution into ChromaDB.");
+      }
     }
 
     // Step 2: Parse solution with PAC CLI (for doc generation metadata)
@@ -719,9 +770,9 @@ export default function Page() {
     const parsePayload = await parseRes.json().catch(() => ({}));
     if (!parseRes.ok) {
       const parsed = parseApiError(parsePayload, "Failed to parse solution with PAC CLI");
-      const err = new Error(parsed.message);
-      (err as any).code = parsed.code;
-      (err as any).hint = parsed.hint;
+      const err = new Error(parsed.message) as AppError;
+      err.code = parsed.code;
+      err.hint = parsed.hint;
       throw err;
     }
 
@@ -753,9 +804,9 @@ export default function Page() {
       const errorData = await genRes.json().catch(() => ({}));
       const parsed = parseApiError(errorData, "Failed to generate documentation");
       const message = mapProviderError(parsed.message, genRes.status);
-      const err = new Error(message);
-      (err as any).code = parsed.code;
-      (err as any).hint = parsed.hint;
+      const err = new Error(message) as AppError;
+      err.code = parsed.code;
+      err.hint = parsed.hint;
       throw err;
     }
 
@@ -846,18 +897,18 @@ export default function Page() {
 
       if (!res.ok) {
         const text = await res.text();
-        let parsedPayload: any = {};
+        let parsedPayload: unknown = {};
         try {
           parsedPayload = JSON.parse(text);
         } catch {
           parsedPayload = {};
         }
-        const parsed = parseApiError(parsedPayload, text || `HTTP ${res.status}`);
+        const parsed = parseApiError(parsedPayload as ApiErrorPayload, text || `HTTP ${res.status}`);
         throw new Error(mapProviderError(parsed.message, res.status));
       }
 
       const data = await res.json();
-      const outputsFromApi: any[] = Array.isArray(data?.outputs) ? data.outputs : [];
+      const outputsFromApi: ApiOutput[] = Array.isArray(data?.outputs) ? (data.outputs as ApiOutput[]) : [];
 
       if (!outputsFromApi.length) {
         throw new Error("Invalid generate response");
@@ -879,11 +930,11 @@ export default function Page() {
         };
         upsertOutput(output);
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       setGenerateError({
-        message: e?.message ?? "Failed to generate documentation",
-        code: e?.code,
-        hint: e?.hint,
+        message: e instanceof Error ? e.message : "Failed to generate documentation",
+        code: (e as AppError | undefined)?.code,
+        hint: (e as AppError | undefined)?.hint,
       });
       setGenerateProgress({ stage: "Failed", percent: 0, failed: true });
     } finally {
@@ -982,7 +1033,7 @@ export default function Page() {
 
       if (!ragRes.ok) {
         const errText = await ragRes.text();
-        let parsed: any = {};
+        let parsed: { error?: string; detail?: string } = {};
         try {
           parsed = JSON.parse(errText);
         } catch {
@@ -1087,8 +1138,8 @@ export default function Page() {
         return;
       }
 
-    } catch (e: any) {
-      const msg = e?.message ?? "Unknown error";
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
 
       // replace last assistant message with the error
       setChat((c) =>
@@ -1114,7 +1165,7 @@ export default function Page() {
           content: m.content,
         }))
       );
-      if (data.dataset_id) setDatasetId(data.dataset_id);
+      if (data.dataset_id && files.length === 0) setDatasetId(data.dataset_id);
       setConversationId(data.id);
     } catch {
       // ignore
@@ -1211,7 +1262,7 @@ export default function Page() {
       {/* Responsive grid: 4 columns desktop, 2 columns medium, 1 column small */}
       <div className="app-grid">
         <section className="panel">
-        <FileUploader
+          <FileUploader
           files={files}
           onAdd={(fl) => addFiles(fl)}
           onRemove={removeFile}

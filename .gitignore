@@ -4,6 +4,7 @@ __pycache__/
 .env.local
 .env.*
 !.env.example
+!.env.local.example
 .env.generated
 .runtime-config.json
 documentation_generator/.runtime-config.json

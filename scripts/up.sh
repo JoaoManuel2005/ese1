@@ -32,15 +32,36 @@ mask_secret() {
   echo "${prefix}****"
 }
 
-openai_key="$(get_secret "AI-API-KEY")"
-azure_endpoint="$(get_secret "AZURE-OPENAI-ENDPOINT")"
+# Check for .env.local fallback file
+if [[ -f ".env.local" ]]; then
+  echo "Found .env.local - using local secrets instead of Azure Key Vault"
+  source .env.local
+  
+  openai_key="${AZURE_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"
+  azure_endpoint="${AZURE_OPENAI_ENDPOINT:-}"
+  nextauth_secret="${NEXTAUTH_SECRET:-}"
+  azure_client_id="${AZURE_AD_CLIENT_ID:-}"
+  azure_client_secret="${AZURE_AD_CLIENT_SECRET:-}"
+  azure_tenant_id="${AZURE_AD_TENANT_ID:-}"
+  
+  # Validate required secrets
+  if [[ -z "$openai_key" ]] || [[ -z "$azure_endpoint" ]]; then
+    echo "ERROR: .env.local is missing required secrets (AZURE_OPENAI_API_KEY or AZURE_OPENAI_ENDPOINT)" >&2
+    exit 1
+  fi
+else
+  echo "No .env.local found - fetching secrets from Azure Key Vault"
+  openai_key="$(get_secret "AI-API-KEY")"
+  azure_endpoint="$(get_secret "AZURE-OPENAI-ENDPOINT")"
+  nextauth_secret="$(get_secret "NEXTAUTH-SECRET")"
+  azure_client_id="$(get_secret "AZURE-AD-CLIENT-ID")"
+  azure_client_secret="$(get_secret "AZURE-AD-CLIENT-SECRET")"
+  azure_tenant_id="$(get_secret "AZURE-AD-TENANT-ID")"
+fi
+
 # Strip /openai/v1/ suffix if present (SDK adds its own path)
 azure_endpoint="${azure_endpoint%/openai/v1/}"
 azure_endpoint="${azure_endpoint%/openai/v1}"
-nextauth_secret="$(get_secret "NEXTAUTH-SECRET")"
-azure_client_id="$(get_secret "AZURE-AD-CLIENT-ID")"
-azure_client_secret="$(get_secret "AZURE-AD-CLIENT-SECRET")"
-azure_tenant_id="$(get_secret "AZURE-AD-TENANT-ID")"
 
 cat > .env.generated <<EOF
 OPENAI_API_KEY=$openai_key

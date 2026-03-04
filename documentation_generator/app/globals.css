@@ -5,6 +5,7 @@
   --foreground: #000000;
   --border: #e0e0e5;
   --panel-bg: #fff;
+  --panel-bg-selected: #f0f6ff;
   --input-bg: #fff;
   --muted: #555;
   --danger: #a00;
@@ -26,6 +27,7 @@
     --foreground: #ffffff;
     --border: #333;
     --panel-bg: #0f0f0f;
+    --panel-bg-selected: #1a2744;
     --input-bg: #111;
     --muted: #bbb;
     --danger: #ff6b6b;
@@ -37,20 +39,34 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
   margin: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+html {
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* Layout: responsive 4/2/1 grid with stable panel sizing */
 .app-shell {
-  max-width: 1680px;
+  max-width: 100%;
+  height: calc(100vh - 32px);
   margin: 16px auto;
-  padding: 0 12px 20px;
-  min-height: 100vh;
+  padding: 0 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .app-grid {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.2fr) minmax(240px, 1fr) minmax(280px, 1.2fr);
   gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  grid-auto-rows: 1fr;
 }
 
 .panel {
@@ -58,10 +74,10 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 14px;
-  min-height: 420px;
   display: flex;
   flex-direction: column;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  min-height: 0;
 }
 
 .panel-header {
@@ -77,6 +93,19 @@ body {
   overflow: auto;
 }
 
+/* Utility: hide visible scrollbars but keep element scrollable */
+.hide-scrollbar {
+  -ms-overflow-style: none; /* IE, Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+/* Input File box styling */
+#input_file_box {
+  max-width: 80%;
+}
 /* Chat wrapping: prevent long strings/paths from overflowing */
 .chat-message,
 .chat-message p,

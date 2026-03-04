@@ -1,12 +1,9 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { useEffect, useRef, useState } from "react";
 import useFiles from "./hooks/useFiles";
 import useModels from "./hooks/useModels";
 import useRag from "./hooks/useRag";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { classifyUploads, UploadClassification } from "../lib/classifyUploads";
 import FileUploader from "./components/FileUploader";
 import ModelProviderControls from "./components/ModelProviderControls";
@@ -39,6 +36,7 @@ type OutputFile = {
   createdAt: number;
   bytesBase64: string;
   htmlPreview?: string;
+  markdownContent?: string;
 };
 
 type ChatMessage = {
@@ -52,6 +50,22 @@ type GenerateError = {
   message: string;
   code?: string;
   hint?: string;
+};
+
+type ApiErrorPayload = {
+  error?: string | { message?: string; code?: string; hint?: string };
+  detail?: string | { message?: string };
+};
+
+type AppError = Error & { code?: string; hint?: string };
+
+type ApiOutput = {
+  filename?: string;
+  bytesBase64?: string;
+  mime?: string;
+  createdAt?: string;
+  htmlPreview?: string;
+  markdownContent?: string;
 };
 
 const MAX_TEXT_CHARS = 200 * 1024; // ~200KB cap for in-memory text
@@ -68,6 +82,7 @@ export default function Page() {
   const [outputs, setOutputs] = useState<OutputFile[]>([]);
   const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [generateProgress, setGenerateProgress] = useState<{ stage: string; percent: number; failed?: boolean } | null>(null);
   const [generateError, setGenerateError] = useState<GenerateError | null>(null);
   const [pdfRenderError, setPdfRenderError] = useState<string | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
@@ -138,18 +153,22 @@ export default function Page() {
     return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  function parseApiError(payload: any, fallback: string): GenerateError {
-    if (payload?.error?.message) {
-      return { message: payload.error.message, code: payload.error.code, hint: payload.error.hint };
+  function parseApiError(payload: ApiErrorPayload | undefined, fallback: string): GenerateError {
+    if (!payload) return { message: fallback };
+
+    const { error, detail } = payload;
+
+    if (typeof error === "object" && error?.message) {
+      return { message: error.message, code: error.code, hint: error.hint };
     }
-    if (payload?.error) {
-      return { message: payload.error };
+    if (typeof error === "string" && error) {
+      return { message: error };
     }
-    if (payload?.detail?.message) {
-      return { message: payload.detail.message };
+    if (typeof detail === "object" && detail?.message) {
+      return { message: detail.message };
     }
-    if (payload?.detail) {
-      return { message: payload.detail };
+    if (typeof detail === "string" && detail) {
+      return { message: detail };
     }
     return { message: fallback };
   }
@@ -282,6 +301,9 @@ export default function Page() {
         const msgs = convData.messages || [];
 
         if (cancelled) return;
+
+        if (files.length > 0 || chat.length > 0) return;
+        
         setChat(
           msgs.map((m: { id: string; role: string; content: string }) => ({
             id: m.id,
@@ -299,7 +321,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, [session?.user, status]);  
+  }, [session?.user, status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -396,7 +418,7 @@ export default function Page() {
         setDatasetId(activeDatasetId);
       }
 
-      const signature = textFiles.map((f) => `${f.name}:${f.size}`).join("|");
+      const signature = `${activeDatasetId}:${textFiles.map((f) => `${f.name}:${f.size}`).join("|")}`;
       if (signature === docsIngestSignature) return;
 
       try {
@@ -448,7 +470,7 @@ export default function Page() {
         setDatasetId(activeDatasetId);
       }
 
-      const signature = `${solutionFile.name}:${solutionFile.size}`;
+      const signature = `${activeDatasetId}:${solutionFile.name}:${solutionFile.size}`;
       if (signature === solutionIngestSignature) return;
 
       const ingestFormData = new FormData();
@@ -468,6 +490,16 @@ export default function Page() {
           }
           return;
         }
+        
+        const stored = data?.details?.chunks_stored ?? data?.chunks_stored ?? 0;
+        if (stored <= 0) {
+          if (!cancelled) {
+            setCorpusType("unknown");
+            setCorpusReason("Solution parsed but no chunks were indexed for chat.");
+          }
+          return;
+        }
+        
         if (!cancelled) {
           setSolutionIngestSignature(signature);
           setCorpusType(data?.corpus_type || "solution_zip");
@@ -501,7 +533,11 @@ export default function Page() {
         return;
       }
 
-      const models = Array.isArray(data?.models) ? data.models.map((m: any) => m?.name).filter(Boolean) : [];
+      const models = Array.isArray(data?.models)
+        ? data.models
+            .map((m: { name?: string }) => m?.name)
+            .filter((name: string | undefined): name is string => Boolean(name))
+        : [];
       setLocalModels(models);
 
       // Default selection logic
@@ -516,7 +552,7 @@ export default function Page() {
         setUseCustomLocalModel(true);
       }
 
-    } catch (err: any) {
+    } catch {
       setLocalModels([]);
       setUseCustomLocalModel(true);
       setLocalModelsError("Couldn't detect local models. Ensure Ollama is running.");
@@ -598,6 +634,7 @@ export default function Page() {
     if (files.length === 0) {
       setDatasetId(createDatasetId());
       setDocsIngestSignature(null);
+      setConversationId(null);
     }
     const incoming = Array.isArray(fileList) ? fileList : Array.from(fileList);
 
@@ -628,7 +665,7 @@ export default function Page() {
             truncated = true;
           }
           return { ...base, isText: true, text, truncated };
-        } catch (e: any) {
+        } catch {
           return { ...base, error: "Failed to read file", isText: false };
         }
       })
@@ -710,7 +747,7 @@ export default function Page() {
   }
 
   // Generate docs for Power Platform solution using PAC CLI + RAG
-  async function generateSolutionDocs() {
+  async function generateSolutionDocs(onProgress?: (stage: string, percent: number) => void) {
     const activeDatasetId = datasetId || createDatasetId();
     if (!datasetId) {
       setDatasetId(activeDatasetId);
@@ -719,30 +756,45 @@ export default function Page() {
     if (!solutionFile?.file) {
       throw new Error("No solution file found");
     }
+    const currentSignature = `${activeDatasetId}:${solutionFile.name}:${solutionFile.size}`;
+    const alreadyIngested = solutionIngestSignature === currentSignature;
 
     // Step 1: FIRST - Ingest the ZIP file into ChromaDB (parses ALL files, FREE with Sentence-BERT)
     // This happens BEFORE doc generation so RAG chat can use the full solution content
-    const ingestFormData = new FormData();
-    ingestFormData.append("file", solutionFile.file);
-    ingestFormData.append("dataset_id", activeDatasetId);
-    
-    const ingestRes = await fetch("/api/rag-ingest-zip", {
-      method: "POST",
-      body: ingestFormData,
-    });
-    
-    if (ingestRes.ok) {
-      const ingestData = await ingestRes.json();
-      const type = ingestData?.corpus_type || ingestData?.details?.corpus_type || null;
-      const reason = ingestData?.corpus_reason || ingestData?.details?.corpus_reason || null;
-      setCorpusType(type);
-      setCorpusReason(reason);
-      console.log("Solution ingested into ChromaDB:", ingestData);
-    } else {
-      console.warn("Failed to ingest solution into ChromaDB - continuing with doc generation");
+    if (!alreadyIngested) {
+      onProgress?.("Ingesting solution into RAG...", 15);
+      const ingestFormData = new FormData();
+      ingestFormData.append("file", solutionFile.file);
+      ingestFormData.append("dataset_id", activeDatasetId);
+
+      const ingestRes = await fetch("/api/rag-ingest-zip", {
+        method: "POST",
+        body: ingestFormData,
+      });
+
+      if (ingestRes.ok) {
+        const ingestData = await ingestRes.json();
+        const stored = ingestData?.details?.chunks_stored ?? ingestData?.chunks_stored ?? 0;
+
+        if (stored <= 0) {
+          throw new Error("Solution parsed but no chunks were indexed for chat.");
+        }
+
+        const type = ingestData?.corpus_type || ingestData?.details?.corpus_type || null;
+        const reason = ingestData?.corpus_reason || ingestData?.details?.corpus_reason || null;
+        setCorpusType(type);
+        setCorpusReason(reason);
+        setSolutionIngestSignature(currentSignature);
+        console.log("Solution ingested into ChromaDB:", ingestData);
+      } else if (ingestRes.status === 409) {
+        console.warn("Ingest already in progress for this dataset. Continuing.");
+      } else {
+        throw new Error("Failed to ingest solution into ChromaDB.");
+      }
     }
 
     // Step 2: Parse solution with PAC CLI (for doc generation metadata)
+    onProgress?.("Parsing solution with PAC CLI...", 40);
     const formData = new FormData();
     formData.append("file", solutionFile.file);
 
@@ -754,15 +806,16 @@ export default function Page() {
     const parsePayload = await parseRes.json().catch(() => ({}));
     if (!parseRes.ok) {
       const parsed = parseApiError(parsePayload, "Failed to parse solution with PAC CLI");
-      const err = new Error(parsed.message);
-      (err as any).code = parsed.code;
-      (err as any).hint = parsed.hint;
+      const err = new Error(parsed.message) as AppError;
+      err.code = parsed.code;
+      err.hint = parsed.hint;
       throw err;
     }
 
     const parsedSolution = parsePayload?.data || parsePayload;
 
     // Step 3: Generate documentation with RAG pipeline (API key from runtime settings)
+    onProgress?.("Generating documentation with AI...", 65);
     const modelForProvider = llmSelection.model;
 
     // Extract user preferences from chat history
@@ -788,9 +841,9 @@ export default function Page() {
       const errorData = await genRes.json().catch(() => ({}));
       const parsed = parseApiError(errorData, "Failed to generate documentation");
       const message = mapProviderError(parsed.message, genRes.status);
-      const err = new Error(message);
-      (err as any).code = parsed.code;
-      (err as any).hint = parsed.hint;
+      const err = new Error(message) as AppError;
+      err.code = parsed.code;
+      err.hint = parsed.hint;
       throw err;
     }
 
@@ -803,134 +856,39 @@ export default function Page() {
     if (generating || files.length === 0) return;
     setGenerating(true);
     setGenerateError(null);
+    setGenerateProgress(hasSolutionFile() ? { stage: "Starting...", percent: 0 } : { stage: "Generating...", percent: 0 });
 
     try {
       // Check if we have a solution file - use PAC CLI + RAG pipeline
       if (hasSolutionFile()) {
-        const { parsedSolution, documentation } = await generateSolutionDocs();
+        const { parsedSolution, documentation } = await generateSolutionDocs((stage, percent) =>
+          setGenerateProgress({ stage, percent })
+        );
         
         // Create output with the generated documentation
         const createdAt = new Date().toISOString();
         const filename = `${parsedSolution.solution_name || "solution"}_documentation.pdf`;
         
-        // Convert markdown to HTML for preview
-        const htmlContent = `
-          <div style="font-family: system-ui; line-height: 1.6; padding: 20px;">
-            <h1>${parsedSolution.solution_name}</h1>
-            <p><strong>Version:</strong> ${parsedSolution.version} | <strong>Publisher:</strong> ${parsedSolution.publisher}</p>
-            <p><strong>Components:</strong> ${parsedSolution.components?.length || 0}</p>
-            <hr style="margin: 20px 0;" />
-            <div style="white-space: pre-wrap;">${documentation.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>')}</div>
-          </div>
-        `;
-
-        // Generate actual PDF using pdf-lib
-        const pdfDoc = await PDFDocument.create();
-        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-        const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-        
-        const pageWidth = 612; // Letter size
-        const pageHeight = 792;
-        const margin = 50;
-        const lineHeight = 14;
-        const maxWidth = pageWidth - margin * 2;
-        
-        let currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-        let yPosition = pageHeight - margin;
-        
-        // Helper function to add text with word wrapping
-        const addText = (text: string, fontSize: number, isBold: boolean = false, color = rgb(0, 0, 0)) => {
-          const currentFont = isBold ? boldFont : font;
-          const words = text.split(' ');
-          let line = '';
-          
-          for (const word of words) {
-            const testLine = line + (line ? ' ' : '') + word;
-            const testWidth = currentFont.widthOfTextAtSize(testLine, fontSize);
-            
-            if (testWidth > maxWidth && line) {
-              if (yPosition < margin + lineHeight) {
-                currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-                yPosition = pageHeight - margin;
-              }
-              currentPage.drawText(line, { x: margin, y: yPosition, size: fontSize, font: currentFont, color });
-              yPosition -= lineHeight;
-              line = word;
-            } else {
-              line = testLine;
-            }
-          }
-          
-          if (line) {
-            if (yPosition < margin + lineHeight) {
-              currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-              yPosition = pageHeight - margin;
-            }
-            currentPage.drawText(line, { x: margin, y: yPosition, size: fontSize, font: currentFont, color });
-            yPosition -= lineHeight;
-          }
-        };
-        
-        // Add title
-        addText(`${parsedSolution.solution_name || 'Solution'} Documentation`, 20, true);
-        yPosition -= 10;
-        
-        // Add metadata
-        addText(`Version: ${parsedSolution.version || 'N/A'}  |  Publisher: ${parsedSolution.publisher || 'N/A'}`, 10, false, rgb(0.4, 0.4, 0.4));
-        addText(`Generated: ${new Date().toLocaleString()}`, 10, false, rgb(0.4, 0.4, 0.4));
-        addText(`Components: ${parsedSolution.components?.length || 0}`, 10, false, rgb(0.4, 0.4, 0.4));
-        yPosition -= 15;
-        
-        // Add horizontal line
-        currentPage.drawLine({
-          start: { x: margin, y: yPosition },
-          end: { x: pageWidth - margin, y: yPosition },
-          thickness: 1,
-          color: rgb(0.8, 0.8, 0.8),
+        // Generate PDF with Mermaid support using the markdown-to-pdf API
+        const metadata = `Version: ${parsedSolution.version} | Publisher: ${parsedSolution.publisher} | Components: ${parsedSolution.components?.length || 0}`;
+        const pdfResponse = await fetch("/api/markdown-to-pdf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            markdown: documentation,
+            title: `${parsedSolution.solution_name} Documentation`,
+            metadata: metadata,
+          }),
         });
-        yPosition -= 20;
-        
-        // Sanitize documentation to remove WinAnsi-incompatible characters
-        const sanitizeForPdf = (text: string): string => {
-          return text
-            .replace(/→/g, '->')  // Arrow
-            .replace(/←/g, '<-')  // Left arrow
-            .replace(/↑/g, '^')   // Up arrow
-            .replace(/↓/g, 'v')   // Down arrow
-            .replace(/✓|✔/g, 'v') // Checkmarks
-            .replace(/✗|✘/g, 'x') // X marks
-            .replace(/•/g, '*')   // Bullet (actually this one should work, but just in case)
-            .replace(/[^\x00-\xFF]/g, '?'); // Replace any other non-WinAnsi characters with ?
-        };
-        
-        const sanitizedDocumentation = sanitizeForPdf(documentation);
-        
-        // Process documentation content
-        const lines = sanitizedDocumentation.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('# ')) {
-            yPosition -= 10;
-            addText(line.substring(2), 16, true);
-            yPosition -= 5;
-          } else if (line.startsWith('## ')) {
-            yPosition -= 8;
-            addText(line.substring(3), 14, true);
-            yPosition -= 3;
-          } else if (line.startsWith('### ')) {
-            yPosition -= 5;
-            addText(line.substring(4), 12, true);
-          } else if (line.startsWith('- ') || line.startsWith('* ')) {
-            addText('• ' + line.substring(2), 10);
-          } else if (line.trim() === '') {
-            yPosition -= 8;
-          } else {
-            addText(line, 10);
-          }
+
+        if (!pdfResponse.ok) {
+          const errorData = await pdfResponse.json().catch(() => ({}));
+          throw new Error(errorData.error || "Failed to generate PDF");
         }
-        
-        // Generate PDF bytes
-        const pdfBytes = await pdfDoc.save();
-        const pdfBase64 = btoa(String.fromCharCode(...pdfBytes));
+
+        const pdfData = await pdfResponse.json();
+        const pdfBase64 = pdfData.pdfBase64;
+        const htmlContent = pdfData.html;
 
         const output: OutputFile = {
           id: `${filename}-${Date.now()}`,
@@ -939,6 +897,7 @@ export default function Page() {
           mime: "application/pdf",
           createdAt: Date.now(),
           htmlPreview: htmlContent,
+          markdownContent: documentation, // Store original markdown for Mermaid rendering
         };
         upsertOutput(output);
         setSelectedOutputId(output.id);
@@ -956,10 +915,12 @@ export default function Page() {
           ]);
         }
 
+        setGenerateProgress({ stage: "Complete", percent: 100 });
         return;
       }
 
       // Regular file processing (existing flow)
+      setGenerateProgress({ stage: "Generating documentation...", percent: 50 });
       const modelForProvider = llmSelection.provider === "cloud" ? llmSelection.model : undefined;
       const res = await fetch("/api/generate-docs", {
         method: "POST",
@@ -973,24 +934,25 @@ export default function Page() {
 
       if (!res.ok) {
         const text = await res.text();
-        let parsedPayload: any = {};
+        let parsedPayload: unknown = {};
         try {
           parsedPayload = JSON.parse(text);
         } catch {
           parsedPayload = {};
         }
-        const parsed = parseApiError(parsedPayload, text || `HTTP ${res.status}`);
+        const parsed = parseApiError(parsedPayload as ApiErrorPayload, text || `HTTP ${res.status}`);
         throw new Error(mapProviderError(parsed.message, res.status));
       }
 
       const data = await res.json();
-      const outputsFromApi: any[] = Array.isArray(data?.outputs) ? data.outputs : [];
+      const outputsFromApi: ApiOutput[] = Array.isArray(data?.outputs) ? (data.outputs as ApiOutput[]) : [];
 
       if (!outputsFromApi.length) {
         throw new Error("Invalid generate response");
       }
 
       setSelectedOutputId(null); // user chooses what to preview
+      setGenerateProgress({ stage: "Complete", percent: 100 });
 
       outputsFromApi.forEach((o) => {
         const created = Date.parse(o.createdAt || "") || Date.now();
@@ -1001,15 +963,17 @@ export default function Page() {
           mime: o.mime || "application/pdf",
           createdAt: created,
           htmlPreview: o.htmlPreview || "",
+          markdownContent: o.markdownContent, // Store original markdown for Mermaid rendering
         };
         upsertOutput(output);
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       setGenerateError({
-        message: e?.message ?? "Failed to generate documentation",
-        code: e?.code,
-        hint: e?.hint,
+        message: e instanceof Error ? e.message : "Failed to generate documentation",
+        code: (e as AppError | undefined)?.code,
+        hint: (e as AppError | undefined)?.hint,
       });
+      setGenerateProgress({ stage: "Failed", percent: 0, failed: true });
     } finally {
       setGenerating(false);
     }
@@ -1106,7 +1070,7 @@ export default function Page() {
 
       if (!ragRes.ok) {
         const errText = await ragRes.text();
-        let parsed: any = {};
+        let parsed: { error?: string; detail?: string } = {};
         try {
           parsed = JSON.parse(errText);
         } catch {
@@ -1211,8 +1175,8 @@ export default function Page() {
         return;
       }
 
-    } catch (e: any) {
-      const msg = e?.message ?? "Unknown error";
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
 
       // replace last assistant message with the error
       setChat((c) =>
@@ -1238,7 +1202,7 @@ export default function Page() {
           content: m.content,
         }))
       );
-      if (data.dataset_id) setDatasetId(data.dataset_id);
+      if (data.dataset_id && files.length === 0) setDatasetId(data.dataset_id);
       setConversationId(data.id);
     } catch {
       // ignore
@@ -1339,7 +1303,7 @@ export default function Page() {
       {/* Responsive grid: 4 columns desktop, 2 columns medium, 1 column small */}
       <div className="app-grid">
         <section className="panel">
-        <FileUploader
+          <FileUploader
           files={files}
           onAdd={(fl) => addFiles(fl)}
           onRemove={removeFile}
@@ -1454,25 +1418,26 @@ export default function Page() {
 
         <section className="panel">
           <div className="panel-header">Output Files</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-            <button
-              onClick={generateDocs}
-              disabled={!hasFiles || generating}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 8,
-                border: hasSolution ? "1px solid #0a6b3d" : "1px solid #1f7aec",
-                background: generating ? "#9dc2f7" : hasSolution ? "#0a6b3d" : "#1f7aec",
-                color: "#fff",
-                cursor: !hasFiles || generating ? "not-allowed" : "pointer",
-                opacity: !hasFiles || generating ? 0.7 : 1,
-              }}
-            >
-              {generating 
-                ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
-                : (hasSolution ? "Parse & Generate Docs" : "Generate docs")}
-            </button>
-            <div style={{ fontSize: 12, color: "#555" }}>
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button
+                onClick={generateDocs}
+                disabled={!hasFiles || generating}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: hasSolution ? "1px solid #0a6b3d" : "1px solid #1f7aec",
+                  background: generating ? "#9dc2f7" : hasSolution ? "#0a6b3d" : "#1f7aec",
+                  color: "#fff",
+                  cursor: !hasFiles || generating ? "not-allowed" : "pointer",
+                  opacity: !hasFiles || generating ? 0.7 : 1,
+                }}
+              >
+                {generating 
+                  ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
+                  : (hasSolution ? "Parse & Generate Docs" : "Generate docs")}
+              </button>
+              <div style={{ fontSize: 12, color: "#555" }}>
               {hasInvalidZip
                 ? "Solution docs require a Power Platform solution (.zip export). For other files, use Chat/RAG mode."
                 : !hasFiles
@@ -1480,7 +1445,34 @@ export default function Page() {
                 : hasSolution
                 ? "Will parse solution with PAC CLI, then generate docs with RAG pipeline."
                 : "Uses attached files with current model/system prompt/temperature."}
+              </div>
             </div>
+            {generateProgress && (
+              <div style={{ marginTop: 10, marginBottom: 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12, color: "#555" }}>
+                  <span>{generateProgress.stage}</span>
+                  <span>{generateProgress.percent}%</span>
+                </div>
+                <div
+                  style={{
+                    height: 6,
+                    borderRadius: 3,
+                    background: generateProgress.failed ? "#ffe0e0" : "#e8e8ec",
+                    overflow: "hidden",
+                  }}
+                >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${Math.min(generateProgress.percent, 100)}%`,
+                    background: generateProgress.failed ? "#c41e3a" : hasSolution ? "#0a6b3d" : "#1f7aec",
+                    borderRadius: 3,
+                    transition: "width 0.3s ease-out",
+                  }}
+                />
+                </div>
+              </div>
+            )}
           </div>
           {hasOnlyNonSolution && (
             <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>

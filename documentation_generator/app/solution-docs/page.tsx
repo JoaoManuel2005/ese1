@@ -1,8 +1,7 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { useEffect, useRef, useState } from "react";
+import MarkdownWithMermaid from "../components/MarkdownWithMermaid";
 
 type SolutionComponent = {
   name: string;
@@ -365,7 +364,7 @@ export default function SolutionDocsPage() {
                 padding: 16,
                 border: "1px solid #e0e0e5",
               }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{documentation}</ReactMarkdown>
+                <MarkdownWithMermaid content={documentation} />
               </div>
             </section>
           )}

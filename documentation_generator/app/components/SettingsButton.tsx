@@ -83,6 +83,7 @@ const SettingsButton: FC<Props> = ({
       document.documentElement.style.setProperty("--border", "#333");
       document.documentElement.style.setProperty("--input-bg", "#111");
       document.documentElement.style.setProperty("--panel-bg", "#0f0f0f");
+      document.documentElement.style.setProperty("--panel-bg-selected", "#1a2744");
       document.documentElement.style.setProperty("--muted", "#bbb");
       document.documentElement.style.setProperty("--danger", "#ff6b6b");
       document.body.style.background = "#0a0a0a";
@@ -93,6 +94,7 @@ const SettingsButton: FC<Props> = ({
       document.documentElement.style.setProperty("--border", "#e0e0e5");
       document.documentElement.style.setProperty("--input-bg", "#fff");
       document.documentElement.style.setProperty("--panel-bg", "#fff");
+      document.documentElement.style.setProperty("--panel-bg-selected", "#f0f6ff");
       document.documentElement.style.setProperty("--muted", "#555");
       document.documentElement.style.setProperty("--danger", "#a00");
       document.body.style.background = "";

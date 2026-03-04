@@ -24,13 +24,13 @@ export async function POST(req: Request) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         question: message,
-        n_results: 5,
+        nResults: 5,
         provider,
         model,
-        dataset_id: datasetId,
-        focus_files: focusFiles,
-        conversation_history: conversationHistory,
-        api_key: apiKey || undefined,
+        datasetId,
+        focusFiles,
+        conversationHistory,
+        apiKey: apiKey || undefined,
         endpoint: endpoint || undefined,
       }),
     });
@@ -64,7 +64,12 @@ export async function POST(req: Request) {
       });
     }
 
-    if (ragData.chunks_found === 0) {
+    const chunksFound =
+      typeof ragData?.chunksFound === "number"
+        ? ragData.chunksFound
+        : (ragData?.chunks_found ?? 0);
+
+    if (chunksFound === 0) {
       return NextResponse.json({
         answer:
           ragData.answer ||
@@ -82,7 +87,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       answer,
       sources,
-      chunks_found: ragData.chunks_found,
+      chunks_found: chunksFound,
       mode: "rag",
     });
 

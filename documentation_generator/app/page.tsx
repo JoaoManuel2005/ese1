@@ -1211,7 +1211,7 @@ export default function Page() {
       {/* Responsive grid: 4 columns desktop, 2 columns medium, 1 column small */}
       <div className="app-grid">
         <section className="panel">
-        <FileUploader
+          <FileUploader
           files={files}
           onAdd={(fl) => addFiles(fl)}
           onRemove={removeFile}

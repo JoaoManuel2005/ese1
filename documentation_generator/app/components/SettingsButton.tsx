@@ -211,6 +211,7 @@ const SettingsButton: FC<Props> = ({
       } else if (!isAuthenticated) {
         setSaveMessage("Saved for this browser session.");
       }
+      setTimeout(() => setOpen(false), 400);
     } catch (err: any) {
       setSaveState("error");
       setSaveMessage(err?.message || "Failed to save settings.");

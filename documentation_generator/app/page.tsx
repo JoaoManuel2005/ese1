@@ -720,34 +720,41 @@ export default function Page() {
     if (!solutionFile?.file) {
       throw new Error("No solution file found");
     }
+    const currentSignature = `${activeDatasetId}:${solutionFile.name}:${solutionFile.size}`;
+    const alreadyIngested = solutionIngestSignature === currentSignature;
 
     // Step 1: FIRST - Ingest the ZIP file into ChromaDB (parses ALL files, FREE with Sentence-BERT)
     // This happens BEFORE doc generation so RAG chat can use the full solution content
-    onProgress?.("Ingesting solution into RAG...", 15);
-    const ingestFormData = new FormData();
-    ingestFormData.append("file", solutionFile.file);
-    ingestFormData.append("dataset_id", activeDatasetId);
-    
-    const ingestRes = await fetch("/api/rag-ingest-zip", {
-      method: "POST",
-      body: ingestFormData,
-    });
-    
-    if (ingestRes.ok) {
-      const ingestData = await ingestRes.json();
-      const stored = ingestData?.details?.chunks_stored ?? ingestData?.chunks_stored ?? 0;
-    
-      if (stored <= 0) {
-        throw new Error("Solution parsed but no chunks were indexed for chat.");
+    if (!alreadyIngested) {
+      onProgress?.("Ingesting solution into RAG...", 15);
+      const ingestFormData = new FormData();
+      ingestFormData.append("file", solutionFile.file);
+      ingestFormData.append("dataset_id", activeDatasetId);
+
+      const ingestRes = await fetch("/api/rag-ingest-zip", {
+        method: "POST",
+        body: ingestFormData,
+      });
+
+      if (ingestRes.ok) {
+        const ingestData = await ingestRes.json();
+        const stored = ingestData?.details?.chunks_stored ?? ingestData?.chunks_stored ?? 0;
+
+        if (stored <= 0) {
+          throw new Error("Solution parsed but no chunks were indexed for chat.");
+        }
+
+        const type = ingestData?.corpus_type || ingestData?.details?.corpus_type || null;
+        const reason = ingestData?.corpus_reason || ingestData?.details?.corpus_reason || null;
+        setCorpusType(type);
+        setCorpusReason(reason);
+        setSolutionIngestSignature(currentSignature);
+        console.log("Solution ingested into ChromaDB:", ingestData);
+      } else if (ingestRes.status === 409) {
+        console.warn("Ingest already in progress for this dataset. Continuing.");
+      } else {
+        throw new Error("Failed to ingest solution into ChromaDB.");
       }
-    
-      const type = ingestData?.corpus_type || ingestData?.details?.corpus_type || null;
-      const reason = ingestData?.corpus_reason || ingestData?.details?.corpus_reason || null;
-      setCorpusType(type);
-      setCorpusReason(reason);
-      console.log("Solution ingested into ChromaDB:", ingestData);
-    } else {
-      throw new Error("Failed to ingest solution into ChromaDB.");
     }
 
     // Step 2: Parse solution with PAC CLI (for doc generation metadata)

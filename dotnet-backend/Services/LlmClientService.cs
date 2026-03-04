@@ -69,7 +69,7 @@ public class LlmClientService
         var baseUrl = (_config["LOCAL_LLM_BASE_URL"] ?? "http://localhost:11434").TrimEnd('/');
 
         var http = _httpClientFactory.CreateClient();
-        http.Timeout = TimeSpan.FromMinutes(10);
+        http.Timeout = TimeSpan.FromMinutes(3);  // Reduced from 10 minutes with token limit
 
         var body = new
         {
@@ -82,8 +82,10 @@ public class LlmClientService
             stream = false,
             options = new
             {
-                temperature = 0.1,
-                top_p = 0.2
+                temperature = 0.3,     // Increased from 0.1 for faster generation
+                top_p = 0.9,           // Increased from 0.2 for more variety
+                num_predict = 6000,    // Limit tokens (equivalent to max_tokens)
+                repeat_penalty = 1.3   // Reduce repetition (equivalent to frequency_penalty)
             }
         };
 
@@ -142,8 +144,10 @@ public class LlmClientService
 
         var options = new ChatCompletionOptions
         {
-            Temperature = 0.1f,
-            TopP = 0.2f
+            Temperature = 0.3f,        // Increased from 0.1 for faster generation
+            TopP = 0.9f,               // Increased from 0.2 for more variety
+            MaxOutputTokenCount = 6000, // Limit output to prevent excessive generation
+            FrequencyPenalty = 0.3f    // Reduce repetition
         };
 
         var result = await chatClient.CompleteChatAsync(messages, options);

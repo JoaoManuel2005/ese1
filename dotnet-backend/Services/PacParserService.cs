@@ -1174,9 +1174,49 @@ print(json.dumps(result))
 
                 metadata["source_file"] = Path.GetRelativePath(baseDir, flowFile);
                 metadata["action_count"] = analysis.ActionCount;
+                
+                // Only add trigger metadata if we have meaningful values
+                if (!string.IsNullOrWhiteSpace(analysis.TriggerType) && analysis.TriggerType != "Unknown")
+                {
+                    metadata["trigger"] = analysis.TriggerType;
+                    if (!string.IsNullOrWhiteSpace(analysis.TriggerDescription))
+                        metadata["trigger_description"] = analysis.TriggerDescription;
+                }
+                else
+                {
+                    _logger.LogDebug("[PAC] Flow {Name} - trigger not detected", flowName);
+                }
+                
                 metadata["dataverse_tables"] = analysis.DataverseTables;
                 metadata["sharepoint_urls"] = analysis.SharePointUrls;
-                metadata["connectors"] = analysis.Connectors;
+                
+                // Only add connectors if we found any
+                if (analysis.Connectors.Count > 0)
+                {
+                    metadata["connectors"] = analysis.Connectors;
+                    _logger.LogDebug("[PAC] Flow {Name} - found {Count} connectors: {List}", 
+                        flowName, analysis.Connectors.Count, string.Join(", ", analysis.Connectors));
+                }
+                else
+                {
+                    _logger.LogDebug("[PAC] Flow {Name} - no connectors detected", flowName);
+                }
+                
+                // Generate summary from analysis
+                var summaryParts = new List<string>();
+                if (analysis.ActionCount > 0)
+                    summaryParts.Add($"{analysis.ActionCount} actions");
+                if (analysis.DataverseTables.Count > 0)
+                    summaryParts.Add($"interacts with Dataverse tables: {string.Join(", ", analysis.DataverseTables)}");
+                if (analysis.SharePointUrls.Count > 0)
+                    summaryParts.Add($"accesses SharePoint sites");
+                if (analysis.Connectors.Count > 0)
+                    summaryParts.Add($"uses {analysis.Connectors.Count} connector(s)");
+                    
+                var summary = summaryParts.Count > 0 
+                    ? $"Flow with {string.Join(", ", summaryParts)}"
+                    : "Flow automation";
+                metadata["summary"] = summary;
 
                 foreach (var table in analysis.DataverseTables)
                 {
@@ -1613,17 +1653,43 @@ print(json.dumps(result))
         {
             foreach (var trigger in triggers.EnumerateObject())
             {
+                var triggerName = trigger.Name;
                 var inputs = TryGetProperty(trigger.Value, "inputs");
                 var host = TryGetProperty(inputs, "host");
                 var parameters = TryGetProperty(inputs, "parameters");
+                var type = GetJsonString(trigger.Value, "type") ?? "unknown";
 
+                // Extract trigger type description
                 var apiId = GetJsonString(host, "apiId") ?? "";
+                if (apiId.Contains("manual", StringComparison.OrdinalIgnoreCase))
+                    result.TriggerType = "Manual";
+                else if (apiId.Contains("powerapps", StringComparison.OrdinalIgnoreCase))
+                    result.TriggerType = "PowerApps";
+                else if (apiId.Contains("recurrence", StringComparison.OrdinalIgnoreCase) || type.Contains("recurrence", StringComparison.OrdinalIgnoreCase))
+                    result.TriggerType = "Schedule/Recurrence";
+                else if (apiId.Contains("shared_commondataserviceforapps", StringComparison.OrdinalIgnoreCase))
+                    result.TriggerType = "Dataverse (When a row is added/modified/deleted)";
+                else if (apiId.Contains("shared_sharepointonline", StringComparison.OrdinalIgnoreCase))
+                    result.TriggerType = "SharePoint (When an item is created/modified)";
+                else if (apiId.Contains("http", StringComparison.OrdinalIgnoreCase))
+                    result.TriggerType = "HTTP Request";
+                else if (!string.IsNullOrWhiteSpace(apiId))
+                    result.TriggerType = $"Connector: {apiId.Split('/').Last()}";
+                else
+                    result.TriggerType = $"Type: {type}";
+
+                result.TriggerDescription = triggerName;
+
                 if (apiId.Contains("shared_commondataserviceforapps", StringComparison.OrdinalIgnoreCase))
                 {
                     var table = GetJsonString(parameters, "subscriptionRequest/entityname")
                         ?? GetJsonString(parameters, "entityName");
                     if (!string.IsNullOrWhiteSpace(table))
+                    {
                         result.DataverseTables.Add(table!);
+                        if (string.IsNullOrWhiteSpace(result.TriggerDescription))
+                            result.TriggerDescription = $"When {table} is modified";
+                    }
                 }
             }
         }
@@ -1708,6 +1774,8 @@ print(json.dumps(result))
         public List<string> SharePointUrls { get; set; } = new();
         public List<string> Connectors { get; set; } = new();
         public int ActionCount { get; set; }
+        public string TriggerType { get; set; } = "Unknown";
+        public string TriggerDescription { get; set; } = "";
     }
 
     private void EnrichFromZipEntries(ZipArchive zip, ParsedSolution solution)

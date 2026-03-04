@@ -44,7 +44,7 @@ jobs:
         with:
           name: docker-images
           path: |
-            dotnent-backend.tar
+            dotnet-backend.tar
             documentation_generator.tar
             pac_cli.tar
           retention-days: 7

@@ -24,10 +24,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build dotnet_backend
+      - name: Build dotnet-backend
         run: |
-          docker build -t dotnet_backend:latest ./dotnet_backend
-          docker save dotnet_backend:latest -o dotnet_backend.tar
+          docker build -t dotnet-backend:latest ./dotnet-backend
+          docker save dotnet-backend:latest -o dotnet-backend.tar
 
       - name: Build documentation_generator
         run: |
@@ -44,7 +44,7 @@ jobs:
         with:
           name: docker-images
           path: |
-            dotnent_backend.tar
+            dotnent-backend.tar
             documentation_generator.tar
             pac_cli.tar
           retention-days: 7

@@ -1,5 +1,7 @@
 namespace RagBackend.Models;
 
+using System.Text.Json.Serialization;
+
 public class SolutionComponent
 {
     public string Name { get; set; } = string.Empty;
@@ -19,11 +21,22 @@ public class ParsedSolution
 public class GenerateDocRequest
 {
     public ParsedSolution Solution { get; set; } = new();
+
+    [JsonPropertyName("doc_type")]
     public string DocType { get; set; } = "markdown";
+
+    [JsonPropertyName("systemPrompt")]
+    public string? SystemPrompt { get; set; }
+
     public string? Provider { get; set; }
     public string? Model { get; set; }
+
+    [JsonPropertyName("dataset_id")]
     public string? DatasetId { get; set; }
+
+    [JsonPropertyName("user_preferences")]
     public string? UserPreferences { get; set; }
+
     public string? ApiKey { get; set; }
     public string? Endpoint { get; set; }
 }

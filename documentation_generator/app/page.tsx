@@ -73,6 +73,8 @@ const TEXT_EXTS = ["txt", "md", "json", "csv", "js", "ts", "py"];
 const SOLUTION_EXT = "zip"; // Power Platform solution files
 const MAX_TOTAL_TEXT_CHARS = 400 * 1024; // overall cap we send to backend
 const DEFAULT_TEMP = 0.5;
+const DEFAULT_SOLUTION_SYSTEM_PROMPT =
+  "You are a technical documentation assistant for Microsoft Power Platform solutions. Produce comprehensive documentation that is exhaustive and component-driven. Every component provided must appear in the output under the correct type. Use only provided component evidence and metadata; if a detail is missing, write 'Not found in solution export'. Never omit component types, and preserve exact component names. Mermaid diagrams are mandatory and must be valid fenced mermaid code blocks.";
 
 export default function Page() {
   const [message, setMessage] = useState("");
@@ -98,7 +100,8 @@ export default function Page() {
   const [modelsError, setModelsError] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [endpoint, setEndpoint] = useState("");
-  
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SOLUTION_SYSTEM_PROMPT);
+
   const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number; provider?: string; model?: string; backend_online?: boolean } | null>(null);
   const [corpusType, setCorpusType] = useState<"solution_zip" | "docs" | "unknown" | null>(null);
   const [corpusReason, setCorpusReason] = useState<string | null>(null);
@@ -243,6 +246,39 @@ export default function Page() {
     if (!isClient || !datasetId) return;
     localStorage.setItem("datasetId", datasetId);
   }, [datasetId, isClient]);
+
+  // Load system prompt: from API when authenticated, from sessionStorage when not
+  useEffect(() => {
+    if (status === "authenticated") {
+      let cancelled = false;
+      (async () => {
+        try {
+          const res = await fetch("/api/settings");
+          if (!res.ok || cancelled) return;
+          const data = await res.json();
+          if (cancelled) return;
+          if (typeof data?.systemPrompt === "string" && data.systemPrompt.trim().length > 0) {
+            setSystemPrompt(data.systemPrompt);
+          } else {
+            setSystemPrompt(DEFAULT_SOLUTION_SYSTEM_PROMPT);
+          }
+        } catch {
+          if (!cancelled) setSystemPrompt(DEFAULT_SOLUTION_SYSTEM_PROMPT);
+        }
+      })();
+      return () => { cancelled = true; };
+    }
+    if (typeof window !== "undefined") {
+      try {
+        const stored = sessionStorage.getItem("systemPrompt");
+        if (stored != null && stored.trim().length > 0) {
+          setSystemPrompt(stored);
+          return;
+        }
+      } catch { /* ignore */ }
+    }
+    setSystemPrompt(DEFAULT_SOLUTION_SYSTEM_PROMPT);
+  }, [status]);
 
   // Restore most recent conversation when user is signed in
   useEffect(() => {
@@ -793,6 +829,7 @@ export default function Page() {
       body: JSON.stringify({
         solution: parsedSolution,
         doc_type: "markdown",
+        systemPrompt: (systemPrompt && systemPrompt.trim()) || undefined,
         provider: llmSelection.provider,
         model: modelForProvider,
         dataset_id: activeDatasetId,
@@ -1207,6 +1244,7 @@ export default function Page() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <SettingsButton
+            isAuthenticated={status === "authenticated"}
             provider={provider}
             setProvider={setProvider}
             models={models}
@@ -1226,6 +1264,9 @@ export default function Page() {
             setApiKey={setApiKey}
             endpoint={endpoint}
             setEndpoint={setEndpoint}
+            systemPrompt={systemPrompt}
+            setSystemPrompt={setSystemPrompt}
+            systemPromptDefault={DEFAULT_SOLUTION_SYSTEM_PROMPT}
           />
           <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation Generator</h1>
         </div>

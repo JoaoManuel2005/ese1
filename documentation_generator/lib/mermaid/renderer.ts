@@ -23,6 +23,15 @@ function initializeMermaid() {
       theme: "default",
       securityLevel: "loose",
       fontFamily: "arial",
+      er: {
+        useMaxWidth: false,
+        layoutDirection: "LR",
+        minEntityWidth: 200,
+        minEntityHeight: 100,
+        entityPadding: 20,
+        stroke: "#1976D2",
+        fill: "#E3F2FD",
+      },
     });
     isInitialized = true;
   }
@@ -55,11 +64,16 @@ export const renderMermaid: MermaidRenderer = async (
     
     // Render the diagram
     const { svg } = await mermaid.render(id, source);
-    
+
+    // Force full-width so diagrams fill their container instead of rendering tiny
+    const fullWidthSvg = svg
+      .replace(/<svg ([^>]*)width="[^"]*"/, '<svg $1width="100%"')
+      .replace(/<svg ([^>]*)height="[^"]*"/, '<svg $1height="auto"');
+
     return {
       format: "svg",
       mimeType: "image/svg+xml",
-      data: svg,
+      data: fullWidthSvg,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

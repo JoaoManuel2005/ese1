@@ -321,7 +321,7 @@ export default function SolutionDocsPage() {
           )}
         </div>
 
-        {/* Right Column: Output */}
+        {/* Right Column: Status + Placeholder only (no docs here) */}
         <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
           {/* Loading & Error */}
           {loading && (
@@ -339,37 +339,6 @@ export default function SolutionDocsPage() {
             </div>
           )}
 
-          {/* Generated Documentation */}
-          {documentation && (
-            <section style={{ ...panelStyle, maxHeight: "calc(100vh - 200px)", display: "flex", flexDirection: "column" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <div style={panelHeaderStyle}>📄 Generated Documentation</div>
-                <button
-                  onClick={handleDownloadDoc}
-                  style={{
-                    ...buttonStyle,
-                    background: "#5c2d91",
-                    padding: "8px 16px",
-                    fontSize: 13,
-                  }}
-                >
-                  ⬇️ Download Markdown
-                </button>
-              </div>
-              <div style={{ 
-                flex: 1, 
-                overflow: "auto", 
-                background: "#fafbff", 
-                borderRadius: 8, 
-                padding: 16,
-                border: "1px solid #e0e0e5",
-              }}>
-                <MarkdownWithMermaid content={documentation} />
-              </div>
-            </section>
-          )}
-
-          {/* Placeholder when no output */}
           {!documentation && !loading && !error && (
             <section style={panelStyle}>
               <div style={panelHeaderStyle}>📄 Documentation Output</div>
@@ -382,6 +351,34 @@ export default function SolutionDocsPage() {
         </div>
       </div>
 
+      {/* Full-width documentation output — diagrams need the full page width */}
+      {documentation && (
+        <section style={{ ...panelStyle, marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={panelHeaderStyle}>📄 Generated Documentation</div>
+            <button
+              onClick={handleDownloadDoc}
+              style={{
+                ...buttonStyle,
+                background: "#5c2d91",
+                padding: "8px 16px",
+                fontSize: 13,
+              }}
+            >
+              ⬇️ Download Markdown
+            </button>
+          </div>
+          <div style={{
+            background: "#fafbff",
+            borderRadius: 8,
+            padding: 24,
+            border: "1px solid #e0e0e5",
+          }}>
+            <MarkdownWithMermaid content={documentation} />
+          </div>
+        </section>
+      )}
+
       <style jsx global>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
@@ -389,6 +386,80 @@ export default function SolutionDocsPage() {
         .dropzone:hover {
           border-color: #1f7aec !important;
           background: #f0f6ff !important;
+        }
+
+        /* =============================================
+           PRINT / PDF STYLES
+           ============================================= */
+        @media print {
+          /* Hide controls, upload panel, left column entirely */
+          body { background: white !important; }
+
+          /* Make the whole page single-column */
+          main > div[style*="grid-template-columns"] {
+            display: block !important;
+          }
+
+          /* The navigation, upload section, parsed-solution panel, loading/error: hide */
+          main > div:first-child,                /* header row */
+          main > div > div:first-child {         /* left column */
+            display: none !important;
+          }
+
+          /* Right column: full width, no height constraint, no overflow clip */
+          main > div > div:last-child {
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
+
+          /* Documentation panel: remove height cap, no overflow */
+          section[style*="max-height"] {
+            max-height: none !important;
+            overflow: visible !important;
+            height: auto !important;
+            box-shadow: none !important;
+            border: none !important;
+          }
+
+          /* Inner scroll container: no overflow */
+          section[style*="max-height"] > div[style*="overflow"] {
+            overflow: visible !important;
+            height: auto !important;
+            max-height: none !important;
+          }
+
+          /* Hide the download button in print */
+          button { display: none !important; }
+
+          /* Diagrams: full width, never cut across pages */
+          .mermaid-container,
+          .mermaid-diagram,
+          .mermaid-diagram > * {
+            width: 100% !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+
+          svg {
+            width: 100% !important;
+            height: auto !important;
+            max-width: 100% !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+
+          /* Headings: don't let a heading sit alone at bottom of page */
+          h1, h2, h3, h4 {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+
+          /* Tables: avoid breaking mid-row */
+          table { page-break-inside: avoid !important; break-inside: avoid !important; }
+
+          /* Prose section spacing */
+          .prose { max-width: 100% !important; }
         }
       `}</style>
     </main>

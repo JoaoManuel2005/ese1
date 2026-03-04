@@ -178,6 +178,7 @@ const SettingsButton: FC<Props> = ({
       if (typeof data?.azureOpenAiEndpoint === "string") {
         setEndpoint(data.azureOpenAiEndpoint);
       }
+      setTimeout(() => setOpen(false), 500);
     } catch (err: any) {
       setSaveState("error");
       setSaveMessage(err?.message || "Failed to save settings.");

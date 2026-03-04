@@ -1,25 +1,87 @@
-# GitLab CI/CD Pipeline for RAG Demo
-# This is a simple pipeline that validates the Python code
+image: docker:latest
+
+variables:
+  DOCKER_HOST: unix:///var/run/docker.sock
 
 stages:
   - test
+  - build
 
-# Python validation job
-test:
-  stage: test
-  image: python:3.9
-  before_script:
-    - pip install --upgrade pip
-    - pip install -r requirements.txt
-  script:
-    - echo "Running basic validation..."
-    - python --version
-    - pip list
-    - echo "✅ Dependencies installed successfully"
-    - echo "✅ RAG demo validation passed"
-  allow_failure: false
+variables:
+  GIT_STRATEGY: clone
+  GIT_DEPTH: "0"
+  GIT_FETCH_EXTRA_FLAGS: "--prune"
 
-# Skip the default Heroku-based test
-# Override default test behavior
 default:
   interruptible: true
+
+test_backend:
+  stage: test
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  tags:
+    - docker-build
+  before_script:
+    - df -h .
+    - dotnet --version
+  script:
+    # Restore dependencies for all projects
+    - dotnet restore ese1.sln
+    # Build the solution
+    - dotnet build ese1.sln --no-restore --configuration Release
+    # Run .NET backend tests
+    - dotnet test ese1.sln --no-build --configuration Release --verbosity normal
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+  allow_failure: false
+
+test_frontend:
+  stage: test
+  image: node:20-alpine
+  tags:
+    - docker-build
+  before_script:
+    - cd documentation_generator
+    - npm ci --ignore-scripts || npm install --ignore-scripts
+  script:
+    - npm run test:run
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+  allow_failure: false
+
+
+build:
+  stage: build
+  tags: 
+    - docker-build
+  script:
+    - echo "Building rag_backend image..."
+    - docker build -t rag_backend:latest ./dotnet-backend
+
+    - echo "Building documentation_generator image..."
+    - docker build -t documentation_generator:latest ./documentation_generator
+
+    - echo "Building pac_cli image..."
+    - docker build -t pac_cli:latest ./pac-cli
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+  allow_failure: false
+
+
+
+
+

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { formatSources } from "../../../lib/formatSources";
+import { getRuntimeConfig } from "../../../lib/runtimeConfig";
 
-const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8000";
+const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8001";
 
 export async function POST(req: Request) {
   try {
@@ -13,18 +14,24 @@ export async function POST(req: Request) {
       );
     }
 
-    // Use FREE RAG retrieval - no OpenAI API key needed!
+    const runtimeConfig = await getRuntimeConfig();
+    const apiKey = runtimeConfig.openaiApiKey;
+    const endpoint = runtimeConfig.azureOpenAiEndpoint;
+
+    // Use RAG retrieval; cloud provider still requires a runtime API key.
     const ragRes = await fetch(`${RAG_BACKEND_URL}/rag/retrieve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         question: message,
-        n_results: 5,
+        nResults: 5,
         provider,
         model,
-        dataset_id: datasetId,
-        focus_files: focusFiles,
-        conversation_history: conversationHistory,
+        datasetId,
+        focusFiles,
+        conversationHistory,
+        apiKey: apiKey || undefined,
+        endpoint: endpoint || undefined,
       }),
     });
 
@@ -57,7 +64,12 @@ export async function POST(req: Request) {
       });
     }
 
-    if (ragData.chunks_found === 0) {
+    const chunksFound =
+      typeof ragData?.chunksFound === "number"
+        ? ragData.chunksFound
+        : (ragData?.chunks_found ?? 0);
+
+    if (chunksFound === 0) {
       return NextResponse.json({
         answer:
           ragData.answer ||
@@ -75,7 +87,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       answer,
       sources,
-      chunks_found: ragData.chunks_found,
+      chunks_found: chunksFound,
       mode: "rag",
     });
 

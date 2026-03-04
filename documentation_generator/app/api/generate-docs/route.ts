@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import MarkdownIt from "markdown-it";
 import { chromium } from "playwright";
+import { getRuntimeConfig } from "../../../lib/runtimeConfig";
 
 type IncomingFile = {
   name: string;
@@ -59,6 +60,23 @@ function wrapText(text: string, maxWidth: number, font: any, size: number) {
 
 async function markdownToHtml(markdown: string) {
   const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
+  
+  // Override fence renderer to handle mermaid blocks
+  const defaultFence = md.renderer.rules.fence!;
+  md.renderer.rules.fence = (tokens, idx, options, env, slf) => {
+    const token = tokens[idx];
+    const info = token.info ? token.info.trim() : '';
+    const langName = info ? info.split(/\s+/g)[0] : '';
+    
+    if (langName === 'mermaid') {
+      // Render mermaid blocks with the class that mermaid.js will pick up
+      return `<pre class="mermaid">${token.content}</pre>\n`;
+    }
+    
+    // Use default renderer for other code blocks
+    return defaultFence(tokens, idx, options, env, slf);
+  };
+  
   return md.render(markdown || "");
 }
 
@@ -68,6 +86,10 @@ function htmlDocumentTemplate(title: string, timestamp: string, bodyHtml: string
 <head>
   <meta charset="utf-8" />
   <title>${title}</title>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+  </script>
   <style>
     body { font-family: "Helvetica Neue", Arial, sans-serif; margin: 24px; line-height: 1.55; color: #1d1d1f; }
     h1 { font-size: 24px; margin-bottom: 8px; }
@@ -79,6 +101,7 @@ function htmlDocumentTemplate(title: string, timestamp: string, bodyHtml: string
     code { background: #f6f8fa; padding: 2px 4px; border-radius: 4px; font-family: "SFMono-Regular", Consolas, monospace; }
     pre { background: #f6f8fa; padding: 10px; border-radius: 6px; overflow: auto; }
     .meta { font-size: 12px; color: #666; margin-bottom: 12px; }
+    .mermaid { margin: 16px 0; text-align: center; }
   </style>
 </head>
 <body>
@@ -93,6 +116,10 @@ async function htmlToPdf(html: string) {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   await page.setContent(html, { waitUntil: "networkidle" });
+  
+  // Wait for Mermaid diagrams to render
+  await page.waitForTimeout(2000); // Give Mermaid time to initialize and render
+  
   const pdfBuffer = await page.pdf({
     format: "A4",
     margin: { top: "20mm", bottom: "20mm", left: "16mm", right: "16mm" },
@@ -121,17 +148,27 @@ function buildFilePrompt(file: IncomingFile) {
 
 export async function POST(req: Request) {
   try {
-    const { model, systemPrompt, temperature, files, apiKey: bodyApiKey } = await req.json();
-    const apiKey = bodyApiKey || req.headers.get("x-openai-api-key") || process.env.OPENAI_API_KEY;
+    const { model, systemPrompt, temperature, files, apiKey: bodyApiKey, endpoint: bodyEndpoint } = await req.json();
+    const runtimeConfig = await getRuntimeConfig();
+    const apiKey =
+      runtimeConfig.openaiApiKey ||
+      bodyApiKey ||
+      req.headers.get("x-openai-api-key") ||
+      process.env.OPENAI_API_KEY;
+    const endpoint =
+      runtimeConfig.azureOpenAiEndpoint ||
+      bodyEndpoint ||
+      req.headers.get("x-azure-openai-endpoint") ||
+      process.env.AZURE_OPENAI_ENDPOINT;
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "OpenAI API key is required. Please add it in Advanced options." },
+        { error: "OpenAI API key is required. Please add it in Settings." },
         { status: 401 }
       );
     }
 
-    const modelToUse = model || process.env.OPENAI_MODEL || "gpt-4";
+    const modelToUse = model || runtimeConfig.model || process.env.OPENAI_MODEL || "gpt-4";
     const tempValue = typeof temperature === "number" ? temperature : 0.7;
     const fileArray: IncomingFile[] = Array.isArray(files) ? files : [];
 
@@ -151,7 +188,11 @@ export async function POST(req: Request) {
         "Include overview, key entities, assumptions, and a concise summary.",
       ].join("\n\n");
 
-      const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      const baseUrl = endpoint ? endpoint.replace(/\/$/, "") : "https://api.openai.com/v1";
+      const completionsUrl = baseUrl.endsWith("/chat/completions")
+        ? baseUrl
+        : `${baseUrl}/chat/completions`;
+      const openaiRes = await fetch(completionsUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -195,6 +236,7 @@ export async function POST(req: Request) {
         bytesBase64: pdfBase64,
         createdAt,
         htmlPreview: html,
+        markdownContent: markdown, // Store original markdown for Mermaid rendering
       });
     }
 

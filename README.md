@@ -141,6 +141,7 @@ Important:
 | Requirement | Description |
 |-------------|-------------|
 | Power Platform Solution Analysis | Extract and document key artefacts from solution files (Power Apps, Power Automate, Dataverse, SharePoint) |
+| SharePoint Metadata Integration | Automatically fetch SharePoint lists, libraries, and column schemas using Microsoft Graph API |
 | Tech Documentation Generation | Automatically create structured documentation using a RAG pipeline and generative AI |
 | Entity Relationship Diagram (ERD) | Generate ERDs based on Dataverse / SharePoint / solution data |
 | Solution Overview / Architecture Diagram | Auto-generate architecture diagrams from solution metadata |

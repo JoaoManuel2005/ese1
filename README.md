@@ -118,7 +118,7 @@ You should be able to see to see `port 3000:3000` or similar next to the documen
 
 - Generate documentation by clicking 'Parse & Generate Docs'
 
-- Sign in to use the chat history feature and to remember changes made to your system prompted
+- Sign in to use the chat history feature and to remember changes made to your system prompt
 
 - You can start/stop the app anytime by opening docker desktop and clicking the start/stop button under actions next to docker-images
 ---

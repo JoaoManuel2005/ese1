@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import type { FC } from "react";
+import { PublicClientApplication } from "@azure/msal-browser";
 
 type Props = {
   provider: "cloud" | "local";
@@ -23,6 +24,8 @@ type Props = {
   setApiKey: (k: string) => void;
   endpoint: string;
   setEndpoint: (e: string) => void;
+  sharePointToken: string | null;
+  setSharePointToken: (token: string | null) => void;
 };
 
 const SettingsButton: FC<Props> = ({
@@ -45,6 +48,8 @@ const SettingsButton: FC<Props> = ({
   setApiKey,
   endpoint,
   setEndpoint,
+  sharePointToken,
+  setSharePointToken,
 }) => {
   const [open, setOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -62,6 +67,9 @@ const SettingsButton: FC<Props> = ({
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
   const [maskedApiKey, setMaskedApiKey] = useState<string | null>(null);
+  const [connectingSharePoint, setConnectingSharePoint] = useState(false);
+  const [sharePointError, setSharePointError] = useState<string | null>(null);
+  const [sharePointUserEmail, setSharePointUserEmail] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -420,6 +428,103 @@ const SettingsButton: FC<Props> = ({
                   </div>
                 </div>
               )}
+
+              {/* SharePoint Authentication Section */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
+                <div style={{ fontWeight: 600, color: "#0078d4" }}>SharePoint Integration</div>
+                <div style={{ fontSize: 12, color: smallText }}>
+                  Connect your Microsoft account to automatically fetch SharePoint metadata (lists, libraries, columns) when parsing Power Platform solutions.
+                </div>
+
+                {sharePointToken ? (
+                  <div style={{ background: theme === "dark" ? "#1a2e1a" : "#e8f5e9", border: `1px solid ${theme === "dark" ? "#2d5" : "#4caf50"}`, borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontSize: 13, color: theme === "dark" ? "#8ce99a" : "#2e7d32", fontWeight: 600, marginBottom: 4 }}>✓ Connected</div>
+                    {sharePointUserEmail && (
+                      <div style={{ fontSize: 12, color: smallText }}>Account: {sharePointUserEmail}</div>
+                    )}
+                    <button
+                      onClick={() => {
+                        setSharePointToken(null);
+                        setSharePointUserEmail(null);
+                        setSharePointError(null);
+                        try {
+                          sessionStorage.removeItem("sharepoint_access_token");
+                          sessionStorage.removeItem("sharepoint_user_email");
+                        } catch {}
+                      }}
+                      style={{ marginTop: 8, padding: "6px 12px", border: `1px solid ${borderColor}`, background: inputBg, color: textColor, borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <button
+                      onClick={async () => {
+                        setConnectingSharePoint(true);
+                        setSharePointError(null);
+                        try {
+                          const msalConfig = {
+                            auth: {
+                              clientId: "04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+                              authority: "https://login.microsoftonline.com/common",
+                              redirectUri: typeof window !== "undefined" ? window.location.origin : "",
+                            },
+                            cache: {
+                              cacheLocation: "sessionStorage",
+                              storeAuthStateInCookie: false,
+                            },
+                          };
+
+                          const msalInstance = new PublicClientApplication(msalConfig as any);
+                          await msalInstance.initialize();
+
+                          const loginRequest = {
+                            scopes: ["Sites.Read.All", "User.Read"],
+                            prompt: "select_account" as const,
+                          };
+
+                          const response = await msalInstance.loginPopup(loginRequest);
+
+                          if (response.accessToken) {
+                            setSharePointToken(response.accessToken);
+                            const email = response.account?.username || response.account?.name || "Connected";
+                            setSharePointUserEmail(email);
+                            try {
+                              sessionStorage.setItem("sharepoint_access_token", response.accessToken);
+                              sessionStorage.setItem("sharepoint_user_email", email);
+                            } catch {}
+                          } else {
+                            throw new Error("No access token received");
+                          }
+                        } catch (err: any) {
+                          console.error("SharePoint auth error:", err);
+                          if (err.errorCode === "user_cancelled") {
+                            setSharePointError("Login cancelled");
+                          } else if (err.errorCode === "popup_window_error") {
+                            setSharePointError("Popup blocked. Please allow popups for this site.");
+                          } else {
+                            setSharePointError(err.message || "Authentication failed");
+                          }
+                        } finally {
+                          setConnectingSharePoint(false);
+                        }
+                      }}
+                      disabled={connectingSharePoint}
+                      style={{ padding: "8px 16px", border: `1px solid #0078d4`, background: connectingSharePoint ? "#999" : "#0078d4", color: "#fff", borderRadius: 8, cursor: connectingSharePoint ? "not-allowed" : "pointer", fontWeight: 600, fontSize: 13 }}
+                    >
+                      {connectingSharePoint ? "Connecting..." : "Connect SharePoint Account"}
+                    </button>
+                    {sharePointError && (
+                      <div style={{ marginTop: 8, fontSize: 12, color: "#d32f2f" }}>{sharePointError}</div>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ fontSize: 11, color: smallText, background: theme === "dark" ? "#1a1a1a" : "#f8f9fa", padding: 8, borderRadius: 6 }}>
+                  <strong>Privacy:</strong> Token stored in browser session only. Cleared when tab closes. Used only for SharePoint metadata access.
+                </div>
+              </div>
             </div>
 
           </div>

@@ -17,7 +17,7 @@ Before running locally, ensure you have:
 
 ## 2. Install Docker
 
-Head to [docker's webstie](www.docker.com) where you should see the option to download docker desktop for your operating system, and then follow the install process
+Head to [docker's webstie](https://www.docker.com/) where you should see the option to download docker desktop for your operating system, and then follow the install process
 
 ---
 

@@ -13,7 +13,7 @@ export async function GET() {
   const db = getDb();
   const rows = db
     .prepare(
-      `SELECT id, dataset_id, title, created_at, updated_at
+      `SELECT id, dataset_id, customer_name, title, created_at, updated_at
        FROM conversation_sessions
        WHERE user_id = ?
        ORDER BY updated_at DESC`
@@ -21,6 +21,7 @@ export async function GET() {
     .all(userId) as Array<{
     id: string;
     dataset_id: string | null;
+    customer_name: string | null;
     title: string | null;
     created_at: number;
     updated_at: number;
@@ -30,6 +31,7 @@ export async function GET() {
     conversations: rows.map((r) => ({
       id: r.id,
       dataset_id: r.dataset_id,
+      customer_name: r.customer_name,
       title: r.title,
       created_at: r.created_at,
       updated_at: r.updated_at,

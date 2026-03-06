@@ -110,8 +110,16 @@ export default function Page() {
   const [solutionIngestSignature, setSolutionIngestSignature] = useState<string | null>(null);
   const [datasetId, setDatasetId] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
-  type ConversationListItem = { id: string; dataset_id: string | null; title: string | null; created_at: number; updated_at: number };
+  type ConversationListItem = {
+    id: string;
+    dataset_id: string | null;
+    customer_name: string | null;
+    title: string | null;
+    created_at: number;
+    updated_at: number;
+  };
   const [conversationList, setConversationList] = useState<ConversationListItem[]>([]);
+  const [customerName, setCustomerName] = useState("");
   const [isClient, setIsClient] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
@@ -312,6 +320,7 @@ export default function Page() {
           }))
         );
         if (convData.dataset_id) setDatasetId(convData.dataset_id);
+        setCustomerName(convData.customer_name || "");
         setConversationId(convData.id);
       } catch {
         // ignore restore errors
@@ -1155,12 +1164,20 @@ export default function Page() {
             body: JSON.stringify({
               conversation_id: conversationId ?? undefined,
               dataset_id: activeDatasetId,
+              customer_name: customerName.trim() || undefined,
               messages: toSave,
             }),
           });
           if (res.ok) {
             const data = await res.json();
-            if (data.conversation_id) setConversationId(data.conversation_id);
+            if (data.conversation_id) {
+              setConversationId(data.conversation_id);
+            }
+            const listRes = await fetch("/api/conversations");
+            if (listRes.ok) {
+              const listData = await listRes.json();
+              setConversationList(listData.conversations || []);
+            }
           }
         } catch {
           // ignore save errors
@@ -1203,7 +1220,35 @@ export default function Page() {
         }))
       );
       if (data.dataset_id && files.length === 0) setDatasetId(data.dataset_id);
+      setCustomerName(data.customer_name || "");
       setConversationId(data.id);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function saveConversationName() {
+    if (!conversationId) return;
+    const trimmedCustomer = customerName.trim();
+    const dateLabel = new Date().toLocaleDateString("en-GB");
+    const nextTitle = trimmedCustomer ? `${trimmedCustomer} - ${dateLabel}` : `New chat - ${dateLabel}`;
+
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_name: trimmedCustomer || null,
+          title: nextTitle,
+        }),
+      });
+      if (!res.ok) return;
+
+      const listRes = await fetch("/api/conversations");
+      if (listRes.ok) {
+        const data = await listRes.json();
+        setConversationList(data.conversations || []);
+      }
     } catch {
       // ignore
     }
@@ -1341,7 +1386,7 @@ export default function Page() {
           {status === "authenticated" && conversationList.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#555" }}>Past conversations</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto", paddingRight: 8 }}>
                 {conversationList.map((conv) => (
                     <div
                       key={conv.id}
@@ -1365,7 +1410,10 @@ export default function Page() {
                           cursor: "pointer",
                         }}
                       >
-                        {conv.title || "Chat"} · {new Date(conv.updated_at * 1000).toLocaleDateString()}
+                        <div style={{ fontWeight: 600, color: "#1f2937" }}>{conv.customer_name || "Unassigned customer"}</div>
+                        <div style={{ fontSize: 11, color: "#6b7280" }}>
+                          {conv.title || "Chat"} · {new Date(conv.updated_at * 1000).toLocaleDateString()}
+                        </div>
                       </button>
                       <button
                         type="button"
@@ -1374,6 +1422,8 @@ export default function Page() {
                         style={{
                           padding: "4px 8px",
                           fontSize: 12,
+                          minWidth: 28,
+                          flexShrink: 0,
                           border: "1px solid #ccc",
                           borderRadius: 6,
                           background: "#fff",
@@ -1385,6 +1435,64 @@ export default function Page() {
                       </button>
                     </div>
                   ))}
+              </div>
+            </div>
+          )}
+
+          {status === "authenticated" && (
+            <div style={{ marginBottom: 12, display: "grid", gap: 6 }}>
+              <label htmlFor="customer-name" style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>
+                Customer name
+              </label>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  id="customer-name"
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="e.g. Acme Corp"
+                  style={{
+                    flex: 1,
+                    padding: "6px 8px",
+                    border: "1px solid #d1d5db",
+                    borderRadius: 6,
+                    fontSize: 12,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChat([]);
+                    setMessage("");
+                    setConversationId(null);
+                  }}
+                  style={{
+                    padding: "6px 10px",
+                    border: "1px solid #ccc",
+                    borderRadius: 6,
+                    background: "#fff",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  }}
+                >
+                  New chat
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void saveConversationName(); }}
+                  disabled={!conversationId}
+                  style={{
+                    padding: "6px 10px",
+                    border: "1px solid #ccc",
+                    borderRadius: 6,
+                    background: conversationId ? "#fff" : "#f3f4f6",
+                    cursor: conversationId ? "pointer" : "not-allowed",
+                    fontSize: 12,
+                    color: conversationId ? "#111827" : "#9ca3af",
+                  }}
+                >
+                  Save name
+                </button>
               </div>
             </div>
           )}
@@ -1408,6 +1516,7 @@ export default function Page() {
               setChat([]);
               setMessage("");
               setConversationId(null);
+              setCustomerName("");
             }}
             expandedSources={expandedSources}
             onToggleSources={(id) => setExpandedSources((prev) => ({ ...prev, [id]: !prev[id] }))}

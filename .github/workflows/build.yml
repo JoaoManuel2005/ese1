@@ -47,4 +47,8 @@ jobs:
             dotnet-backend.tar
             documentation_generator.tar
             pac_cli.tar
+            docker-compose.images.yml
+            scripts/run-with-images.sh
+            scripts/run-with-images.ps1
+            RUN-FROM-ARTIFACT.md
           retention-days: 7

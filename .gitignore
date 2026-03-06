@@ -369,3 +369,6 @@ node_modules/
 
 .env.generated
 
+pac_cli.tar
+documentation_generator.tar
+dotnet-backend.tar

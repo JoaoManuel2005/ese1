@@ -51,4 +51,5 @@ jobs:
             scripts/run-with-images.sh
             scripts/run-with-images.ps1
             RUN-FROM-ARTIFACT.md
+            README.md
           retention-days: 7

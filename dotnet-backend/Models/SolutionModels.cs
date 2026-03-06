@@ -18,6 +18,8 @@ public class ParsedSolution
     public List<SolutionComponent> Components { get; set; } = new();
     [JsonPropertyName("sharepointRefs")]
     public List<SharePointRef> SharepointRefs { get; set; } = new();
+    [JsonPropertyName("sharePointMetadata")]
+    public List<SharePointMetadata>? SharePointMetadata { get; set; }
 }
 
 public class SharePointRef

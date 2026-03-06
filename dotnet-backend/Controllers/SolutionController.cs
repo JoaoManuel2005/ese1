@@ -11,17 +11,20 @@ public class SolutionController : ControllerBase
     private readonly RagPipelineService    _rag;
     private readonly ConversationMemoryService _memory;
     private readonly LlmClientService      _llm;
+    private readonly SharePointService     _sharePoint;
 
     public SolutionController(
         PacParserService pac,
         RagPipelineService rag,
         ConversationMemoryService memory,
-        LlmClientService llm)
+        LlmClientService llm,
+        SharePointService sharePoint)
     {
         _pac    = pac;
         _rag    = rag;
         _memory = memory;
         _llm    = llm;
+        _sharePoint = sharePoint;
     }
 
     // ── POST /parse-solution ─────────────────────────────────────────────────
@@ -47,6 +50,48 @@ public class SolutionController : ControllerBase
                     "Ensure the zip contains solution.xml or [Content_Types].xml."));
 
             var solution = _pac.ParseSolution(zipPath, tempDir);
+
+            // Detect SharePoint URLs from knowledge sources
+            var sharePointUrls = solution.Components
+                .Where(c => c.Type == "knowledge_source_item")
+                .SelectMany(c =>
+                {
+                    var urls = new List<string>();
+                    if (c.Metadata == null) return urls;
+                    if (c.Metadata.TryGetValue("web_url", out var web) && web is string wu && !string.IsNullOrWhiteSpace(wu)) 
+                        urls.Add(_sharePoint.ExtractSiteUrl(wu));
+                    if (c.Metadata.TryGetValue("site_url", out var site) && site is string su && !string.IsNullOrWhiteSpace(su)) 
+                        urls.Add(_sharePoint.ExtractSiteUrl(su));
+                    return urls;
+                })
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            // If SharePoint URLs detected but service not configured, signal frontend for user auth
+            if (sharePointUrls.Count > 0 && !_sharePoint.IsConfigured)
+            {
+                Console.WriteLine($"[ParseSolution] Detected {sharePointUrls.Count} SharePoint URL(s) but service not configured - requiring user authentication");
+                return Ok(new
+                {
+                    data = solution,
+                    authenticationRequired = true,
+                    sharePointUrls = sharePointUrls,
+                    message = "SharePoint authentication required"
+                });
+            }
+
+            // Automatically fetch SharePoint metadata if service is configured
+            if (_sharePoint.IsConfigured && sharePointUrls.Count > 0)
+            {
+                Console.WriteLine($"[ParseSolution] Detected {sharePointUrls.Count} SharePoint URL(s), fetching metadata...");
+                var spResponse = await _sharePoint.FetchMetadataAsync(sharePointUrls, includeColumns: true);
+                if (spResponse.Success)
+                {
+                    solution.SharePointMetadata = spResponse.Sites;
+                    Console.WriteLine($"[ParseSolution] ✓ Fetched SharePoint metadata for {spResponse.Sites.Count} site(s)");
+                }
+            }
+
             return Ok(solution);
         }
         catch (Exception ex)

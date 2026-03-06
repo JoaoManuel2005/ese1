@@ -855,6 +855,71 @@ public class RagPipelineService
             dependencies.ForEach(d => sb.AppendLine($"- {d}"));
         sb.AppendLine();
 
+        // SharePoint Metadata (if available from Microsoft Graph)
+        if (solution.SharePointMetadata != null && solution.SharePointMetadata.Count > 0)
+        {
+            sb.AppendLine("## SharePoint Integration Details");
+            sb.AppendLine("The following SharePoint sites and data structures were automatically detected:");
+            sb.AppendLine();
+
+            foreach (var site in solution.SharePointMetadata)
+            {
+                if (!string.IsNullOrEmpty(site.ErrorMessage))
+                {
+                    sb.AppendLine($"### ⚠️ {site.SiteUrl}");
+                    sb.AppendLine($"**Error:** {site.ErrorMessage}");
+                    sb.AppendLine();
+                    continue;
+                }
+
+                sb.AppendLine($"### {site.SiteName}");
+                sb.AppendLine($"**Site URL:** {site.SiteUrl}");
+                sb.AppendLine();
+
+                if (site.Lists.Count > 0)
+                {
+                    sb.AppendLine("#### SharePoint Lists");
+                    foreach (var list in site.Lists)
+                    {
+                        sb.AppendLine($"- **{list.DisplayName ?? list.Name}**");
+                        if (!string.IsNullOrEmpty(list.Description))
+                            sb.AppendLine($"  - Description: {list.Description}");
+                        sb.AppendLine($"  - URL: {list.WebUrl}");
+                        
+                        if (list.Columns.Count > 0)
+                        {
+                            sb.AppendLine("  - Columns:");
+                            foreach (var col in list.Columns)
+                            {
+                                var required = col.Required ? " (Required)" : "";
+                                sb.AppendLine($"    - `{col.DisplayName ?? col.Name}` ({col.Type}){required}");
+                            }
+                        }
+                        sb.AppendLine();
+                    }
+                }
+
+                if (site.Libraries.Count > 0)
+                {
+                    sb.AppendLine("#### Document Libraries");
+                    foreach (var lib in site.Libraries)
+                    {
+                        sb.AppendLine($"- **{lib.DisplayName ?? lib.Name}**");
+                        if (!string.IsNullOrEmpty(lib.Description))
+                            sb.AppendLine($"  - Description: {lib.Description}");
+                        sb.AppendLine($"  - URL: {lib.WebUrl}");
+                        sb.AppendLine();
+                    }
+                }
+
+                sb.AppendLine("---");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("*This data was automatically fetched from SharePoint using Microsoft Graph API*");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## Deployment Guide");
         sb.AppendLine("1. Import the solution ZIP into the target Power Platform environment.");
         sb.AppendLine("2. Configure environment variables from exported definitions.");

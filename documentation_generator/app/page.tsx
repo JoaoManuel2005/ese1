@@ -64,7 +64,44 @@ type ParsedSolutionResult = {
   publisher?: string;
   components?: unknown[];
   sharepointRefs?: SharePointRef[];
+  sharePointMetadata?: SharePointMetadata[];
   [key: string]: unknown;
+};
+
+type SharePointMetadata = {
+  siteUrl: string;
+  siteId: string;
+  siteName: string;
+  lists: SharePointList[];
+  libraries: SharePointLibrary[];
+  errorMessage?: string;
+};
+
+type SharePointList = {
+  id: string;
+  name: string;
+  displayName: string;
+  description?: string;
+  columns: SharePointColumn[];
+  webUrl: string;
+  itemCount?: number;
+};
+
+type SharePointLibrary = {
+  id: string;
+  name: string;
+  displayName: string;
+  description?: string;
+  webUrl: string;
+  driveType: string;
+};
+
+type SharePointColumn = {
+  name: string;
+  displayName: string;
+  type: string;
+  required: boolean;
+  readOnly: boolean;
 };
 
 type PendingSolutionGeneration = {
@@ -118,6 +155,8 @@ export default function Page() {
   const [sharePointConnections, setSharePointConnections] = useState<SharePointConnection[]>([]);
   const [selectedSharePointConnectionId, setSelectedSharePointConnectionId] = useState<string>("");
   const [savingSharePointConnection, setSavingSharePointConnection] = useState(false);
+  const [sharePointToken, setSharePointToken] = useState<string | null>(null);
+  const [sharePointNotification, setSharePointNotification] = useState<{ urls: string[]; show: boolean }>({ urls: [], show: false });
   
   const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number; provider?: string; model?: string; backend_online?: boolean } | null>(null);
   const [corpusType, setCorpusType] = useState<"solution_zip" | "docs" | "unknown" | null>(null);
@@ -133,6 +172,15 @@ export default function Page() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
   const { data: session, status } = useSession();
+
+  // Load SharePoint token from sessionStorage on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const token = sessionStorage.getItem("sharepoint_access_token");
+      if (token) setSharePointToken(token);
+    } catch {}
+  }, []);
 
   function mapProviderError(msg: string, status?: number) {
     const lower = msg.toLowerCase();
@@ -763,6 +811,40 @@ export default function Page() {
 
     const parsedSolution = (parsePayload?.data || parsePayload) as ParsedSolutionResult;
     const sharePointEnrichmentEnabled = Boolean(parsePayload?.sharePointEnrichmentEnabled);
+    const authenticationRequired = Boolean(parsePayload?.authenticationRequired);
+    const detectedSharePointUrls = parsePayload?.sharePointUrls || [];
+
+    // Check if SharePoint authentication is required and user has no token
+    if (authenticationRequired && detectedSharePointUrls.length > 0 && !sharePointToken) {
+      // Show notification banner - don't interrupt parse
+      setSharePointNotification({ urls: detectedSharePointUrls, show: true });
+      return { parsedSolution, activeDatasetId, sharePointEnrichmentEnabled };
+    }
+
+    // If user has token, fetch SharePoint metadata
+    if (authenticationRequired && detectedSharePointUrls.length > 0 && sharePointToken) {
+      try {
+        const spRes = await fetch("/api/fetch-sharepoint-metadata-with-user-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            accessToken: sharePointToken,
+            sharePointUrls: detectedSharePointUrls,
+            includeColumns: true,
+          }),
+        });
+
+        if (spRes.ok) {
+          const spData = await spRes.json();
+          if (spData.success && spData.sites) {
+            parsedSolution.sharePointMetadata = spData.sites;
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch SharePoint metadata:", err);
+        // Continue without SharePoint data
+      }
+    }
 
     return { parsedSolution, activeDatasetId, sharePointEnrichmentEnabled };
   }
@@ -1328,6 +1410,8 @@ export default function Page() {
             setApiKey={setApiKey}
             endpoint={endpoint}
             setEndpoint={setEndpoint}
+            sharePointToken={sharePointToken}
+            setSharePointToken={setSharePointToken}
           />
           <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation Generator</h1>
         </div>
@@ -1677,6 +1761,55 @@ export default function Page() {
                 {savingSharePointConnection ? "Connecting..." : "Connect to SharePoint"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* SharePoint Notification Banner */}
+      {sharePointNotification.show && (
+        <div style={{
+          position: "fixed",
+          bottom: 20,
+          right: 20,
+          background: "#fff3cd",
+          border: "1px solid #ffc107",
+          borderRadius: 12,
+          padding: 16,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+          maxWidth: 400,
+          zIndex: 9998,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 8 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#856404" }}>
+              📋 SharePoint Sites Detected
+            </div>
+            <button
+              onClick={() => setSharePointNotification({ urls: [], show: false })}
+              style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 18, color: "#856404" }}
+            >
+              ×
+            </button>
+          </div>
+          <div style={{ fontSize: 13, color: "#856404", marginBottom: 12 }}>
+            Found {sharePointNotification.urls.length} SharePoint {sharePointNotification.urls.length === 1 ? "site" : "sites"}. Connect your Microsoft account in Settings to fetch list and library metadata.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => {
+                setSharePointNotification({ urls: [], show: false });
+                // Trigger settings modal to open (you'd need to expose this via ref or state)
+                document.querySelector<HTMLButtonElement>('button[title="Settings"]')?.click();
+              }}
+              style={{ padding: "6px 12px", background: "#ffc107", color: "#000", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 12 }}
+            >
+              Open Settings
+            </button>
+            <button
+              onClick={() => setSharePointNotification({ urls: [], show: false })}
+              style={{ padding: "6px 12px", background: "transparent", color: "#856404", border: "1px solid #856404", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+            >
+              Dismiss
+            </button>
           </div>
         </div>
       )}

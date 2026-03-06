@@ -62,13 +62,26 @@ Verify installation:
 
 ---
 
-## 4. First-Time Setup
+## 4. Azure Key Vault Setup
 
-Login to Azure:
+Head to [Azure](https://portal.azure.com/#home) and make sure that you setup (or are apart of) a Key Vault with the following naming scheme:
+
+
+| Name | Value |
+| ------ | ------ |
+|    AI-API-KEY    |   *your OpenAI key*     |
+|    AZURE-AD-CLIENT-ID    |    *your client ID*    |
+| AZURE-AD-CLIENT-SECRET | *your client secret* |
+| AZURE-AD-TENANT-ID | *your tenant ID* |
+| AZURE-OPENAI-ENDPOINT | *your OpenAI endpoint* |
+| MICROSOFT-CLIENT-SECRET | *your client secret* |
+| NEXTAUTH-SECRET | *your next auth secret* |
+
+Then login to Azure by opening your terminal and typing:
 
     az login
 
-If prompted, select the correct subscription.
+If prompted, select the correct subscription
 
 ---
 

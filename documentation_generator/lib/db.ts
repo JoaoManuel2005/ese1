@@ -18,6 +18,7 @@ function getDb(): Database.Database {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       dataset_id TEXT,
+      customer_name TEXT,
       title TEXT DEFAULT 'New chat',
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -39,6 +40,15 @@ function getDb(): Database.Database {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
   `);
+
+  const sessionColumns = db
+    .prepare("PRAGMA table_info(conversation_sessions)")
+    .all() as Array<{ name: string }>;
+  const hasCustomerName = sessionColumns.some((col) => col.name === "customer_name");
+  if (!hasCustomerName) {
+    db.exec("ALTER TABLE conversation_sessions ADD COLUMN customer_name TEXT;");
+  }
+
   return db;
 }
 

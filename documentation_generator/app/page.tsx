@@ -181,6 +181,180 @@ export default function Page() {
     return { message: fallback };
   }
 
+  async function readRouteError(response: Response, fallback: string) {
+    const payload = await response.json().catch(() => ({}));
+    if (typeof payload?.error === "string" && payload.error.trim().length > 0) {
+      return payload.error;
+    }
+    return fallback;
+  }
+
+  function buildRenderTitle(filename: string) {
+    const base = filename.replace(/\.pdf$/i, "").replace(/[_-]+/g, " ").trim();
+    return base || "Documentation";
+  }
+
+  async function renderOutputFromMarkdown({
+    outputId,
+    filename,
+    markdownContent,
+    createdAt = Date.now(),
+  }: {
+    outputId: string;
+    filename: string;
+    markdownContent: string;
+    createdAt?: number;
+  }) {
+    const response = await fetch("/api/markdown-to-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        markdown: markdownContent,
+        title: buildRenderTitle(filename),
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error || "Failed to render document");
+    }
+
+    const nextOutput: OutputFile = {
+      id: outputId,
+      filename,
+      bytesBase64: data.pdfBase64 || "",
+      mime: "application/pdf",
+      createdAt,
+      htmlPreview: data.html || "",
+      markdownContent,
+    };
+
+    return nextOutput;
+  }
+
+  async function refreshConversationList() {
+    if (status !== "authenticated" || !session?.user) return;
+    try {
+      const response = await fetch("/api/conversations");
+      if (!response.ok) return;
+      const data = await response.json();
+      setConversationList(data.conversations || []);
+    } catch {
+      // ignore refresh errors
+    }
+  }
+
+  async function createConversationSession(document?: { filename: string; markdown: string }) {
+    if (status !== "authenticated" || !session?.user) {
+      throw new Error("Sign in to save document edits.");
+    }
+
+    const response = await fetch("/api/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dataset_id: datasetId || null,
+        customer_name: customerName.trim() || null,
+        document_filename: document?.filename ?? null,
+        document_markdown: document?.markdown ?? null,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await readRouteError(response, "Failed to create conversation."));
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (typeof data?.conversation_id !== "string" || !data.conversation_id) {
+      throw new Error("Failed to create conversation.");
+    }
+
+    setConversationId(data.conversation_id);
+    void refreshConversationList();
+    return data.conversation_id as string;
+  }
+
+  async function persistConversationDocument(filename: string, markdown: string) {
+    if (status !== "authenticated" || !session?.user) {
+      throw new Error("Sign in to save document edits.");
+    }
+
+    if (!conversationId) {
+      return createConversationSession({ filename, markdown });
+    }
+
+    const response = await fetch(`/api/conversations/${conversationId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        document_filename: filename,
+        document_markdown: markdown,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await readRouteError(response, "Failed to save document."));
+    }
+
+    void refreshConversationList();
+    return conversationId;
+  }
+
+  async function restorePersistedOutput(data: {
+    document_filename?: string | null;
+    document_markdown?: string | null;
+    updated_at?: number;
+  }) {
+    const filename = typeof data.document_filename === "string" ? data.document_filename : "";
+    const markdown = typeof data.document_markdown === "string" ? data.document_markdown : null;
+
+    if (!filename || markdown == null) {
+      setOutputs([]);
+      setSelectedOutputId(null);
+      return;
+    }
+
+    try {
+      const createdAt = typeof data.updated_at === "number" ? data.updated_at * 1000 : Date.now();
+      const output = await renderOutputFromMarkdown({
+        outputId: `${filename}-${createdAt}`,
+        filename,
+        markdownContent: markdown,
+        createdAt,
+      });
+      setOutputs([output]);
+      setSelectedOutputId(output.id);
+    } catch {
+      setOutputs([]);
+      setSelectedOutputId(null);
+    }
+  }
+
+  async function saveQuickEditOutput(outputId: string, nextMarkdown: string) {
+    const currentOutput = outputs.find((output) => output.id === outputId);
+    if (!currentOutput) {
+      throw new Error("Document not found.");
+    }
+
+    if (typeof currentOutput.markdownContent !== "string") {
+      throw new Error("Document source unavailable.");
+    }
+
+    const renderedOutput = await renderOutputFromMarkdown({
+      outputId: currentOutput.id,
+      filename: currentOutput.filename,
+      markdownContent: nextMarkdown,
+      createdAt: Date.now(),
+    });
+
+    const savedConversationId = await persistConversationDocument(currentOutput.filename, nextMarkdown);
+    if (savedConversationId !== conversationId) {
+      setConversationId(savedConversationId);
+    }
+
+    setOutputs((prev) => prev.map((output) => (output.id === outputId ? renderedOutput : output)));
+  }
+
   function getFocusFiles(question: string, attached: AttachedFile[]) {
     const names = attached.map((f) => f.name);
     const lower = question.toLowerCase();
@@ -291,6 +465,7 @@ export default function Page() {
   // Restore most recent conversation when user is signed in
   useEffect(() => {
     if (status !== "authenticated" || !session?.user) return;
+    if (files.length > 0 || chat.length > 0 || outputs.length > 0) return;
     let cancelled = false;
 
     (async () => {
@@ -309,8 +484,6 @@ export default function Page() {
         const msgs = convData.messages || [];
 
         if (cancelled) return;
-
-        if (files.length > 0 || chat.length > 0) return;
         
         setChat(
           msgs.map((m: { id: string; role: string; content: string }) => ({
@@ -322,6 +495,7 @@ export default function Page() {
         if (convData.dataset_id) setDatasetId(convData.dataset_id);
         setCustomerName(convData.customer_name || "");
         setConversationId(convData.id);
+        await restorePersistedOutput(convData);
       } catch {
         // ignore restore errors
       }
@@ -330,7 +504,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, [session?.user, status]);
+  }, [chat.length, files.length, outputs.length, session?.user, status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1222,6 +1396,7 @@ export default function Page() {
       if (data.dataset_id && files.length === 0) setDatasetId(data.dataset_id);
       setCustomerName(data.customer_name || "");
       setConversationId(data.id);
+      await restorePersistedOutput(data);
     } catch {
       // ignore
     }
@@ -1263,6 +1438,8 @@ export default function Page() {
         setChat([]);
         setMessage("");
         setConversationId(null);
+        setOutputs([]);
+        setSelectedOutputId(null);
       }
     } catch {
       // ignore
@@ -1465,6 +1642,8 @@ export default function Page() {
                     setChat([]);
                     setMessage("");
                     setConversationId(null);
+                    setOutputs([]);
+                    setSelectedOutputId(null);
                   }}
                   style={{
                     padding: "6px 10px",
@@ -1617,6 +1796,7 @@ export default function Page() {
             pdfRenderError={pdfRenderError}
             onDownload={(o) => downloadOutput(o)}
             onOpenPdf={() => { if (previewBlobUrlRef.current) window.open(previewBlobUrlRef.current, "_blank"); }}
+            onSaveQuickEdit={(outputId, markdown) => saveQuickEditOutput(outputId, markdown)}
           />
         </section>
       </div>

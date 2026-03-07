@@ -23,32 +23,43 @@ const PreviewPanel: FC<Props> = ({ out, previewBlobUrl, pdfRenderError, onDownlo
   const [saveState, setSaveState] = useState<"idle" | "saving" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const canQuickEdit = !!out && typeof out.markdownContent === "string";
+  const savedContent = out?.markdownContent ?? "";
+  const hasUnsavedChanges = draftContent !== savedContent;
 
   useEffect(() => {
     setIsQuickEditOpen(false);
-    setDraftContent(out?.markdownContent || "");
+    setDraftContent(savedContent);
     setSaveState("idle");
     setSaveError(null);
-  }, [out?.id, out?.markdownContent]);
+  }, [out?.id, savedContent]);
+
+  function resetEditorState() {
+    setDraftContent(savedContent);
+    setSaveState("idle");
+    setSaveError(null);
+  }
+
+  function confirmDiscardIfNeeded() {
+    if (!hasUnsavedChanges) return true;
+    if (typeof window === "undefined") return true;
+    return window.confirm("Discard unsaved changes?");
+  }
 
   function openQuickEdit() {
-    if (!out) return;
-    setDraftContent(out.markdownContent || "");
-    setSaveState("idle");
-    setSaveError(null);
+    if (!canQuickEdit) return;
+    resetEditorState();
     setIsQuickEditOpen(true);
   }
 
   function closeQuickEdit() {
     if (saveState === "saving") return;
-    setDraftContent(out?.markdownContent || "");
-    setSaveState("idle");
-    setSaveError(null);
+    if (!confirmDiscardIfNeeded()) return;
+    resetEditorState();
     setIsQuickEditOpen(false);
   }
 
   async function saveQuickEdit() {
-    if (!out) return;
+    if (!out || !canQuickEdit || saveState === "saving") return;
     setSaveState("saving");
     setSaveError(null);
 
@@ -187,6 +198,7 @@ const PreviewPanel: FC<Props> = ({ out, previewBlobUrl, pdfRenderError, onDownlo
             <textarea
               value={draftContent}
               onChange={(e) => setDraftContent(e.target.value)}
+              disabled={saveState === "saving"}
               rows={20}
               spellCheck={false}
               style={{
@@ -201,6 +213,7 @@ const PreviewPanel: FC<Props> = ({ out, previewBlobUrl, pdfRenderError, onDownlo
                 fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
                 lineHeight: 1.5,
                 boxSizing: "border-box",
+                opacity: saveState === "saving" ? 0.85 : 1,
               }}
             />
           </div>

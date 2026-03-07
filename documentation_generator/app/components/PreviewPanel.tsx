@@ -14,33 +14,52 @@ type Props = {
   pdfRenderError?: string | null;
   onDownload: (o: OutputFile) => void;
   onOpenPdf: () => void;
+  onSaveQuickEdit: (outputId: string, markdown: string) => Promise<void> | void;
 };
 
-const PreviewPanel: FC<Props> = ({ out, previewBlobUrl, pdfRenderError, onDownload, onOpenPdf }) => {
+const PreviewPanel: FC<Props> = ({ out, previewBlobUrl, pdfRenderError, onDownload, onOpenPdf, onSaveQuickEdit }) => {
   const [isQuickEditOpen, setIsQuickEditOpen] = useState(false);
   const [draftContent, setDraftContent] = useState("");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "error">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const canQuickEdit = !!out && typeof out.markdownContent === "string";
 
   useEffect(() => {
     setIsQuickEditOpen(false);
     setDraftContent(out?.markdownContent || "");
+    setSaveState("idle");
+    setSaveError(null);
   }, [out?.id, out?.markdownContent]);
 
   function openQuickEdit() {
     if (!out) return;
     setDraftContent(out.markdownContent || "");
+    setSaveState("idle");
+    setSaveError(null);
     setIsQuickEditOpen(true);
   }
 
   function closeQuickEdit() {
+    if (saveState === "saving") return;
     setDraftContent(out?.markdownContent || "");
+    setSaveState("idle");
+    setSaveError(null);
     setIsQuickEditOpen(false);
   }
 
-  function saveQuickEdit() {
-    // TODO: Wire real save behaviour and refresh the derived preview/PDF output.
-    setDraftContent(out?.markdownContent || "");
-    setIsQuickEditOpen(false);
+  async function saveQuickEdit() {
+    if (!out) return;
+    setSaveState("saving");
+    setSaveError(null);
+
+    try {
+      await onSaveQuickEdit(out.id, draftContent);
+      setSaveState("idle");
+      setIsQuickEditOpen(false);
+    } catch (error: any) {
+      setSaveState("error");
+      setSaveError(error?.message || "Failed to save changes.");
+    }
   }
 
   // container uses panel-scroll to ensure it fills available panel space and
@@ -140,22 +159,30 @@ const PreviewPanel: FC<Props> = ({ out, previewBlobUrl, pdfRenderError, onDownlo
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button
                   onClick={closeQuickEdit}
+                  disabled={saveState === "saving"}
                   style={{ border: "1px solid var(--border)", background: "var(--input-bg)", color: "var(--foreground)", padding: "6px 10px", borderRadius: 8, cursor: "pointer" }}
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={saveQuickEdit}
-                  style={{ border: "1px solid var(--border)", background: "var(--input-bg)", color: "var(--foreground)", padding: "6px 10px", borderRadius: 8, cursor: "pointer" }}
+                  onClick={() => { void saveQuickEdit(); }}
+                  disabled={saveState === "saving"}
+                  style={{ border: "1px solid var(--border)", background: "var(--input-bg)", color: "var(--foreground)", padding: "6px 10px", borderRadius: 8, cursor: saveState === "saving" ? "not-allowed" : "pointer" }}
                 >
-                  Save
+                  {saveState === "saving" ? "Saving..." : "Save"}
                 </button>
               </div>
             </div>
 
             <div style={{ fontSize: 12, color: "var(--muted)" }}>
-              Editing the raw document source. Save is a UI stub for now and does not persist changes yet.
+              Editing the raw markdown/source stored for this document.
             </div>
+
+            {saveError && (
+              <div style={{ fontSize: 12, color: "var(--danger)" }}>
+                {saveError}
+              </div>
+            )}
 
             <textarea
               value={draftContent}

@@ -23,7 +23,6 @@ function makeOutput(overrides: Partial<OutputFile> = {}): OutputFile {
 function renderPreviewPanel(overrides: Partial<PreviewPanelProps> = {}) {
   const props: PreviewPanelProps = {
     out: makeOutput(),
-    previewBlobUrl: null,
     pdfRenderError: null,
     onDownload: vi.fn(),
     onOpenPdf: vi.fn(),
@@ -33,7 +32,6 @@ function renderPreviewPanel(overrides: Partial<PreviewPanelProps> = {}) {
 
   return {
     user: userEvent.setup(),
-    props,
     ...render(<PreviewPanel {...props} />),
   };
 }
@@ -107,7 +105,6 @@ describe("PreviewPanel quick edit", () => {
     rerender(
       <PreviewPanel
         out={updatedOutput}
-        previewBlobUrl={null}
         pdfRenderError={null}
         onDownload={vi.fn()}
         onOpenPdf={vi.fn()}

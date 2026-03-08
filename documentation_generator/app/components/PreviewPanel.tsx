@@ -4,20 +4,15 @@ import React, { useEffect, useState } from "react";
 import type { FC } from "react";
 import type { OutputFile } from "../types";
 
-type PreviewOutputFile = OutputFile & {
-  markdownContent?: string;
-};
-
 type Props = {
-  out: PreviewOutputFile | null;
-  previewBlobUrl?: string | null;
+  out: OutputFile | null;
   pdfRenderError?: string | null;
   onDownload: (o: OutputFile) => void;
   onOpenPdf: () => void;
   onSaveQuickEdit: (outputId: string, markdown: string) => Promise<void> | void;
 };
 
-const PreviewPanel: FC<Props> = ({ out, previewBlobUrl, pdfRenderError, onDownload, onOpenPdf, onSaveQuickEdit }) => {
+const PreviewPanel: FC<Props> = ({ out, pdfRenderError, onDownload, onOpenPdf, onSaveQuickEdit }) => {
   const [isQuickEditOpen, setIsQuickEditOpen] = useState(false);
   const [draftContent, setDraftContent] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "error">("idle");
@@ -67,9 +62,9 @@ const PreviewPanel: FC<Props> = ({ out, previewBlobUrl, pdfRenderError, onDownlo
       await onSaveQuickEdit(out.id, draftContent);
       setSaveState("idle");
       setIsQuickEditOpen(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       setSaveState("error");
-      setSaveError(error?.message || "Failed to save changes.");
+      setSaveError(error instanceof Error ? error.message : "Failed to save changes.");
     }
   }
 

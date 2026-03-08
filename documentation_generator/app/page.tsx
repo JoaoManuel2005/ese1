@@ -1404,14 +1404,14 @@ export default function Page() {
                           padding: "6px 10px",
                           textAlign: "left",
                           fontSize: 12,
-                          border: conversationId === conv.id ? "1px solid #1f7aec" : "1px solid #ddd",
+                          border: conversationId === conv.id ? "1px solid #1f7aec" : "1px solid var(--border)",
                           borderRadius: 6,
-                          background: conversationId === conv.id ? "#e8f0fe" : "#fafafa",
+                          background: conversationId === conv.id ? "var(--input-bg)" : "var(--input-bg)",
                           cursor: "pointer",
                         }}
                       >
-                        <div style={{ fontWeight: 600, color: "#1f2937" }}>{conv.customer_name || "Unassigned customer"}</div>
-                        <div style={{ fontSize: 11, color: "#6b7280" }}>
+                        <div style={{ fontWeight: 600, color: "var(--foreground)" }}>{conv.customer_name || "Unassigned customer"}</div>
+                        <div style={{ fontSize: 11, color: "var(--foreground)" }}>
                           {conv.title || "Chat"} · {new Date(conv.updated_at * 1000).toLocaleDateString()}
                         </div>
                       </button>
@@ -1424,11 +1424,11 @@ export default function Page() {
                           fontSize: 12,
                           minWidth: 28,
                           flexShrink: 0,
-                          border: "1px solid #ccc",
+                          border: "1px solid var(--border)",
                           borderRadius: 6,
-                          background: "#fff",
+                          background: "var(--input-bg)",
                           cursor: "pointer",
-                          color: "#666",
+                          color: "var(--foreground)",
                         }}
                       >
                         ×
@@ -1454,7 +1454,7 @@ export default function Page() {
                   style={{
                     flex: 1,
                     padding: "6px 8px",
-                    border: "1px solid #d1d5db",
+                    border: "1px solid var(--border)",
                     borderRadius: 6,
                     fontSize: 12,
                   }}
@@ -1468,9 +1468,10 @@ export default function Page() {
                   }}
                   style={{
                     padding: "6px 10px",
-                    border: "1px solid #ccc",
+                    border: "1px solid var(--border)",
                     borderRadius: 6,
-                    background: "#fff",
+                    background: "var(--input-bg)",
+                    color: "var(--foreground)",
                     cursor: "pointer",
                     fontSize: 12,
                   }}
@@ -1483,12 +1484,12 @@ export default function Page() {
                   disabled={!conversationId}
                   style={{
                     padding: "6px 10px",
-                    border: "1px solid #ccc",
+                    border: "1px solid var(--border)",
                     borderRadius: 6,
-                    background: conversationId ? "#fff" : "#f3f4f6",
+                    background: conversationId ? "var(--input-bg)" : "var(--input-bg)",
                     cursor: conversationId ? "pointer" : "not-allowed",
                     fontSize: 12,
-                    color: conversationId ? "#111827" : "#9ca3af",
+                    color: conversationId ? "var(--foreground)" : "var(--foreground)",
                   }}
                 >
                   Save name

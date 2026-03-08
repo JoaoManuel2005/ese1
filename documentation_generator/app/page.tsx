@@ -315,6 +315,8 @@ export default function Page() {
     }
 
     try {
+      // The stored source of truth is markdown, so preview HTML and download bytes
+      // are regenerated when a saved conversation is restored.
       const createdAt = typeof data.updated_at === "number" ? data.updated_at * 1000 : Date.now();
       const output = await renderOutputFromMarkdown({
         outputId: `${filename}-${createdAt}`,
@@ -1792,7 +1794,6 @@ export default function Page() {
           <div className="panel-header">File Preview</div>
           <PreviewPanel
             out={getSelectedOutput()}
-            previewBlobUrl={previewBlobUrlRef.current}
             pdfRenderError={pdfRenderError}
             onDownload={(o) => downloadOutput(o)}
             onOpenPdf={() => { if (previewBlobUrlRef.current) window.open(previewBlobUrlRef.current, "_blank"); }}

@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { getRuntimeConfig, maskApiKey, setRuntimeConfig } from "../../../lib/runtimeConfig";
 
+function getAzureAdAuthority(): string {
+  const tenantId = process.env.AZURE_AD_TENANT_ID?.trim();
+  return tenantId
+    ? `https://login.microsoftonline.com/${tenantId}`
+    : "https://login.microsoftonline.com/organizations";
+}
+
 function buildPublicConfig(config: Awaited<ReturnType<typeof getRuntimeConfig>>) {
   return {
     provider: config.provider ?? null,
@@ -8,6 +15,8 @@ function buildPublicConfig(config: Awaited<ReturnType<typeof getRuntimeConfig>>)
     azureOpenAiEndpoint: config.azureOpenAiEndpoint ?? null,
     openaiApiKeyConfigured: !!config.openaiApiKey,
     openaiApiKeyMasked: maskApiKey(config.openaiApiKey),
+    azureAdClientId: process.env.AZURE_AD_CLIENT_ID?.trim() || null,
+    azureAdAuthority: getAzureAdAuthority(),
   };
 }
 

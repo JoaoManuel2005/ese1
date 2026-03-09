@@ -4,6 +4,63 @@ import React, { useState, useEffect, useRef } from "react";
 import type { FC } from "react";
 import { PublicClientApplication } from "@azure/msal-browser";
 
+type SharePointMsalRuntimeConfig = {
+  clientId: string;
+  authority: string;
+  redirectUri: string;
+};
+
+let sharedSharePointMsalInstance: PublicClientApplication | null = null;
+let sharedSharePointMsalInitPromise: Promise<PublicClientApplication> | null = null;
+let sharedSharePointMsalConfigKey: string | null = null;
+let sharedSharePointPopupPromise: Promise<unknown> | null = null;
+
+function getSharePointMsalConfigKey(config: SharePointMsalRuntimeConfig): string {
+  return [config.clientId, config.authority, config.redirectUri].join("|");
+}
+
+async function getSharedSharePointMsalInstance(
+  config: SharePointMsalRuntimeConfig
+): Promise<PublicClientApplication> {
+  const configKey = getSharePointMsalConfigKey(config);
+  if (!sharedSharePointMsalInstance || sharedSharePointMsalConfigKey !== configKey) {
+    const nextInstance = new PublicClientApplication({
+      auth: {
+        clientId: config.clientId,
+        authority: config.authority,
+        redirectUri: config.redirectUri,
+      },
+      cache: {
+        cacheLocation: "sessionStorage",
+        storeAuthStateInCookie: false,
+      },
+    } as any);
+
+    sharedSharePointMsalInstance = nextInstance;
+    sharedSharePointMsalConfigKey = configKey;
+    sharedSharePointMsalInitPromise = nextInstance.initialize()
+      .then(() => nextInstance)
+      .catch((error) => {
+        if (sharedSharePointMsalConfigKey === configKey) {
+          sharedSharePointMsalInstance = null;
+          sharedSharePointMsalInitPromise = null;
+          sharedSharePointMsalConfigKey = null;
+        }
+        throw error;
+      });
+  }
+
+  if (!sharedSharePointMsalInitPromise || !sharedSharePointMsalInstance) {
+    throw new Error("SharePoint authentication is not initialized.");
+  }
+
+  return sharedSharePointMsalInitPromise;
+}
+
+function isSharePointMsalInteractionInProgress(): boolean {
+  return sharedSharePointPopupPromise !== null;
+}
+
 type Props = {
   provider: "cloud" | "local";
   setProvider: (p: "cloud" | "local") => void;
@@ -72,6 +129,9 @@ const SettingsButton: FC<Props> = ({
   const [sharePointUserEmail, setSharePointUserEmail] = useState<string | null>(null);
   const [sharePointAuthClientId, setSharePointAuthClientId] = useState<string | null>(null);
   const [sharePointAuthAuthority, setSharePointAuthAuthority] = useState("https://login.microsoftonline.com/organizations");
+  const [sharePointMsalInteractionInProgress, setSharePointMsalInteractionInProgress] = useState(
+    isSharePointMsalInteractionInProgress()
+  );
   const sharePointPopupInFlightRef = useRef(false);
 
   useEffect(() => {
@@ -233,7 +293,17 @@ const SettingsButton: FC<Props> = ({
   }
 
   async function handleConnectSharePointAccount() {
-    if (connectingSharePoint || sharePointPopupInFlightRef.current) return;
+    if (
+      connectingSharePoint ||
+      sharePointPopupInFlightRef.current ||
+      isSharePointMsalInteractionInProgress()
+    ) {
+      setSharePointMsalInteractionInProgress(isSharePointMsalInteractionInProgress());
+      if (isSharePointMsalInteractionInProgress()) {
+        setSharePointError("A sign-in window is already open. Close it and try again.");
+      }
+      return;
+    }
 
     sharePointPopupInFlightRef.current = true;
     setConnectingSharePoint(true);
@@ -253,20 +323,11 @@ const SettingsButton: FC<Props> = ({
       clearSharePointMsalState(sharePointAuthClientId);
 
       const sharePointPopupRedirectUri = `${window.location.origin}/auth/popup-close.html`;
-      const msalConfig = {
-        auth: {
-          clientId: sharePointAuthClientId,
-          authority: sharePointAuthAuthority,
-          redirectUri: typeof window !== "undefined" ? window.location.origin : "",
-        },
-        cache: {
-          cacheLocation: "sessionStorage",
-          storeAuthStateInCookie: false,
-        },
-      };
-
-      const msalInstance = new PublicClientApplication(msalConfig as any);
-      await msalInstance.initialize();
+      const msalInstance = await getSharedSharePointMsalInstance({
+        clientId: sharePointAuthClientId,
+        authority: sharePointAuthAuthority,
+        redirectUri: typeof window !== "undefined" ? window.location.origin : "",
+      });
 
       const loginRequest = {
         scopes: ["Sites.Read.All", "User.Read"],
@@ -276,8 +337,20 @@ const SettingsButton: FC<Props> = ({
       };
 
       const popupTimeoutMs = 120000;
+      const popupPromise = msalInstance.loginPopup(loginRequest);
+      sharedSharePointPopupPromise = popupPromise;
+      setSharePointMsalInteractionInProgress(true);
+      void popupPromise
+        .finally(() => {
+          if (sharedSharePointPopupPromise === popupPromise) {
+            sharedSharePointPopupPromise = null;
+          }
+          setSharePointMsalInteractionInProgress(false);
+        })
+        .catch(() => {});
+
       const response = await Promise.race([
-        msalInstance.loginPopup(loginRequest),
+        popupPromise,
         new Promise<never>((_, reject) => {
           popupTimeoutId = window.setTimeout(() => {
             reject({
@@ -301,7 +374,6 @@ const SettingsButton: FC<Props> = ({
       }
     } catch (err: any) {
       console.error("SharePoint auth error:", err);
-      clearSharePointMsalState(sharePointAuthClientId);
 
       if (err.errorCode === "user_cancelled") {
         setSharePointError("Login cancelled");
@@ -584,8 +656,8 @@ const SettingsButton: FC<Props> = ({
                   <div>
                     <button
                       onClick={() => void handleConnectSharePointAccount()}
-                      disabled={connectingSharePoint}
-                      style={{ padding: "8px 16px", border: `1px solid #0078d4`, background: connectingSharePoint ? "#999" : "#0078d4", color: "#fff", borderRadius: 8, cursor: connectingSharePoint ? "not-allowed" : "pointer", fontWeight: 600, fontSize: 13 }}
+                      disabled={connectingSharePoint || sharePointMsalInteractionInProgress}
+                      style={{ padding: "8px 16px", border: `1px solid #0078d4`, background: connectingSharePoint || sharePointMsalInteractionInProgress ? "#999" : "#0078d4", color: "#fff", borderRadius: 8, cursor: connectingSharePoint || sharePointMsalInteractionInProgress ? "not-allowed" : "pointer", fontWeight: 600, fontSize: 13 }}
                     >
                       {connectingSharePoint ? "Connecting..." : "Connect SharePoint Account"}
                     </button>

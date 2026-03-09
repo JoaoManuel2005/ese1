@@ -134,7 +134,7 @@ export async function POST(req: Request) {
   try {
     const { markdown, title, metadata } = await req.json();
     
-    if (!markdown) {
+    if (typeof markdown !== "string") {
       return NextResponse.json(
         { error: "Markdown content is required" },
         { status: 400 }

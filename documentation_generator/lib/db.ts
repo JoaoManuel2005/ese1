@@ -20,6 +20,8 @@ function getDb(): Database.Database {
       dataset_id TEXT,
       customer_name TEXT,
       title TEXT DEFAULT 'New chat',
+      document_filename TEXT,
+      document_markdown TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
@@ -47,6 +49,14 @@ function getDb(): Database.Database {
   const hasCustomerName = sessionColumns.some((col) => col.name === "customer_name");
   if (!hasCustomerName) {
     db.exec("ALTER TABLE conversation_sessions ADD COLUMN customer_name TEXT;");
+  }
+  const hasDocumentFilename = sessionColumns.some((col) => col.name === "document_filename");
+  if (!hasDocumentFilename) {
+    db.exec("ALTER TABLE conversation_sessions ADD COLUMN document_filename TEXT;");
+  }
+  const hasDocumentMarkdown = sessionColumns.some((col) => col.name === "document_markdown");
+  if (!hasDocumentMarkdown) {
+    db.exec("ALTER TABLE conversation_sessions ADD COLUMN document_markdown TEXT;");
   }
 
   return db;

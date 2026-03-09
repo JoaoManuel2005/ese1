@@ -17,7 +17,7 @@ export async function GET(
   const db = getDb();
   const sessionRow = db
     .prepare(
-      `SELECT id, dataset_id, customer_name, title, created_at, updated_at
+      `SELECT id, dataset_id, customer_name, title, document_filename, document_markdown, created_at, updated_at
        FROM conversation_sessions
        WHERE id = ? AND user_id = ?`
     )
@@ -27,6 +27,8 @@ export async function GET(
         dataset_id: string | null;
         customer_name: string | null;
         title: string | null;
+        document_filename: string | null;
+        document_markdown: string | null;
         created_at: number;
         updated_at: number;
       }
@@ -55,6 +57,8 @@ export async function GET(
     dataset_id: sessionRow.dataset_id,
     customer_name: sessionRow.customer_name,
     title: sessionRow.title,
+    document_filename: sessionRow.document_filename,
+    document_markdown: sessionRow.document_markdown,
     created_at: sessionRow.created_at,
     updated_at: sessionRow.updated_at,
     messages: messageRows.map((m) => ({
@@ -102,11 +106,39 @@ export async function PATCH(
     const body = (await req.json()) as {
       customer_name?: string;
       title?: string;
+      document_filename?: string | null;
+      document_markdown?: string | null;
     };
     const customerName = typeof body.customer_name === "string" ? body.customer_name.trim() : undefined;
     const title = typeof body.title === "string" ? body.title.trim() : undefined;
+    const documentFilename = "document_filename" in body
+      ? typeof body.document_filename === "string"
+        ? body.document_filename.trim() || null
+        : body.document_filename == null
+          ? null
+          : undefined
+      : undefined;
+    const documentMarkdown = "document_markdown" in body
+      ? typeof body.document_markdown === "string"
+        ? body.document_markdown
+        : body.document_markdown == null
+          ? null
+          : undefined
+      : undefined;
 
-    if (customerName === undefined && title === undefined) {
+    if (documentFilename === undefined && "document_filename" in body) {
+      return NextResponse.json({ error: "document_filename must be a string or null" }, { status: 400 });
+    }
+    if (documentMarkdown === undefined && "document_markdown" in body) {
+      return NextResponse.json({ error: "document_markdown must be a string or null" }, { status: 400 });
+    }
+
+    if (
+      customerName === undefined &&
+      title === undefined &&
+      documentFilename === undefined &&
+      documentMarkdown === undefined
+    ) {
       return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
     }
 
@@ -118,19 +150,31 @@ export async function PATCH(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    if (customerName !== undefined && title !== undefined) {
-      db.prepare(
-        "UPDATE conversation_sessions SET customer_name = ?, title = ?, updated_at = unixepoch() WHERE id = ?"
-      ).run(customerName || null, title || null, id);
-    } else if (customerName !== undefined) {
-      db.prepare(
-        "UPDATE conversation_sessions SET customer_name = ?, updated_at = unixepoch() WHERE id = ?"
-      ).run(customerName || null, id);
-    } else if (title !== undefined) {
-      db.prepare(
-        "UPDATE conversation_sessions SET title = ?, updated_at = unixepoch() WHERE id = ?"
-      ).run(title || null, id);
+    const assignments: string[] = [];
+    const values: Array<string | null> = [];
+
+    if (customerName !== undefined) {
+      assignments.push("customer_name = ?");
+      values.push(customerName || null);
     }
+    if (title !== undefined) {
+      assignments.push("title = ?");
+      values.push(title || null);
+    }
+    if (documentFilename !== undefined) {
+      assignments.push("document_filename = ?");
+      values.push(documentFilename);
+    }
+    if (documentMarkdown !== undefined) {
+      assignments.push("document_markdown = ?");
+      values.push(documentMarkdown);
+    }
+
+    db.prepare(
+      `UPDATE conversation_sessions
+       SET ${assignments.join(", ")}, updated_at = unixepoch()
+       WHERE id = ?`
+    ).run(...values, id);
 
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {

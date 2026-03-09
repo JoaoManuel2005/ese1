@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import type { FC } from "react";
 import { PublicClientApplication } from "@azure/msal-browser";
 
@@ -72,6 +72,7 @@ const SettingsButton: FC<Props> = ({
   const [sharePointUserEmail, setSharePointUserEmail] = useState<string | null>(null);
   const [sharePointAuthClientId, setSharePointAuthClientId] = useState<string | null>(null);
   const [sharePointAuthAuthority, setSharePointAuthAuthority] = useState("https://login.microsoftonline.com/organizations");
+  const sharePointPopupInFlightRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -211,6 +212,116 @@ const SettingsButton: FC<Props> = ({
   const inputBg = theme === "dark" ? "#111" : "#fff";
   const backdrop = theme === "dark" ? "rgba(0,0,0,0.6)" : "rgba(0,0,0,0.25)";
   const smallText = "var(--muted)";
+
+  function clearSharePointMsalState(clientId?: string | null) {
+    if (typeof window === "undefined") return;
+
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < window.sessionStorage.length; i += 1) {
+        const key = window.sessionStorage.key(i);
+        if (!key || !key.startsWith("msal.")) continue;
+        if (!clientId || key.includes(clientId) || key.includes("interaction.status")) {
+          keysToRemove.push(key);
+        }
+      }
+
+      for (const key of keysToRemove) {
+        window.sessionStorage.removeItem(key);
+      }
+    } catch {}
+  }
+
+  async function handleConnectSharePointAccount() {
+    if (connectingSharePoint || sharePointPopupInFlightRef.current) return;
+
+    sharePointPopupInFlightRef.current = true;
+    setConnectingSharePoint(true);
+    setSharePointError(null);
+
+    let popupTimeoutId: number | null = null;
+
+    try {
+      if (!sharePointAuthClientId) {
+        throw new Error(
+          loadingSettings
+            ? "Authentication settings are still loading. Please try again."
+            : "Azure AD client ID is not configured for SharePoint sign-in."
+        );
+      }
+
+      clearSharePointMsalState(sharePointAuthClientId);
+
+      const sharePointPopupRedirectUri = `${window.location.origin}/auth/popup-close.html`;
+      const msalConfig = {
+        auth: {
+          clientId: sharePointAuthClientId,
+          authority: sharePointAuthAuthority,
+          redirectUri: typeof window !== "undefined" ? window.location.origin : "",
+        },
+        cache: {
+          cacheLocation: "sessionStorage",
+          storeAuthStateInCookie: false,
+        },
+      };
+
+      const msalInstance = new PublicClientApplication(msalConfig as any);
+      await msalInstance.initialize();
+
+      const loginRequest = {
+        scopes: ["Sites.Read.All", "User.Read"],
+        prompt: "select_account" as const,
+        // Keep the popup on a static page so the Next app doesn't boot inside it.
+        redirectUri: sharePointPopupRedirectUri,
+      };
+
+      const popupTimeoutMs = 120000;
+      const response = await Promise.race([
+        msalInstance.loginPopup(loginRequest),
+        new Promise<never>((_, reject) => {
+          popupTimeoutId = window.setTimeout(() => {
+            reject({
+              errorCode: "monitor_window_timeout",
+              message: "Sign-in timed out. Close the popup and try again.",
+            });
+          }, popupTimeoutMs);
+        }),
+      ]);
+
+      if (response.accessToken) {
+        setSharePointToken(response.accessToken);
+        const email = response.account?.username || response.account?.name || "Connected";
+        setSharePointUserEmail(email);
+        try {
+          sessionStorage.setItem("sharepoint_access_token", response.accessToken);
+          sessionStorage.setItem("sharepoint_user_email", email);
+        } catch {}
+      } else {
+        throw new Error("No access token received");
+      }
+    } catch (err: any) {
+      console.error("SharePoint auth error:", err);
+      clearSharePointMsalState(sharePointAuthClientId);
+
+      if (err.errorCode === "user_cancelled") {
+        setSharePointError("Login cancelled");
+      } else if (err.errorCode === "popup_window_error") {
+        setSharePointError("Popup blocked. Please allow popups for this site.");
+      } else if (err.errorCode === "monitor_window_timeout") {
+        setSharePointError("Sign-in timed out. Close the popup and try again.");
+      } else if (err.errorCode === "interaction_in_progress") {
+        setSharePointError("A sign-in window is already open. Close it and try again.");
+      } else {
+        setSharePointError(err.message || "Authentication failed");
+      }
+    } finally {
+      if (popupTimeoutId) {
+        window.clearTimeout(popupTimeoutId);
+      }
+      sharePointPopupInFlightRef.current = false;
+      setConnectingSharePoint(false);
+    }
+  }
 
   return (
     <>
@@ -472,66 +583,7 @@ const SettingsButton: FC<Props> = ({
                 ) : (
                   <div>
                     <button
-                      onClick={async () => {
-                        setConnectingSharePoint(true);
-                        setSharePointError(null);
-                        try {
-                          if (!sharePointAuthClientId) {
-                            throw new Error(
-                              loadingSettings
-                                ? "Authentication settings are still loading. Please try again."
-                                : "Azure AD client ID is not configured for SharePoint sign-in."
-                            );
-                          }
-                          const sharePointPopupRedirectUri = `${window.location.origin}/auth/popup-close.html`;
-                          const msalConfig = {
-                            auth: {
-                              clientId: sharePointAuthClientId,
-                              authority: sharePointAuthAuthority,
-                              redirectUri: typeof window !== "undefined" ? window.location.origin : "",
-                            },
-                            cache: {
-                              cacheLocation: "sessionStorage",
-                              storeAuthStateInCookie: false,
-                            },
-                          };
-
-                          const msalInstance = new PublicClientApplication(msalConfig as any);
-                          await msalInstance.initialize();
-
-                          const loginRequest = {
-                            scopes: ["Sites.Read.All", "User.Read"],
-                            prompt: "select_account" as const,
-                            // Keep the popup on a static page so the Next app doesn't boot inside it.
-                            redirectUri: sharePointPopupRedirectUri,
-                          };
-
-                          const response = await msalInstance.loginPopup(loginRequest);
-
-                          if (response.accessToken) {
-                            setSharePointToken(response.accessToken);
-                            const email = response.account?.username || response.account?.name || "Connected";
-                            setSharePointUserEmail(email);
-                            try {
-                              sessionStorage.setItem("sharepoint_access_token", response.accessToken);
-                              sessionStorage.setItem("sharepoint_user_email", email);
-                            } catch {}
-                          } else {
-                            throw new Error("No access token received");
-                          }
-                        } catch (err: any) {
-                          console.error("SharePoint auth error:", err);
-                          if (err.errorCode === "user_cancelled") {
-                            setSharePointError("Login cancelled");
-                          } else if (err.errorCode === "popup_window_error") {
-                            setSharePointError("Popup blocked. Please allow popups for this site.");
-                          } else {
-                            setSharePointError(err.message || "Authentication failed");
-                          }
-                        } finally {
-                          setConnectingSharePoint(false);
-                        }
-                      }}
+                      onClick={() => void handleConnectSharePointAccount()}
                       disabled={connectingSharePoint}
                       style={{ padding: "8px 16px", border: `1px solid #0078d4`, background: connectingSharePoint ? "#999" : "#0078d4", color: "#fff", borderRadius: 8, cursor: connectingSharePoint ? "not-allowed" : "pointer", fontWeight: 600, fontSize: 13 }}
                     >

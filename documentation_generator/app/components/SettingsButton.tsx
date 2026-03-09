@@ -70,6 +70,8 @@ const SettingsButton: FC<Props> = ({
   const [connectingSharePoint, setConnectingSharePoint] = useState(false);
   const [sharePointError, setSharePointError] = useState<string | null>(null);
   const [sharePointUserEmail, setSharePointUserEmail] = useState<string | null>(null);
+  const [sharePointAuthClientId, setSharePointAuthClientId] = useState<string | null>(null);
+  const [sharePointAuthAuthority, setSharePointAuthAuthority] = useState("https://login.microsoftonline.com/organizations");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -134,6 +136,16 @@ const SettingsButton: FC<Props> = ({
         setApiKey("");
         setApiKeyConfigured(!!data?.openaiApiKeyConfigured);
         setMaskedApiKey(typeof data?.openaiApiKeyMasked === "string" ? data.openaiApiKeyMasked : null);
+        setSharePointAuthClientId(
+          typeof data?.azureAdClientId === "string" && data.azureAdClientId.trim()
+            ? data.azureAdClientId
+            : null
+        );
+        setSharePointAuthAuthority(
+          typeof data?.azureAdAuthority === "string" && data.azureAdAuthority.trim()
+            ? data.azureAdAuthority
+            : "https://login.microsoftonline.com/organizations"
+        );
       } catch {
         if (!cancelled) {
           setSaveState("error");
@@ -464,10 +476,18 @@ const SettingsButton: FC<Props> = ({
                         setConnectingSharePoint(true);
                         setSharePointError(null);
                         try {
+                          if (!sharePointAuthClientId) {
+                            throw new Error(
+                              loadingSettings
+                                ? "Authentication settings are still loading. Please try again."
+                                : "Azure AD client ID is not configured for SharePoint sign-in."
+                            );
+                          }
+                          const sharePointPopupRedirectUri = `${window.location.origin}/auth/popup-close.html`;
                           const msalConfig = {
                             auth: {
-                              clientId: "04b07795-8ddb-461a-bbee-02f9e1bf7b46",
-                              authority: "https://login.microsoftonline.com/common",
+                              clientId: sharePointAuthClientId,
+                              authority: sharePointAuthAuthority,
                               redirectUri: typeof window !== "undefined" ? window.location.origin : "",
                             },
                             cache: {
@@ -482,6 +502,8 @@ const SettingsButton: FC<Props> = ({
                           const loginRequest = {
                             scopes: ["Sites.Read.All", "User.Read"],
                             prompt: "select_account" as const,
+                            // Keep the popup on a static page so the Next app doesn't boot inside it.
+                            redirectUri: sharePointPopupRedirectUri,
                           };
 
                           const response = await msalInstance.loginPopup(loginRequest);

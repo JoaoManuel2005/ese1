@@ -13,6 +13,7 @@ function getDb(): Database.Database {
   if (db) return db;
   fs.mkdirSync(DB_DIR, { recursive: true });
   db = new Database(DB_PATH);
+  db.pragma("foreign_keys = ON");
   db.exec(`
     CREATE TABLE IF NOT EXISTS conversation_sessions (
       id TEXT PRIMARY KEY,
@@ -35,6 +36,20 @@ function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON conversation_sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+    CREATE TABLE IF NOT EXISTS conversation_outputs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      markdown_content TEXT NOT NULL,
+      html_preview TEXT,
+      pdf_base64 TEXT,
+      mime TEXT DEFAULT 'application/pdf',
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      FOREIGN KEY (session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_outputs_session ON conversation_outputs(session_id);
+    CREATE INDEX IF NOT EXISTS idx_outputs_updated ON conversation_outputs(updated_at DESC);
 
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id TEXT PRIMARY KEY,
@@ -58,6 +73,29 @@ function getDb(): Database.Database {
   if (!hasDocumentMarkdown) {
     db.exec("ALTER TABLE conversation_sessions ADD COLUMN document_markdown TEXT;");
   }
+
+  // One-time migration from legacy session-level document columns to conversation_outputs.
+  db.exec(`
+    INSERT INTO conversation_outputs (
+      id, session_id, filename, markdown_content, mime, created_at, updated_at
+    )
+    SELECT
+      'legacy-' || id,
+      id,
+      document_filename,
+      document_markdown,
+      'application/pdf',
+      created_at,
+      updated_at
+    FROM conversation_sessions s
+    WHERE s.document_filename IS NOT NULL
+      AND s.document_markdown IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM conversation_outputs o
+        WHERE o.session_id = s.id
+      );
+  `);
 
   return db;
 }

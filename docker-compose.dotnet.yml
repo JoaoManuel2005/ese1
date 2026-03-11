@@ -6,6 +6,15 @@ services:
     container_name: rag-backend-dotnet
     ports:
       - "8001:8001"
+    # GPU support for production (Linux/Windows with NVIDIA GPU)
+    # Automatically ignored on Mac - uses CPU with multi-threading fallback
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://0.0.0.0:8001
@@ -17,7 +26,9 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt4.1}
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
-      - ONNX_MODEL_PATH=/app/Models/all-MiniLM-L6-v2.onnx
+      - EMBEDDING_PROVIDER=onnx
+      - ONNX_MODEL_PATH=/app/Models/bge-base-en-v1.5.onnx
+      - ONNX_MAX_SEQUENCE_LENGTH=512
     volumes:
       - ./pac-workspace:/pac-workspace
       - /var/run/docker.sock:/var/run/docker.sock

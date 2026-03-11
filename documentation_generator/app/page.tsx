@@ -67,6 +67,13 @@ type ApiOutput = {
   htmlPreview?: string;
   markdownContent?: string;
 };
+type PersistedDocument = {
+  filename: string;
+  markdown: string;
+  htmlPreview?: string | null;
+  bytesBase64?: string | null;
+  mime?: string | null;
+};
 
 const MAX_TEXT_CHARS = 200 * 1024; // ~200KB cap for in-memory text
 const TEXT_EXTS = ["txt", "md", "json", "csv", "js", "ts", "py"];
@@ -81,6 +88,7 @@ export default function Page() {
   const { files, setFiles, updateFileText } = useFiles([]);
   const [outputs, setOutputs] = useState<OutputFile[]>([]);
   const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
+  const [previewRefreshing, setPreviewRefreshing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateProgress, setGenerateProgress] = useState<{ stage: string; percent: number; failed?: boolean } | null>(null);
   const [generateError, setGenerateError] = useState<GenerateError | null>(null);
@@ -123,6 +131,8 @@ export default function Page() {
   const [isClient, setIsClient] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
+  const hasAttemptedInitialRestoreRef = useRef(false);
+  const activeConversationLoadRef = useRef(0);
   const { data: session, status } = useSession();
 
   function mapProviderError(msg: string, status?: number) {
@@ -244,7 +254,7 @@ export default function Page() {
     }
   }
 
-  async function createConversationSession(document?: { filename: string; markdown: string }) {
+  async function createConversationSession(document?: PersistedDocument) {
     if (status !== "authenticated" || !session?.user) {
       throw new Error("Sign in to save document edits.");
     }
@@ -257,6 +267,9 @@ export default function Page() {
         customer_name: customerName.trim() || null,
         document_filename: document?.filename ?? null,
         document_markdown: document?.markdown ?? null,
+        document_html: document?.htmlPreview ?? null,
+        document_pdf_base64: document?.bytesBase64 ?? null,
+        document_mime: document?.mime ?? "application/pdf",
       }),
     });
 
@@ -274,21 +287,36 @@ export default function Page() {
     return data.conversation_id as string;
   }
 
-  async function persistConversationDocument(filename: string, markdown: string) {
+  async function syncConversationDataset(nextDatasetId: string, targetConversationId?: string | null) {
+    const activeConversationId = targetConversationId ?? conversationId;
+    if (!activeConversationId || status !== "authenticated" || !session?.user) return;
+    await fetch(`/api/conversations/${activeConversationId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataset_id: nextDatasetId }),
+    }).catch(() => {});
+    void refreshConversationList();
+  }
+
+  async function persistConversationDocument(document: PersistedDocument, targetConversationId?: string | null) {
     if (status !== "authenticated" || !session?.user) {
       throw new Error("Sign in to save document edits.");
     }
 
-    if (!conversationId) {
-      return createConversationSession({ filename, markdown });
+    const activeConversationId = targetConversationId ?? conversationId;
+    if (!activeConversationId) {
+      return createConversationSession(document);
     }
 
-    const response = await fetch(`/api/conversations/${conversationId}`, {
+    const response = await fetch(`/api/conversations/${activeConversationId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        document_filename: filename,
-        document_markdown: markdown,
+        document_filename: document.filename,
+        document_markdown: document.markdown,
+        document_html: document.htmlPreview ?? null,
+        document_pdf_base64: document.bytesBase64 ?? null,
+        document_mime: document.mime ?? "application/pdf",
       }),
     });
 
@@ -297,38 +325,99 @@ export default function Page() {
     }
 
     void refreshConversationList();
-    return conversationId;
+    return activeConversationId;
   }
 
-  async function restorePersistedOutput(data: {
+  async function restorePersistedOutput(
+    data: {
     document_filename?: string | null;
     document_markdown?: string | null;
     updated_at?: number;
-  }) {
-    const filename = typeof data.document_filename === "string" ? data.document_filename : "";
-    const markdown = typeof data.document_markdown === "string" ? data.document_markdown : null;
+    output?: {
+      id?: string;
+      filename?: string | null;
+      markdown_content?: string | null;
+      html_preview?: string | null;
+      pdf_base64?: string | null;
+      mime?: string | null;
+      updated_at?: number;
+    } | null;
+    },
+    targetConversationId?: string | null,
+    loadToken?: number
+  ) {
+    const isCurrentLoad = () => loadToken == null || loadToken === activeConversationLoadRef.current;
+    const persistedOutput = data.output && typeof data.output === "object" ? data.output : null;
+    const filename = typeof persistedOutput?.filename === "string"
+      ? persistedOutput.filename
+      : typeof data.document_filename === "string"
+        ? data.document_filename
+        : "";
+    const markdown = typeof persistedOutput?.markdown_content === "string"
+      ? persistedOutput.markdown_content
+      : typeof data.document_markdown === "string"
+        ? data.document_markdown
+        : null;
 
     if (!filename || markdown == null) {
+      if (!isCurrentLoad()) return;
       setOutputs([]);
       setSelectedOutputId(null);
+      setPreviewRefreshing(false);
       return;
     }
 
+    const createdAt = typeof persistedOutput?.updated_at === "number"
+      ? persistedOutput.updated_at * 1000
+      : typeof data.updated_at === "number"
+        ? data.updated_at * 1000
+        : Date.now();
+    const hydratedOutput: OutputFile = {
+      id: typeof persistedOutput?.id === "string" && persistedOutput.id ? persistedOutput.id : `${filename}-${createdAt}`,
+      filename,
+      bytesBase64: typeof persistedOutput?.pdf_base64 === "string" ? persistedOutput.pdf_base64 : "",
+      mime: typeof persistedOutput?.mime === "string" && persistedOutput.mime ? persistedOutput.mime : "application/pdf",
+      createdAt,
+      htmlPreview: typeof persistedOutput?.html_preview === "string" ? persistedOutput.html_preview : "",
+      markdownContent: markdown,
+    };
+    if (!isCurrentLoad()) return;
+    setOutputs([hydratedOutput]);
+    setSelectedOutputId(hydratedOutput.id);
+
+    if (hydratedOutput.htmlPreview && hydratedOutput.bytesBase64) {
+      setPreviewRefreshing(false);
+      return;
+    }
+    setPreviewRefreshing(true);
     try {
-      // The stored source of truth is markdown, so preview HTML and download bytes
-      // are regenerated when a saved conversation is restored.
-      const createdAt = typeof data.updated_at === "number" ? data.updated_at * 1000 : Date.now();
-      const output = await renderOutputFromMarkdown({
-        outputId: `${filename}-${createdAt}`,
-        filename,
+      const refreshedOutput = await renderOutputFromMarkdown({
+        outputId: hydratedOutput.id,
+        filename: hydratedOutput.filename,
         markdownContent: markdown,
         createdAt,
       });
-      setOutputs([output]);
-      setSelectedOutputId(output.id);
+      if (!isCurrentLoad()) return;
+      setOutputs([refreshedOutput]);
+      setSelectedOutputId(refreshedOutput.id);
+      if (status === "authenticated" && session?.user) {
+        await persistConversationDocument(
+          {
+            filename: refreshedOutput.filename,
+            markdown,
+            htmlPreview: refreshedOutput.htmlPreview || "",
+            bytesBase64: refreshedOutput.bytesBase64 || "",
+            mime: refreshedOutput.mime,
+          },
+          targetConversationId
+        );
+      }
     } catch {
-      setOutputs([]);
-      setSelectedOutputId(null);
+      // Keep fast hydrated output as fallback.
+    } finally {
+      if (isCurrentLoad()) {
+        setPreviewRefreshing(false);
+      }
     }
   }
 
@@ -349,7 +438,13 @@ export default function Page() {
       createdAt: Date.now(),
     });
 
-    const savedConversationId = await persistConversationDocument(currentOutput.filename, nextMarkdown);
+    const savedConversationId = await persistConversationDocument({
+      filename: currentOutput.filename,
+      markdown: nextMarkdown,
+      htmlPreview: renderedOutput.htmlPreview || "",
+      bytesBase64: renderedOutput.bytesBase64 || "",
+      mime: renderedOutput.mime,
+    });
     if (savedConversationId !== conversationId) {
       setConversationId(savedConversationId);
     }
@@ -466,12 +561,18 @@ export default function Page() {
 
   // Restore most recent conversation when user is signed in
   useEffect(() => {
-    if (status !== "authenticated" || !session?.user) return;
+    if (status !== "authenticated" || !session?.user) {
+      hasAttemptedInitialRestoreRef.current = false;
+      return;
+    }
+    if (hasAttemptedInitialRestoreRef.current) return;
     if (files.length > 0 || chat.length > 0 || outputs.length > 0) return;
+    hasAttemptedInitialRestoreRef.current = true;
     let cancelled = false;
 
     (async () => {
       try {
+        const loadToken = ++activeConversationLoadRef.current;
         const listRes = await fetch("/api/conversations");
         if (!listRes.ok || cancelled) return;
         const listData = await listRes.json();
@@ -497,7 +598,7 @@ export default function Page() {
         if (convData.dataset_id) setDatasetId(convData.dataset_id);
         setCustomerName(convData.customer_name || "");
         setConversationId(convData.id);
-        await restorePersistedOutput(convData);
+        void restorePersistedOutput(convData, firstId, loadToken);
       } catch {
         // ignore restore errors
       }
@@ -817,9 +918,10 @@ export default function Page() {
   async function addFiles(fileList: FileList | File[] | null) {
     if (!fileList) return;
     if (files.length === 0) {
-      setDatasetId(createDatasetId());
+      const nextDatasetId = createDatasetId();
+      setDatasetId(nextDatasetId);
       setDocsIngestSignature(null);
-      setConversationId(null);
+      void syncConversationDataset(nextDatasetId);
     }
     const incoming = Array.isArray(fileList) ? fileList : Array.from(fileList);
 
@@ -912,6 +1014,28 @@ export default function Page() {
     setSolutionIngestSignature(null);
     setDatasetId(createDatasetId());
     void resetDataset(oldId);
+  }
+
+  function startNewChat(options?: { clearCustomerName?: boolean }) {
+    activeConversationLoadRef.current += 1;
+    const nextDatasetId = createDatasetId();
+    setChat([]);
+    setMessage("");
+    setConversationId(null);
+    setOutputs([]);
+    setSelectedOutputId(null);
+    setExpandedSources({});
+    setGenerateError(null);
+    setGenerateProgress(null);
+    setPreviewRefreshing(false);
+    setDatasetId(nextDatasetId);
+    setDocsIngestSignature(null);
+    setSolutionIngestSignature(null);
+    setCorpusType(null);
+    setCorpusReason(null);
+    if (options?.clearCustomerName) {
+      setCustomerName("");
+    }
   }
 
   function upsertOutput(output: OutputFile) {
@@ -1051,7 +1175,6 @@ export default function Page() {
         );
         
         // Create output with the generated documentation
-        const createdAt = new Date().toISOString();
         const filename = `${parsedSolution.solution_name || "solution"}_documentation.pdf`;
         
         // Generate PDF with Mermaid support using the markdown-to-pdf API
@@ -1086,6 +1209,18 @@ export default function Page() {
         };
         upsertOutput(output);
         setSelectedOutputId(output.id);
+        if (status === "authenticated" && session?.user) {
+          const savedConversationId = await persistConversationDocument({
+            filename: output.filename,
+            markdown: documentation,
+            htmlPreview: output.htmlPreview || "",
+            bytesBase64: output.bytesBase64 || "",
+            mime: output.mime,
+          });
+          if (savedConversationId !== conversationId) {
+            setConversationId(savedConversationId);
+          }
+        }
 
         // Add success message to chat if there are existing chat messages
         if (chat.length > 0) {
@@ -1384,9 +1519,11 @@ export default function Page() {
 
   async function loadConversation(id: string) {
     try {
+      const loadToken = ++activeConversationLoadRef.current;
       const res = await fetch(`/api/conversations/${id}`);
       if (!res.ok) return;
       const data = await res.json();
+      if (loadToken !== activeConversationLoadRef.current) return;
       const msgs = data.messages || [];
       setChat(
         msgs.map((m: { id: string; role: string; content: string }) => ({
@@ -1398,7 +1535,7 @@ export default function Page() {
       if (data.dataset_id && files.length === 0) setDatasetId(data.dataset_id);
       setCustomerName(data.customer_name || "");
       setConversationId(data.id);
-      await restorePersistedOutput(data);
+      void restorePersistedOutput(data, id, loadToken);
     } catch {
       // ignore
     }
@@ -1437,11 +1574,7 @@ export default function Page() {
       if (!res.ok) return;
       setConversationList((prev) => prev.filter((c) => c.id !== id));
       if (conversationId === id) {
-        setChat([]);
-        setMessage("");
-        setConversationId(null);
-        setOutputs([]);
-        setSelectedOutputId(null);
+        startNewChat({ clearCustomerName: true });
       }
     } catch {
       // ignore
@@ -1567,6 +1700,14 @@ export default function Page() {
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#555" }}>Past conversations</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto", paddingRight: 8 }}>
                 {conversationList.map((conv) => (
+                  (() => {
+                    const customerLabel = conv.customer_name || "Unassigned customer";
+                    const titleLabel = conv.title || new Date(conv.updated_at * 1000).toLocaleDateString();
+                    const customerTrimmed = (conv.customer_name || "").trim();
+                    const isTitlePrefixedByCustomer =
+                      !!customerTrimmed &&
+                      titleLabel.toLowerCase().startsWith(`${customerTrimmed.toLowerCase()} - `);
+                    return (
                     <div
                       key={conv.id}
                       style={{
@@ -1589,9 +1730,11 @@ export default function Page() {
                           cursor: "pointer",
                         }}
                       >
-                        <div style={{ fontWeight: 600, color: "var(--foreground)" }}>{conv.customer_name || "Unassigned customer"}</div>
+                        {!isTitlePrefixedByCustomer && (
+                          <div style={{ fontWeight: 600, color: "var(--foreground)" }}>{customerLabel}</div>
+                        )}
                         <div style={{ fontSize: 11, color: "var(--foreground)" }}>
-                          {conv.title || "Chat"} · {new Date(conv.updated_at * 1000).toLocaleDateString()}
+                          {titleLabel}
                         </div>
                       </button>
                       <button
@@ -1613,7 +1756,9 @@ export default function Page() {
                         ×
                       </button>
                     </div>
-                  ))}
+                    );
+                  })()
+                ))}
               </div>
             </div>
           )}
@@ -1643,11 +1788,7 @@ export default function Page() {
                 <button
                   type="button"
                   onClick={() => {
-                    setChat([]);
-                    setMessage("");
-                    setConversationId(null);
-                    setOutputs([]);
-                    setSelectedOutputId(null);
+                    startNewChat();
                   }}
                   style={{
                     padding: "6px 10px",
@@ -1697,10 +1838,7 @@ export default function Page() {
                   // ignore
                 }
               }
-              setChat([]);
-              setMessage("");
-              setConversationId(null);
-              setCustomerName("");
+              startNewChat({ clearCustomerName: true });
             }}
             expandedSources={expandedSources}
             onToggleSources={(id) => setExpandedSources((prev) => ({ ...prev, [id]: !prev[id] }))}
@@ -1797,6 +1935,7 @@ export default function Page() {
           <div className="panel-header">File Preview</div>
           <PreviewPanel
             out={getSelectedOutput()}
+            isRefreshing={previewRefreshing}
             pdfRenderError={pdfRenderError}
             onDownload={(o) => downloadOutput(o)}
             onOpenPdf={() => { if (previewBlobUrlRef.current) window.open(previewBlobUrlRef.current, "_blank"); }}

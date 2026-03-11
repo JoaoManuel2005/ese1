@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
 import { getDb } from "../../../../lib/db";
+import { randomUUID } from "crypto";
 
 export async function GET(
   _req: Request,
@@ -51,14 +52,46 @@ export async function GET(
     content: string;
     created_at: number;
   }>;
+  const latestOutput = db
+    .prepare(
+      `SELECT id, filename, markdown_content, html_preview, pdf_base64, mime, created_at, updated_at
+       FROM conversation_outputs
+       WHERE session_id = ?
+       ORDER BY updated_at DESC
+       LIMIT 1`
+    )
+    .get(id) as
+    | {
+        id: string;
+        filename: string;
+        markdown_content: string;
+        html_preview: string | null;
+        pdf_base64: string | null;
+        mime: string | null;
+        created_at: number;
+        updated_at: number;
+      }
+    | undefined;
 
   return NextResponse.json({
     id: sessionRow.id,
     dataset_id: sessionRow.dataset_id,
     customer_name: sessionRow.customer_name,
     title: sessionRow.title,
-    document_filename: sessionRow.document_filename,
-    document_markdown: sessionRow.document_markdown,
+    document_filename: latestOutput?.filename ?? sessionRow.document_filename,
+    document_markdown: latestOutput?.markdown_content ?? sessionRow.document_markdown,
+    output: latestOutput
+      ? {
+          id: latestOutput.id,
+          filename: latestOutput.filename,
+          markdown_content: latestOutput.markdown_content,
+          html_preview: latestOutput.html_preview,
+          pdf_base64: latestOutput.pdf_base64,
+          mime: latestOutput.mime ?? "application/pdf",
+          created_at: latestOutput.created_at,
+          updated_at: latestOutput.updated_at,
+        }
+      : null,
     created_at: sessionRow.created_at,
     updated_at: sessionRow.updated_at,
     messages: messageRows.map((m) => ({
@@ -104,11 +137,22 @@ export async function PATCH(
 
   try {
     const body = (await req.json()) as {
+      dataset_id?: string | null;
       customer_name?: string;
       title?: string;
       document_filename?: string | null;
       document_markdown?: string | null;
+      document_html?: string | null;
+      document_pdf_base64?: string | null;
+      document_mime?: string | null;
     };
+    const datasetId = "dataset_id" in body
+      ? typeof body.dataset_id === "string"
+        ? body.dataset_id.trim() || null
+        : body.dataset_id == null
+          ? null
+          : undefined
+      : undefined;
     const customerName = typeof body.customer_name === "string" ? body.customer_name.trim() : undefined;
     const title = typeof body.title === "string" ? body.title.trim() : undefined;
     const documentFilename = "document_filename" in body
@@ -125,19 +169,58 @@ export async function PATCH(
           ? null
           : undefined
       : undefined;
+    const documentHtml = "document_html" in body
+      ? typeof body.document_html === "string"
+        ? body.document_html
+        : body.document_html == null
+          ? null
+          : undefined
+      : undefined;
+    const documentPdfBase64 = "document_pdf_base64" in body
+      ? typeof body.document_pdf_base64 === "string"
+        ? body.document_pdf_base64
+        : body.document_pdf_base64 == null
+          ? null
+          : undefined
+      : undefined;
+    const documentMime = "document_mime" in body
+      ? typeof body.document_mime === "string"
+        ? body.document_mime.trim() || null
+        : body.document_mime == null
+          ? null
+          : undefined
+      : undefined;
+    const hasOutputUpdate =
+      documentFilename !== undefined ||
+      documentMarkdown !== undefined ||
+      documentHtml !== undefined ||
+      documentPdfBase64 !== undefined ||
+      documentMime !== undefined;
 
+    if (datasetId === undefined && "dataset_id" in body) {
+      return NextResponse.json({ error: "dataset_id must be a string or null" }, { status: 400 });
+    }
     if (documentFilename === undefined && "document_filename" in body) {
       return NextResponse.json({ error: "document_filename must be a string or null" }, { status: 400 });
     }
     if (documentMarkdown === undefined && "document_markdown" in body) {
       return NextResponse.json({ error: "document_markdown must be a string or null" }, { status: 400 });
     }
+    if (documentHtml === undefined && "document_html" in body) {
+      return NextResponse.json({ error: "document_html must be a string or null" }, { status: 400 });
+    }
+    if (documentPdfBase64 === undefined && "document_pdf_base64" in body) {
+      return NextResponse.json({ error: "document_pdf_base64 must be a string or null" }, { status: 400 });
+    }
+    if (documentMime === undefined && "document_mime" in body) {
+      return NextResponse.json({ error: "document_mime must be a string or null" }, { status: 400 });
+    }
 
     if (
+      datasetId === undefined &&
       customerName === undefined &&
       title === undefined &&
-      documentFilename === undefined &&
-      documentMarkdown === undefined
+      !hasOutputUpdate
     ) {
       return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
     }
@@ -153,6 +236,10 @@ export async function PATCH(
     const assignments: string[] = [];
     const values: Array<string | null> = [];
 
+    if (datasetId !== undefined) {
+      assignments.push("dataset_id = ?");
+      values.push(datasetId);
+    }
     if (customerName !== undefined) {
       assignments.push("customer_name = ?");
       values.push(customerName || null);
@@ -161,20 +248,64 @@ export async function PATCH(
       assignments.push("title = ?");
       values.push(title || null);
     }
-    if (documentFilename !== undefined) {
-      assignments.push("document_filename = ?");
-      values.push(documentFilename);
-    }
-    if (documentMarkdown !== undefined) {
-      assignments.push("document_markdown = ?");
-      values.push(documentMarkdown);
+
+    if (assignments.length > 0) {
+      db.prepare(
+        `UPDATE conversation_sessions
+         SET ${assignments.join(", ")}, updated_at = unixepoch()
+         WHERE id = ?`
+      ).run(...values, id);
     }
 
-    db.prepare(
-      `UPDATE conversation_sessions
-       SET ${assignments.join(", ")}, updated_at = unixepoch()
-       WHERE id = ?`
-    ).run(...values, id);
+    if (hasOutputUpdate) {
+      const previousOutput = db
+        .prepare(
+          `SELECT filename, markdown_content, html_preview, pdf_base64, mime
+           FROM conversation_outputs
+           WHERE session_id = ?
+           ORDER BY updated_at DESC
+           LIMIT 1`
+        )
+        .get(id) as
+        | {
+            filename: string;
+            markdown_content: string;
+            html_preview: string | null;
+            pdf_base64: string | null;
+            mime: string | null;
+          }
+        | undefined;
+
+      const nextFilename = documentFilename ?? previousOutput?.filename;
+      const nextMarkdown = documentMarkdown ?? previousOutput?.markdown_content;
+
+      if (!nextFilename || nextMarkdown == null) {
+        return NextResponse.json(
+          { error: "document_filename and document_markdown are required when saving output" },
+          { status: 400 }
+        );
+      }
+
+      const nextHtml = documentHtml ?? previousOutput?.html_preview ?? null;
+      const nextPdfBase64 = documentPdfBase64 ?? previousOutput?.pdf_base64 ?? null;
+      const nextMime = documentMime ?? previousOutput?.mime ?? "application/pdf";
+
+      db.prepare(
+        `INSERT INTO conversation_outputs (
+          id, session_id, filename, markdown_content, html_preview, pdf_base64, mime, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())`
+      ).run(
+        randomUUID(),
+        id,
+        nextFilename,
+        nextMarkdown,
+        nextHtml,
+        nextPdfBase64,
+        nextMime
+      );
+      db.prepare("UPDATE conversation_sessions SET document_filename = ?, document_markdown = ?, updated_at = unixepoch() WHERE id = ?")
+        .run(nextFilename, nextMarkdown, id);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {

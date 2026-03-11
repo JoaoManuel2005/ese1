@@ -6,13 +6,14 @@ import type { OutputFile } from "../types";
 
 type Props = {
   out: OutputFile | null;
+  isRefreshing?: boolean;
   pdfRenderError?: string | null;
   onDownload: (o: OutputFile) => void;
   onOpenPdf: () => void;
   onSaveQuickEdit: (outputId: string, markdown: string) => Promise<void> | void;
 };
 
-const PreviewPanel: FC<Props> = ({ out, pdfRenderError, onDownload, onOpenPdf, onSaveQuickEdit }) => {
+const PreviewPanel: FC<Props> = ({ out, isRefreshing = false, pdfRenderError, onDownload, onOpenPdf, onSaveQuickEdit }) => {
   const [isQuickEditOpen, setIsQuickEditOpen] = useState(false);
   const [draftContent, setDraftContent] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "error">("idle");
@@ -93,6 +94,11 @@ const PreviewPanel: FC<Props> = ({ out, pdfRenderError, onDownload, onOpenPdf, o
       <div className="panel-scroll" style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 0, maxHeight: "80vh" }}>
         <div style={{ fontWeight: 600, color: "var(--foreground)" }}>{out.filename}</div>
         <div style={{ fontSize: 12, color: "var(--muted)" }}>Generated at {new Date(out.createdAt).toLocaleString()}</div>
+        {isRefreshing && (
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>
+            Refreshing preview...
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={() => onDownload(out)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--panel-bg)", color: "var(--foreground)", cursor: "pointer", fontSize: 12 }}>Download</button>

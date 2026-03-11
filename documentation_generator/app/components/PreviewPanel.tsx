@@ -91,11 +91,11 @@ const PreviewPanel: FC<Props> = ({ out, pdfRenderError, onDownload, onOpenPdf, o
   return (
     <>
       <div className="panel-scroll" style={{ display: "flex", flexDirection: "column", gap: 8, minHeight: 0, maxHeight: "80vh" }}>
-        <div style={{ fontWeight: 600 }}>{out.filename}</div>
+        <div style={{ fontWeight: 600, color: "var(--foreground)" }}>{out.filename}</div>
         <div style={{ fontSize: 12, color: "var(--muted)" }}>Generated at {new Date(out.createdAt).toLocaleString()}</div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => onDownload(out)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)", color: "var(--foreground)", cursor: "pointer", fontSize: 12 }}>Download</button>
+          <button onClick={() => onDownload(out)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--panel-bg)", color: "var(--foreground)", cursor: "pointer", fontSize: 12 }}>Download</button>
           <button
             onClick={openQuickEdit}
             disabled={!canQuickEdit}
@@ -104,7 +104,7 @@ const PreviewPanel: FC<Props> = ({ out, pdfRenderError, onDownload, onOpenPdf, o
               padding: "6px 10px",
               borderRadius: 8,
               border: "1px solid var(--border)",
-              background: "var(--input-bg)",
+              background: "var(--panel-bg)",
               color: "var(--foreground)",
               cursor: canQuickEdit ? "pointer" : "not-allowed",
               fontSize: 12,
@@ -113,13 +113,13 @@ const PreviewPanel: FC<Props> = ({ out, pdfRenderError, onDownload, onOpenPdf, o
           >
             Quick Edit
           </button>
-          <button onClick={() => onOpenPdf()} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg)", color: "var(--foreground)", cursor: "pointer", fontSize: 12 }}>Open PDF in new tab</button>
+          <button onClick={() => onOpenPdf()} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--panel-bg)", color: "var(--foreground)", cursor: "pointer", fontSize: 12 }}>Open PDF in new tab</button>
         </div>
 
         {pdfRenderError && <div style={{ color: "var(--danger)", fontSize: 12 }}>{pdfRenderError}. You can still open the PDF in a new tab.</div>}
 
         <div
-          style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 10, background: "var(--panel-bg)", flex: "1 1 auto", minHeight: 0, overflow: "auto" }}
+          style={{ border: "1px solid var(--border)", color: "var(--foreground)", borderRadius: 10, padding: 10, background: "var(--panel-bg)", flex: "1 1 auto", minHeight: 0, overflow: "auto" }}
           dangerouslySetInnerHTML={{ __html: out.htmlPreview || "<p>Preview unavailable.</p>" }}
         />
       </div>
@@ -166,14 +166,14 @@ const PreviewPanel: FC<Props> = ({ out, pdfRenderError, onDownload, onOpenPdf, o
                 <button
                   onClick={closeQuickEdit}
                   disabled={saveState === "saving"}
-                  style={{ border: "1px solid var(--border)", background: "var(--input-bg)", color: "var(--foreground)", padding: "6px 10px", borderRadius: 8, cursor: "pointer" }}
+                  style={{ border: "1px solid var(--border)", background: "var(--panel-bg)", color: "var(--foreground)", padding: "6px 10px", borderRadius: 8, cursor: "pointer" }}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => { void saveQuickEdit(); }}
                   disabled={saveState === "saving"}
-                  style={{ border: "1px solid var(--border)", background: "var(--input-bg)", color: "var(--foreground)", padding: "6px 10px", borderRadius: 8, cursor: saveState === "saving" ? "not-allowed" : "pointer" }}
+                  style={{ border: "1px solid var(--border)", background: "var(--panel-bg)", color: "var(--foreground)", padding: "6px 10px", borderRadius: 8, cursor: saveState === "saving" ? "not-allowed" : "pointer" }}
                 >
                   {saveState === "saving" ? "Saving..." : "Save"}
                 </button>
@@ -202,7 +202,7 @@ const PreviewPanel: FC<Props> = ({ out, pdfRenderError, onDownload, onOpenPdf, o
                 padding: "10px 12px",
                 borderRadius: 8,
                 border: "1px solid var(--border)",
-                background: "var(--input-bg)",
+                background: "var(--panel-bg)",
                 color: "var(--foreground)",
                 resize: "vertical",
                 fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",

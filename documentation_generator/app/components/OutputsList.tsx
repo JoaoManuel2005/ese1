@@ -22,7 +22,7 @@ const OutputsList: FC<Props> = ({ outputs, selectedOutputId, onSelect, onDownloa
             <div style={{ fontWeight: 600, overflowWrap: "break-word", wordBreak: "break-word" }}>{out.filename}</div>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>{new Date(out.createdAt).toLocaleTimeString()}</div>
           </div>
-          <button onClick={(e) => { e.stopPropagation(); onDownload(out); }} style={{ border: "1px solid var(--border)", background: "var(--input-bg)", padding: "6px 10px", borderRadius: 8, cursor: "pointer", alignSelf: "flex-start" }}>Download</button>
+          <button onClick={(e) => { e.stopPropagation(); onDownload(out); }} style={{ border: "1px solid var(--border)", background: "var(--panel-bg)", color: "var(--foreground)", padding: "6px 10px", borderRadius: 8, cursor: "pointer", alignSelf: "flex-start" }}>Download</button>
         </li>
       ))}
       </ul>

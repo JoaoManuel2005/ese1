@@ -65,7 +65,7 @@ export default function FileUploader({
             />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <div>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>Upload or drop files</div>
+                <div style={{ color: "var(--foreground)", fontWeight: 600, marginBottom: 4 }}>Upload or drop files</div>
                 <div style={{ fontSize: 13, color: "var(--muted)" }}>
                   Docs (txt, md, json) or <strong>.zip solution files</strong>. {isDragging ? "Drop files here" : "Click to choose or drag & drop."}
                 </div>
@@ -75,7 +75,8 @@ export default function FileUploader({
                 onClick={() => fileInputRef.current?.click()}
                 style={{
                   border: "1px solid var(--border)",
-                  background: "var(--input-bg)",
+                  background: "var(--panel-bg)",
+                  color: "var(--foreground)",
                   padding: "8px 12px",
                   borderRadius: 8,
                   cursor: "pointer",
@@ -90,7 +91,7 @@ export default function FileUploader({
           {files.length > 0 ? (
             <div style={{ marginTop: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <div style={{ fontWeight: 600 }}>Selected files</div>
+                <div style={{ color: "var(--foreground)", fontWeight: 600 }}>Selected files</div>
                 {clearFiles && (
                   <button
                     onClick={() => clearFiles()}
@@ -117,6 +118,7 @@ export default function FileUploader({
                         borderRadius: 10,
                         padding: 10,
                         background: "var(--panel-bg)",
+                        color: "var(--foreground)",
                         display: "flex",
                         justifyContent: "space-between",
                         alignItems: "center",
@@ -148,7 +150,7 @@ export default function FileUploader({
                         aria-label={`Remove ${file.name}`}
                         style={{
                           border: "none",
-                          background: "var(--input-bg)",
+                          background: "var(--panel-bg)",
                           color: "var(--danger)",
                           borderRadius: 8,
                           padding: "6px 10px",

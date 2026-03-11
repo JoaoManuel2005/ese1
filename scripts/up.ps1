@@ -75,14 +75,14 @@ if ($nvidiaSmiExists) {
   try {
     $null = nvidia-smi 2>&1
     if ($LASTEXITCODE -eq 0) {
-      Write-Host "✓ NVIDIA GPU detected - enabling CUDA acceleration in Docker"
+      Write-Host "[OK] NVIDIA GPU detected - enabling CUDA acceleration in Docker"
       $gpuCompose = "-f docker-compose.gpu.yml"
       $gpuDetected = $true
     } else {
-      Write-Host "⚠ nvidia-smi found but GPU not accessible (driver issue?)"
+      Write-Host "[WARN] nvidia-smi found but GPU not accessible (driver issue?)"
     }
   } catch {
-    Write-Host "⚠ nvidia-smi check failed: $_"
+    Write-Host "[WARN] nvidia-smi check failed: $_"
   }
 }
 
@@ -91,7 +91,7 @@ if (-not $gpuDetected) {
   try {
     $amdGpu = Get-WmiObject -Class Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "AMD|Radeon" }
     if ($amdGpu) {
-      Write-Host "ℹ AMD GPU detected, but DirectML only works when running .NET natively (not in Docker)"
+      Write-Host "[INFO] AMD GPU detected, but DirectML only works when running .NET natively (not in Docker)"
       Write-Host "  Falling back to optimized CPU mode in container"
     }
   } catch {
@@ -102,7 +102,7 @@ if (-not $gpuDetected) {
 # In Docker, other GPUs (DirectML on Windows) don't work
 # The C# code will still try to use them if running natively outside Docker
 if (-not $gpuDetected) {
-  Write-Host "ℹ No Docker-compatible GPU detected - using optimized CPU mode"
+  Write-Host "[INFO] No Docker-compatible GPU detected - using optimized CPU mode"
   Write-Host "  (CUDA/NVIDIA is the only GPU supported in Docker containers)"
 }
 

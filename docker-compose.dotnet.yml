@@ -6,15 +6,9 @@ services:
     container_name: rag-backend-dotnet
     ports:
       - "8001:8001"
-    # GPU support for production (Linux/Windows with NVIDIA GPU)
-    # Automatically ignored on Mac - uses CPU with multi-threading fallback
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # GPU support DISABLED by default to prevent build failures
+    # To enable GPU: docker compose -f docker-compose.dotnet.yml -f docker-compose.gpu.yml up
+    # The C# code will auto-detect and use GPU if available, or fallback to CPU
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://0.0.0.0:8001

@@ -1585,7 +1585,7 @@ export default function Page() {
                           fontSize: 12,
                           border: conversationId === conv.id ? "1px solid #1f7aec" : "1px solid var(--border)",
                           borderRadius: 6,
-                          background: conversationId === conv.id ? "var(--input-bg)" : "var(--input-bg)",
+                          background: conversationId === conv.id ? "var(--panel-bg)" : "var(--panel-bg)",
                           cursor: "pointer",
                         }}
                       >
@@ -1605,7 +1605,7 @@ export default function Page() {
                           flexShrink: 0,
                           border: "1px solid var(--border)",
                           borderRadius: 6,
-                          background: "var(--input-bg)",
+                          background: "var(--panel-bg)",
                           cursor: "pointer",
                           color: "var(--foreground)",
                         }}
@@ -1633,6 +1633,8 @@ export default function Page() {
                   style={{
                     flex: 1,
                     padding: "6px 8px",
+                    background: "var(--panel-bg)",
+                    color: "var(--foreground)",
                     border: "1px solid var(--border)",
                     borderRadius: 6,
                     fontSize: 12,
@@ -1651,7 +1653,7 @@ export default function Page() {
                     padding: "6px 10px",
                     border: "1px solid var(--border)",
                     borderRadius: 6,
-                    background: "var(--input-bg)",
+                    background: "var(--panel-bg)",
                     color: "var(--foreground)",
                     cursor: "pointer",
                     fontSize: 12,
@@ -1667,7 +1669,7 @@ export default function Page() {
                     padding: "6px 10px",
                     border: "1px solid var(--border)",
                     borderRadius: 6,
-                    background: conversationId ? "var(--input-bg)" : "var(--input-bg)",
+                    background: conversationId ? "var(--panel-bg)" : "var(--panel-bg)",
                     cursor: conversationId ? "pointer" : "not-allowed",
                     fontSize: 12,
                     color: conversationId ? "var(--foreground)" : "var(--foreground)",
@@ -1717,9 +1719,9 @@ export default function Page() {
                 style={{
                   padding: "8px 12px",
                   borderRadius: 8,
-                  border: hasSolution ? "1px solid #0a6b3d" : "1px solid #1f7aec",
-                  background: generating ? "#9dc2f7" : hasSolution ? "#0a6b3d" : "#1f7aec",
-                  color: "#fff",
+                  border: hasSolution ? "1px solid var(--border)" : "1px solid var(--border)",
+                  background: generating ? "#727476" : hasSolution ? "var(--panel-bg)" : "var(--panel-bg)",
+                  color: "var(--foreground)",
                   cursor: !hasFiles || generating ? "not-allowed" : "pointer",
                   opacity: !hasFiles || generating ? 0.7 : 1,
                 }}

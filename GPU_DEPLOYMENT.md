@@ -3,6 +3,29 @@
 ## Overview
 The RAG backend supports GPU acceleration for 5-10x faster embedding generation in production environments.
 
+**GPU support is automatic and graceful:**
+- ✅ If NVIDIA GPU detected: Automatically enables CUDA acceleration
+- ✅ If no GPU available: Falls back to optimized CPU multi-threading
+- ✅ No manual configuration needed when using `./scripts/up.sh`
+
+## Quick Start
+
+### Using the Built-in Scripts (Recommended)
+
+**Linux/Mac:**
+```bash
+./scripts/up.sh
+# Automatically detects and uses GPU if available
+```
+
+**Windows:**
+```powershell
+.\scripts\up.ps1
+# Automatically detects and uses GPU if available
+```
+
+The scripts automatically detect NVIDIA GPUs and enable acceleration. No configuration needed!
+
 ## Platform Support
 
 ### ✅ Production (GPU Enabled)
@@ -19,7 +42,19 @@ The RAG backend supports GPU acceleration for 5-10x faster embedding generation 
 
 ## Production Deployment with GPU
 
-### 1. Docker Compose (Linux/Windows with NVIDIA)
+### 1. Automatic Detection (Recommended)
+
+Use the provided scripts which auto-detect GPU availability:
+
+```bash
+# Linux/Mac
+./scripts/up.sh
+
+# Windows
+.\scripts\up.ps1
+```
+
+### 2. Manual Docker Compose (Linux/Windows with NVIDIA)
 
 **Prerequisites:**
 ```bash
@@ -32,32 +67,24 @@ sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
 sudo systemctl restart docker
 ```
 
-**Enable GPU in docker-compose.dotnet.yml:**
-```yaml
-services:
-  rag-backend-dotnet:
-    # Uncomment this section:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+**Run with GPU:**
+```bash
+docker compose -f docker-compose.dotnet.yml -f docker-compose.gpu.yml up -d
 ```
 
-**Run:**
+**Run without GPU (fallback to CPU):**
 ```bash
-docker-compose -f docker-compose.dotnet.yml up -d
+docker compose -f docker-compose.dotnet.yml up -d
 ```
 
 **Verify GPU usage:**
 ```bash
 docker logs rag-backend-dotnet | grep "execution provider"
-# Should show: "Using execution provider: CUDA (NVIDIA GPU)"
+# With GPU: "Using execution provider: CUDA (NVIDIA GPU)"
+# Without GPU: "Using execution provider: CPU (optimized multi-threaded)"
 ```
 
-### 2. Azure Container Apps with GPU
+### 3. Azure Container Apps with GPU
 
 **Deploy to Azure with GPU-enabled container:**
 ```bash
@@ -73,7 +100,7 @@ az containerapp create \
 
 The ONNX service will automatically detect and use CUDA.
 
-### 3. Kubernetes with GPU
+### 4. Kubernetes with GPU
 
 **Node pool with GPU:**
 ```yaml

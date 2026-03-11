@@ -86,7 +86,39 @@ echo "AZURE_AD_CLIENT_ID=$(mask_secret "$azure_client_id")"
 echo "AZURE_AD_CLIENT_SECRET=$(mask_secret "$azure_client_secret")"
 echo "AZURE_AD_TENANT_ID=$(mask_secret "$azure_tenant_id")"
 
-docker compose --env-file .env.generated -f docker-compose.dotnet.yml up -d --build --force-recreate
+# Auto-detect GPU support and conditionally enable GPU acceleration
+# Only NVIDIA GPUs are supported in Docker (CoreML/DirectML don't work in containers)
+GPU_COMPOSE=""
+GPU_DETECTED=false
+
+# Check for NVIDIA GPU (Linux/Windows with CUDA)
+if command -v nvidia-smi &> /dev/null; then
+  if nvidia-smi &> /dev/null; then
+    echo "✓ NVIDIA GPU detected - enabling CUDA acceleration in Docker"
+    GPU_COMPOSE="-f docker-compose.gpu.yml"
+    GPU_DETECTED=true
+  else
+    echo "⚠ nvidia-smi found but GPU not accessible (driver issue?)"
+  fi
+fi
+
+# Check for AMD GPU with ROCm (Linux only)
+if [ "$GPU_DETECTED" = false ] && command -v rocm-smi &> /dev/null; then
+  if rocm-smi &> /dev/null; then
+    echo "ℹ AMD GPU detected, but ROCm in Docker requires additional setup"
+    echo "  See: https://rocmdocs.amd.com/en/latest/deploy/docker.html"
+    echo "  Falling back to optimized CPU mode for now"
+  fi
+fi
+
+# In Docker, other GPUs (CoreML on Mac, DirectML on Windows) don't work
+# The C# code will still try to use them if running natively outside Docker
+if [ "$GPU_DETECTED" = false ]; then
+  echo "ℹ No Docker-compatible GPU detected - using optimized CPU mode"
+  echo "  (CUDA/NVIDIA is the only GPU supported in Docker containers)"
+fi
+
+docker compose --env-file .env.generated -f docker-compose.dotnet.yml $GPU_COMPOSE up -d --build --force-recreate
 
 required_vars=(
   "NEXTAUTH_SECRET"

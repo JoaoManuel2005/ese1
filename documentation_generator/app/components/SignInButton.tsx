@@ -21,9 +21,10 @@ export default function SignInButton() {
         alignItems: 'center', 
         gap: '12px',
         padding: '8px 16px',
-        background: 'rgba(0, 0, 0, 0.02)',
+        background: "var(--panel-bg)",
+        color: "var(--foreground)",
         borderRadius: '8px',
-        border: '1px solid rgba(0, 0, 0, 0.1)'
+        border: '1px solid var(--border)',
       }}>
         {session.user.image && (
           <img
@@ -38,8 +39,8 @@ export default function SignInButton() {
           />
         )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <span style={{ fontSize: '12px', color: '#666' }}>Signed in as</span>
-          <span style={{ fontSize: '14px', fontWeight: 500, color: '#333' }}>
+          <span style={{ fontSize: '12px' }}>Signed in as</span>
+          <span style={{ fontSize: '14px', fontWeight: 500 }}>
             {session.user.email || session.user.name}
           </span>
         </div>
@@ -48,9 +49,9 @@ export default function SignInButton() {
           style={{
             padding: '6px 12px',
             borderRadius: '6px',
-            border: '1px solid #ddd',
-            background: '#fff',
-            color: '#555',
+            border: "1px solid var(--border)",
+            background: "var(--panel-bg)",
+            color: "var(--foreground)",
             cursor: 'pointer',
             fontSize: '14px',
             fontWeight: 500,
@@ -75,22 +76,14 @@ export default function SignInButton() {
       style={{
         padding: '8px 16px',
         borderRadius: '8px',
-        border: 'none',
-        background: '#346df1',
-        color: '#fff',
+        border: '1px solid var(--border)',
+        background: "var(--panel-bg)",
+        color: "var(--foreground)",
         cursor: 'pointer',
         fontSize: '14px',
         fontWeight: 500,
         transition: 'all 0.2s',
         boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = '#2a5dd9';
-        e.currentTarget.style.boxShadow = '0 4px 8px rgba(0, 0, 0, 0.15)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = '#346df1';
-        e.currentTarget.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.1)';
       }}
     >
       Sign In

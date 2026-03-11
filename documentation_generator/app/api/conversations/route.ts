@@ -76,6 +76,33 @@ export async function POST(req: Request) {
     if (documentMarkdown === undefined) {
       return NextResponse.json({ error: "document_markdown must be a string or null" }, { status: 400 });
     }
+    const documentHtml =
+      typeof body?.document_html === "string"
+        ? body.document_html
+        : body?.document_html == null
+          ? null
+          : undefined;
+    const documentPdfBase64 =
+      typeof body?.document_pdf_base64 === "string"
+        ? body.document_pdf_base64
+        : body?.document_pdf_base64 == null
+          ? null
+          : undefined;
+    const documentMime =
+      typeof body?.document_mime === "string" && body.document_mime.trim().length > 0
+        ? body.document_mime.trim()
+        : body?.document_mime == null
+          ? null
+          : undefined;
+    if (documentHtml === undefined) {
+      return NextResponse.json({ error: "document_html must be a string or null" }, { status: 400 });
+    }
+    if (documentPdfBase64 === undefined) {
+      return NextResponse.json({ error: "document_pdf_base64 must be a string or null" }, { status: 400 });
+    }
+    if (documentMime === undefined) {
+      return NextResponse.json({ error: "document_mime must be a string or null" }, { status: 400 });
+    }
 
     const sessionId = randomUUID();
     const db = getDb();
@@ -94,6 +121,21 @@ export async function POST(req: Request) {
       documentFilename,
       documentMarkdown
     );
+    if (documentFilename && documentMarkdown != null) {
+      db.prepare(
+        `INSERT INTO conversation_outputs (
+          id, session_id, filename, markdown_content, html_preview, pdf_base64, mime, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())`
+      ).run(
+        randomUUID(),
+        sessionId,
+        documentFilename,
+        documentMarkdown,
+        documentHtml,
+        documentPdfBase64,
+        documentMime || "application/pdf"
+      );
+    }
 
     return NextResponse.json({ conversation_id: sessionId });
   } catch (e: unknown) {

@@ -1625,7 +1625,7 @@ export default function Page() {
             setSystemPrompt={setSystemPrompt}
             systemPromptDefault={DEFAULT_SOLUTION_SYSTEM_PROMPT}
           />
-          <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation Generator</h1>
+          <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation <h1 style={{ display:'inline', color:"var(--border)" }}>Generator</h1></h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {/* RAG Status Badge */}

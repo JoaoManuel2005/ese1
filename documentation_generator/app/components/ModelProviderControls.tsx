@@ -41,13 +41,13 @@ const ModelProviderControls: FC<Props> = ({
   return (
     <div style={{ display: "grid", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <div style={{ fontWeight: 700 }}>Provider:</div>
-        <div style={{ fontSize: 14 }}>{provider === "cloud" ? "Cloud" : "Local"}</div>
+        <div style={{ fontWeight: 700, color: "var(--foreground)" }}>Provider:</div>
+        <div style={{ fontSize: 14, color: "var(--foreground)" }}>{provider === "cloud" ? "Cloud" : "Local"}</div>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <div style={{ fontWeight: 700 }}>Model:</div>
-        <div style={{ fontSize: 14 }}>{provider === "cloud" ? (selectedModel || "default") : (localModel || "default")}</div>
+        <div style={{ fontWeight: 700, color: "var(--foreground)" }}>Model:</div>
+        <div style={{ fontSize: 14, color: "var(--foreground)" }}>{provider === "cloud" ? (selectedModel || "default") : (localModel || "default")}</div>
       </div>
 
       <div style={{ fontSize: 12, color: "var(--muted)" }}>

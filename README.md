@@ -74,7 +74,6 @@ Head to [Azure](https://portal.azure.com/#home) and make sure that you setup (or
 | AZURE-AD-CLIENT-SECRET | *your client secret* |
 | AZURE-AD-TENANT-ID | *your tenant ID* |
 | AZURE-OPENAI-ENDPOINT | *your OpenAI endpoint* |
-| MICROSOFT-CLIENT-SECRET | *your client secret* |
 | NEXTAUTH-SECRET | *your next auth secret* |
 
 Then login to Azure by opening your terminal and typing:

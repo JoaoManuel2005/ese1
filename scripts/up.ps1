@@ -66,8 +66,54 @@ Write-Host ("AZURE_AD_CLIENT_ID=" + (Mask-Secret $azureClientID))
 Write-Host ("AZURE_AD_CLIENT_SECRET=" + (Mask-Secret $azureClientSecret))
 Write-Host ("AZURE_AD_TENANT_ID=" + (Mask-Secret $azureTenantID))
 
+# Auto-detect GPU support and conditionally enable GPU acceleration
+# Only NVIDIA GPUs are supported in Docker (DirectML works natively on Windows but not in containers)
+$gpuCompose = ""
+$gpuDetected = $false
+
+# Check for NVIDIA GPU (Windows/Linux with CUDA)
+$nvidiaSmiExists = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+if ($nvidiaSmiExists) {
+  try {
+    $null = nvidia-smi 2>&1
+    if ($LASTEXITCODE -eq 0) {
+      Write-Host "[OK] NVIDIA GPU detected - enabling CUDA acceleration in Docker"
+      $gpuCompose = "-f docker-compose.gpu.yml"
+      $gpuDetected = $true
+    } else {
+      Write-Host "[WARN] nvidia-smi found but GPU not accessible (driver issue?)"
+    }
+  } catch {
+    Write-Host "[WARN] nvidia-smi check failed: $_"
+  }
+}
+
+# Check for AMD GPU (Windows DirectML works automatically, but not in Docker)
+if (-not $gpuDetected) {
+  try {
+    $amdGpu = Get-WmiObject -Class Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "AMD|Radeon" }
+    if ($amdGpu) {
+      Write-Host "[INFO] AMD GPU detected, but DirectML only works when running .NET natively (not in Docker)"
+      Write-Host "  Falling back to optimized CPU mode in container"
+    }
+  } catch {
+    # Silently continue if WMI check fails
+  }
+}
+
+# In Docker, other GPUs (DirectML on Windows) don't work
+# The C# code will still try to use them if running natively outside Docker
+if (-not $gpuDetected) {
+  Write-Host "[INFO] No Docker-compatible GPU detected - using optimized CPU mode"
+  Write-Host "  (CUDA/NVIDIA is the only GPU supported in Docker containers)"
+}
+
 # Run stack
-docker compose --env-file .env.generated -f docker-compose.dotnet.yml up -d --build --force-recreate
+if ($gpuCompose) {
+  docker compose --env-file .env.generated -f docker-compose.dotnet.yml $gpuCompose up -d --build --force-recreate
+} else {
+  docker compose --env-file .env.generated -f docker-compose.dotnet.yml up -d --build --force-recreate
+}
 if ($LASTEXITCODE -ne 0) {
   throw "docker compose up failed."
 }

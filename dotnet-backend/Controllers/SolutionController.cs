@@ -111,6 +111,13 @@ public class SolutionController : ControllerBase
         var provider = _llm.ResolveProvider(request.Provider);
         var model    = _llm.ResolveModel(provider, request.Model);
 
+        var hasCustomPrompt = !string.IsNullOrWhiteSpace(request.SystemPrompt);
+        var preview = hasCustomPrompt && request.SystemPrompt!.Length > 0
+            ? (request.SystemPrompt.Length > 60 ? request.SystemPrompt.AsSpan(0, 60).ToString() + "..." : request.SystemPrompt)
+            : "(default)";
+        Console.WriteLine("[GenerateDocumentation] SystemPrompt received: custom={0}, length={1}, preview=\"{2}\"",
+            hasCustomPrompt, request.SystemPrompt?.Length ?? 0, preview.Replace("\"", "'"));
+
         if (provider == "cloud")
         {
             bool hasOpenAi = _llm.IsValidApiKey(request.ApiKey)
@@ -142,6 +149,7 @@ public class SolutionController : ControllerBase
             var doc = await _rag.GenerateDocumentationAsync(
                 solution   : request.Solution,
                 docType    : request.DocType,
+                systemPromptOverride: request.SystemPrompt,
                 provider   : provider,
                 model      : model,
                 userPrefs  : userPrefs,

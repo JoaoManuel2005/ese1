@@ -6,6 +6,9 @@ services:
     container_name: rag-backend-dotnet
     ports:
       - "8001:8001"
+    # GPU support DISABLED by default to prevent build failures
+    # To enable GPU: docker compose -f docker-compose.dotnet.yml -f docker-compose.gpu.yml up
+    # The C# code will auto-detect and use GPU if available, or fallback to CPU
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://0.0.0.0:8001
@@ -18,7 +21,9 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt4.1}
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
-      - ONNX_MODEL_PATH=/app/Models/all-MiniLM-L6-v2.onnx
+      - EMBEDDING_PROVIDER=onnx
+      - ONNX_MODEL_PATH=/app/Models/bge-base-en-v1.5.onnx
+      - ONNX_MAX_SEQUENCE_LENGTH=512
     volumes:
       - ./pac-workspace:/pac-workspace
       - /var/run/docker.sock:/var/run/docker.sock

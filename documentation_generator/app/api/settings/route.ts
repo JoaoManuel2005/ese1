@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "../auth/[...nextauth]/route";
 import { getRuntimeConfig, maskApiKey, setRuntimeConfig } from "../../../lib/runtimeConfig";
+import { getUserSystemPrompt, upsertUserSystemPrompt } from "../../../lib/userSettings";
 
 function getAzureAdAuthority(): string {
   const tenantId = process.env.AZURE_AD_TENANT_ID?.trim();
@@ -8,7 +11,10 @@ function getAzureAdAuthority(): string {
     : "https://login.microsoftonline.com/organizations";
 }
 
-function buildPublicConfig(config: Awaited<ReturnType<typeof getRuntimeConfig>>) {
+function buildPublicConfig(
+  config: Awaited<ReturnType<typeof getRuntimeConfig>>,
+  systemPrompt: string | null = null
+) {
   return {
     provider: config.provider ?? null,
     model: config.model ?? null,
@@ -17,13 +23,18 @@ function buildPublicConfig(config: Awaited<ReturnType<typeof getRuntimeConfig>>)
     openaiApiKeyMasked: maskApiKey(config.openaiApiKey),
     azureAdClientId: process.env.AZURE_AD_CLIENT_ID?.trim() || null,
     azureAdAuthority: getAzureAdAuthority(),
+    systemPrompt,
   };
 }
 
 export async function GET() {
   try {
+    const session = await getServerSession(authOptions);
+    const userId = session?.user?.email ?? null;
     const config = await getRuntimeConfig();
-    return NextResponse.json(buildPublicConfig(config));
+    const systemPrompt = userId ? getUserSystemPrompt(userId) : null;
+    console.log("[Settings] GET: authenticated=%s systemPromptLength=%s", !!userId, systemPrompt != null ? systemPrompt.length : "null");
+    return NextResponse.json(buildPublicConfig(config, systemPrompt));
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "Failed to load settings" },
@@ -34,6 +45,8 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const session = await getServerSession(authOptions);
+    const userId = session?.user?.email ?? null;
     const body = await req.json().catch(() => ({}));
     if (!body || typeof body !== "object") {
       return NextResponse.json(
@@ -67,7 +80,20 @@ export async function POST(req: Request) {
     if ("azureOpenAiEndpoint" in body) updates.azureOpenAiEndpoint = body.azureOpenAiEndpoint;
 
     const config = await setRuntimeConfig(updates);
-    return NextResponse.json(buildPublicConfig(config));
+
+    let systemPrompt: string | null = null;
+    if (userId && "systemPrompt" in body) {
+      const prompt = typeof body.systemPrompt === "string" ? body.systemPrompt : null;
+      systemPrompt = upsertUserSystemPrompt(userId, prompt);
+      console.log("[Settings] POST: saved to DB (authenticated) systemPromptLength=%s", systemPrompt != null ? systemPrompt.length : "null");
+    } else if (userId) {
+      systemPrompt = getUserSystemPrompt(userId);
+    } else if ("systemPrompt" in body) {
+      systemPrompt = typeof body.systemPrompt === "string" ? body.systemPrompt : null;
+      console.log("[Settings] POST: echoed for session (guest) systemPromptLength=%s", systemPrompt != null ? systemPrompt.length : "null");
+    }
+
+    return NextResponse.json(buildPublicConfig(config, systemPrompt));
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "Failed to save settings" },

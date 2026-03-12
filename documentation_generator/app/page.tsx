@@ -119,17 +119,43 @@ type SharePointConnection = {
   status: "active" | "expired" | "revoked";
 };
 
+type ApiErrorPayload = {
+  error?: string | { message?: string; code?: string; hint?: string };
+  detail?: string | { message?: string };
+};
+
+type AppError = Error & { code?: string; hint?: string };
+
+type ApiOutput = {
+  filename?: string;
+  bytesBase64?: string;
+  mime?: string;
+  createdAt?: string;
+  htmlPreview?: string;
+  markdownContent?: string;
+};
+type PersistedDocument = {
+  filename: string;
+  markdown: string;
+  htmlPreview?: string | null;
+  bytesBase64?: string | null;
+  mime?: string | null;
+};
+
 const MAX_TEXT_CHARS = 200 * 1024; // ~200KB cap for in-memory text
 const TEXT_EXTS = ["txt", "md", "json", "csv", "js", "ts", "py"];
 const SOLUTION_EXT = "zip"; // Power Platform solution files
 const MAX_TOTAL_TEXT_CHARS = 400 * 1024; // overall cap we send to backend
 const DEFAULT_TEMP = 0.5;
+const DEFAULT_SOLUTION_SYSTEM_PROMPT =
+  "You are a technical documentation assistant for Microsoft Power Platform solutions. Produce comprehensive documentation that is exhaustive and component-driven. Every component provided must appear in the output under the correct type. Use only provided component evidence and metadata; if a detail is missing, write 'Not found in solution export'. Never omit component types, and preserve exact component names. Mermaid diagrams are mandatory and must be valid fenced mermaid code blocks.";
 
 export default function Page() {
   const [message, setMessage] = useState("");
   const { files, setFiles, updateFileText } = useFiles([]);
   const [outputs, setOutputs] = useState<OutputFile[]>([]);
   const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
+  const [previewRefreshing, setPreviewRefreshing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateProgress, setGenerateProgress] = useState<{ stage: string; percent: number; failed?: boolean } | null>(null);
   const [generateError, setGenerateError] = useState<GenerateError | null>(null);
@@ -157,7 +183,7 @@ export default function Page() {
   const [savingSharePointConnection, setSavingSharePointConnection] = useState(false);
   const [sharePointToken, setSharePointToken] = useState<string | null>(null);
   const [sharePointNotification, setSharePointNotification] = useState<{ urls: string[]; show: boolean }>({ urls: [], show: false });
-  
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SOLUTION_SYSTEM_PROMPT);
   const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number; provider?: string; model?: string; backend_online?: boolean } | null>(null);
   const [corpusType, setCorpusType] = useState<"solution_zip" | "docs" | "unknown" | null>(null);
   const [corpusReason, setCorpusReason] = useState<string | null>(null);
@@ -166,11 +192,21 @@ export default function Page() {
   const [solutionIngestSignature, setSolutionIngestSignature] = useState<string | null>(null);
   const [datasetId, setDatasetId] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
-  type ConversationListItem = { id: string; dataset_id: string | null; title: string | null; created_at: number; updated_at: number };
+  type ConversationListItem = {
+    id: string;
+    dataset_id: string | null;
+    customer_name: string | null;
+    title: string | null;
+    created_at: number;
+    updated_at: number;
+  };
   const [conversationList, setConversationList] = useState<ConversationListItem[]>([]);
+  const [customerName, setCustomerName] = useState("");
   const [isClient, setIsClient] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
+  const hasAttemptedInitialRestoreRef = useRef(false);
+  const activeConversationLoadRef = useRef(0);
   const { data: session, status } = useSession();
 
   // Load SharePoint token from sessionStorage on mount
@@ -218,20 +254,285 @@ export default function Page() {
     return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  function parseApiError(payload: any, fallback: string): GenerateError {
-    if (payload?.error?.message) {
-      return { message: payload.error.message, code: payload.error.code, hint: payload.error.hint };
+  function parseApiError(payload: ApiErrorPayload | undefined, fallback: string): GenerateError {
+    if (!payload) return { message: fallback };
+
+    const { error, detail } = payload;
+
+    if (typeof error === "object" && error?.message) {
+      return { message: error.message, code: error.code, hint: error.hint };
     }
-    if (payload?.error) {
-      return { message: payload.error };
+    if (typeof error === "string" && error) {
+      return { message: error };
     }
-    if (payload?.detail?.message) {
-      return { message: payload.detail.message };
+    if (typeof detail === "object" && detail?.message) {
+      return { message: detail.message };
     }
-    if (payload?.detail) {
-      return { message: payload.detail };
+    if (typeof detail === "string" && detail) {
+      return { message: detail };
     }
     return { message: fallback };
+  }
+
+  async function readRouteError(response: Response, fallback: string) {
+    const payload = await response.json().catch(() => ({}));
+    if (typeof payload?.error === "string" && payload.error.trim().length > 0) {
+      return payload.error;
+    }
+    return fallback;
+  }
+
+  function buildRenderTitle(filename: string) {
+    const base = filename.replace(/\.pdf$/i, "").replace(/[_-]+/g, " ").trim();
+    return base || "Documentation";
+  }
+
+  async function renderOutputFromMarkdown({
+    outputId,
+    filename,
+    markdownContent,
+    createdAt = Date.now(),
+  }: {
+    outputId: string;
+    filename: string;
+    markdownContent: string;
+    createdAt?: number;
+  }) {
+    const response = await fetch("/api/markdown-to-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        markdown: markdownContent,
+        title: buildRenderTitle(filename),
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error || "Failed to render document");
+    }
+
+    const nextOutput: OutputFile = {
+      id: outputId,
+      filename,
+      bytesBase64: data.pdfBase64 || "",
+      mime: "application/pdf",
+      createdAt,
+      htmlPreview: data.html || "",
+      markdownContent,
+    };
+
+    return nextOutput;
+  }
+
+  async function refreshConversationList() {
+    if (status !== "authenticated" || !session?.user) return;
+    try {
+      const response = await fetch("/api/conversations");
+      if (!response.ok) return;
+      const data = await response.json();
+      setConversationList(data.conversations || []);
+    } catch {
+      // ignore refresh errors
+    }
+  }
+
+  async function createConversationSession(document?: PersistedDocument) {
+    if (status !== "authenticated" || !session?.user) {
+      throw new Error("Sign in to save document edits.");
+    }
+
+    const response = await fetch("/api/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dataset_id: datasetId || null,
+        customer_name: customerName.trim() || null,
+        document_filename: document?.filename ?? null,
+        document_markdown: document?.markdown ?? null,
+        document_html: document?.htmlPreview ?? null,
+        document_pdf_base64: document?.bytesBase64 ?? null,
+        document_mime: document?.mime ?? "application/pdf",
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await readRouteError(response, "Failed to create conversation."));
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (typeof data?.conversation_id !== "string" || !data.conversation_id) {
+      throw new Error("Failed to create conversation.");
+    }
+
+    setConversationId(data.conversation_id);
+    void refreshConversationList();
+    return data.conversation_id as string;
+  }
+
+  async function syncConversationDataset(nextDatasetId: string, targetConversationId?: string | null) {
+    const activeConversationId = targetConversationId ?? conversationId;
+    if (!activeConversationId || status !== "authenticated" || !session?.user) return;
+    await fetch(`/api/conversations/${activeConversationId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataset_id: nextDatasetId }),
+    }).catch(() => {});
+    void refreshConversationList();
+  }
+
+  async function persistConversationDocument(document: PersistedDocument, targetConversationId?: string | null) {
+    if (status !== "authenticated" || !session?.user) {
+      throw new Error("Sign in to save document edits.");
+    }
+
+    const activeConversationId = targetConversationId ?? conversationId;
+    if (!activeConversationId) {
+      return createConversationSession(document);
+    }
+
+    const response = await fetch(`/api/conversations/${activeConversationId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        document_filename: document.filename,
+        document_markdown: document.markdown,
+        document_html: document.htmlPreview ?? null,
+        document_pdf_base64: document.bytesBase64 ?? null,
+        document_mime: document.mime ?? "application/pdf",
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await readRouteError(response, "Failed to save document."));
+    }
+
+    void refreshConversationList();
+    return activeConversationId;
+  }
+
+  async function restorePersistedOutput(
+    data: {
+    document_filename?: string | null;
+    document_markdown?: string | null;
+    updated_at?: number;
+    output?: {
+      id?: string;
+      filename?: string | null;
+      markdown_content?: string | null;
+      html_preview?: string | null;
+      pdf_base64?: string | null;
+      mime?: string | null;
+      updated_at?: number;
+    } | null;
+    },
+    targetConversationId?: string | null,
+    loadToken?: number
+  ) {
+    const isCurrentLoad = () => loadToken == null || loadToken === activeConversationLoadRef.current;
+    const persistedOutput = data.output && typeof data.output === "object" ? data.output : null;
+    const filename = typeof persistedOutput?.filename === "string"
+      ? persistedOutput.filename
+      : typeof data.document_filename === "string"
+        ? data.document_filename
+        : "";
+    const markdown = typeof persistedOutput?.markdown_content === "string"
+      ? persistedOutput.markdown_content
+      : typeof data.document_markdown === "string"
+        ? data.document_markdown
+        : null;
+
+    if (!filename || markdown == null) {
+      if (!isCurrentLoad()) return;
+      setOutputs([]);
+      setSelectedOutputId(null);
+      setPreviewRefreshing(false);
+      return;
+    }
+
+    const createdAt = typeof persistedOutput?.updated_at === "number"
+      ? persistedOutput.updated_at * 1000
+      : typeof data.updated_at === "number"
+        ? data.updated_at * 1000
+        : Date.now();
+    const hydratedOutput: OutputFile = {
+      id: typeof persistedOutput?.id === "string" && persistedOutput.id ? persistedOutput.id : `${filename}-${createdAt}`,
+      filename,
+      bytesBase64: typeof persistedOutput?.pdf_base64 === "string" ? persistedOutput.pdf_base64 : "",
+      mime: typeof persistedOutput?.mime === "string" && persistedOutput.mime ? persistedOutput.mime : "application/pdf",
+      createdAt,
+      htmlPreview: typeof persistedOutput?.html_preview === "string" ? persistedOutput.html_preview : "",
+      markdownContent: markdown,
+    };
+    if (!isCurrentLoad()) return;
+    setOutputs([hydratedOutput]);
+    setSelectedOutputId(hydratedOutput.id);
+
+    if (hydratedOutput.htmlPreview && hydratedOutput.bytesBase64) {
+      setPreviewRefreshing(false);
+      return;
+    }
+    setPreviewRefreshing(true);
+    try {
+      const refreshedOutput = await renderOutputFromMarkdown({
+        outputId: hydratedOutput.id,
+        filename: hydratedOutput.filename,
+        markdownContent: markdown,
+        createdAt,
+      });
+      if (!isCurrentLoad()) return;
+      setOutputs([refreshedOutput]);
+      setSelectedOutputId(refreshedOutput.id);
+      if (status === "authenticated" && session?.user) {
+        await persistConversationDocument(
+          {
+            filename: refreshedOutput.filename,
+            markdown,
+            htmlPreview: refreshedOutput.htmlPreview || "",
+            bytesBase64: refreshedOutput.bytesBase64 || "",
+            mime: refreshedOutput.mime,
+          },
+          targetConversationId
+        );
+      }
+    } catch {
+      // Keep fast hydrated output as fallback.
+    } finally {
+      if (isCurrentLoad()) {
+        setPreviewRefreshing(false);
+      }
+    }
+  }
+
+  async function saveQuickEditOutput(outputId: string, nextMarkdown: string) {
+    const currentOutput = outputs.find((output) => output.id === outputId);
+    if (!currentOutput) {
+      throw new Error("Document not found.");
+    }
+
+    if (typeof currentOutput.markdownContent !== "string") {
+      throw new Error("Document source unavailable.");
+    }
+
+    const renderedOutput = await renderOutputFromMarkdown({
+      outputId: currentOutput.id,
+      filename: currentOutput.filename,
+      markdownContent: nextMarkdown,
+      createdAt: Date.now(),
+    });
+
+    const savedConversationId = await persistConversationDocument({
+      filename: currentOutput.filename,
+      markdown: nextMarkdown,
+      htmlPreview: renderedOutput.htmlPreview || "",
+      bytesBase64: renderedOutput.bytesBase64 || "",
+      mime: renderedOutput.mime,
+    });
+    if (savedConversationId !== conversationId) {
+      setConversationId(savedConversationId);
+    }
+
+    setOutputs((prev) => prev.map((output) => (output.id === outputId ? renderedOutput : output)));
   }
 
   function getFocusFiles(question: string, attached: AttachedFile[]) {
@@ -308,13 +609,53 @@ export default function Page() {
     localStorage.setItem("datasetId", datasetId);
   }, [datasetId, isClient]);
 
+  // Load system prompt: from API when authenticated, from sessionStorage when not
+  useEffect(() => {
+    if (status === "authenticated") {
+      let cancelled = false;
+      (async () => {
+        try {
+          const res = await fetch("/api/settings");
+          if (!res.ok || cancelled) return;
+          const data = await res.json();
+          if (cancelled) return;
+          if (typeof data?.systemPrompt === "string" && data.systemPrompt.trim().length > 0) {
+            setSystemPrompt(data.systemPrompt);
+          } else {
+            setSystemPrompt(DEFAULT_SOLUTION_SYSTEM_PROMPT);
+          }
+        } catch {
+          if (!cancelled) setSystemPrompt(DEFAULT_SOLUTION_SYSTEM_PROMPT);
+        }
+      })();
+      return () => { cancelled = true; };
+    }
+    if (typeof window !== "undefined") {
+      try {
+        const stored = sessionStorage.getItem("systemPrompt");
+        if (stored != null && stored.trim().length > 0) {
+          setSystemPrompt(stored);
+          return;
+        }
+      } catch { /* ignore */ }
+    }
+    setSystemPrompt(DEFAULT_SOLUTION_SYSTEM_PROMPT);
+  }, [status]);
+
   // Restore most recent conversation when user is signed in
   useEffect(() => {
-    if (status !== "authenticated" || !session?.user) return;
+    if (status !== "authenticated" || !session?.user) {
+      hasAttemptedInitialRestoreRef.current = false;
+      return;
+    }
+    if (hasAttemptedInitialRestoreRef.current) return;
+    if (files.length > 0 || chat.length > 0 || outputs.length > 0) return;
+    hasAttemptedInitialRestoreRef.current = true;
     let cancelled = false;
 
     (async () => {
       try {
+        const loadToken = ++activeConversationLoadRef.current;
         const listRes = await fetch("/api/conversations");
         if (!listRes.ok || cancelled) return;
         const listData = await listRes.json();
@@ -329,6 +670,7 @@ export default function Page() {
         const msgs = convData.messages || [];
 
         if (cancelled) return;
+
         setChat(
           msgs.map((m: { id: string; role: string; content: string }) => ({
             id: m.id,
@@ -337,7 +679,9 @@ export default function Page() {
           }))
         );
         if (convData.dataset_id) setDatasetId(convData.dataset_id);
+        setCustomerName(convData.customer_name || "");
         setConversationId(convData.id);
+        void restorePersistedOutput(convData, firstId, loadToken);
       } catch {
         // ignore restore errors
       }
@@ -346,7 +690,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, [session?.user, status]);  
+  }, [chat.length, files.length, outputs.length, session?.user, status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -443,7 +787,7 @@ export default function Page() {
         setDatasetId(activeDatasetId);
       }
 
-      const signature = textFiles.map((f) => `${f.name}:${f.size}`).join("|");
+      const signature = `${activeDatasetId}:${textFiles.map((f) => `${f.name}:${f.size}`).join("|")}`;
       if (signature === docsIngestSignature) return;
 
       try {
@@ -495,7 +839,7 @@ export default function Page() {
         setDatasetId(activeDatasetId);
       }
 
-      const signature = `${solutionFile.name}:${solutionFile.size}`;
+      const signature = `${activeDatasetId}:${solutionFile.name}:${solutionFile.size}`;
       if (signature === solutionIngestSignature) return;
 
       const ingestFormData = new FormData();
@@ -515,6 +859,16 @@ export default function Page() {
           }
           return;
         }
+
+        const stored = data?.details?.chunks_stored ?? data?.chunks_stored ?? 0;
+        if (stored <= 0) {
+          if (!cancelled) {
+            setCorpusType("unknown");
+            setCorpusReason("Solution parsed but no chunks were indexed for chat.");
+          }
+          return;
+        }
+
         if (!cancelled) {
           setSolutionIngestSignature(signature);
           setCorpusType(data?.corpus_type || "solution_zip");
@@ -548,7 +902,11 @@ export default function Page() {
         return;
       }
 
-      const models = Array.isArray(data?.models) ? data.models.map((m: any) => m?.name).filter(Boolean) : [];
+      const models = Array.isArray(data?.models)
+        ? data.models
+            .map((m: { name?: string }) => m?.name)
+            .filter((name: string | undefined): name is string => Boolean(name))
+        : [];
       setLocalModels(models);
 
       // Default selection logic
@@ -563,7 +921,7 @@ export default function Page() {
         setUseCustomLocalModel(true);
       }
 
-    } catch (err: any) {
+    } catch {
       setLocalModels([]);
       setUseCustomLocalModel(true);
       setLocalModelsError("Couldn't detect local models. Ensure Ollama is running.");
@@ -643,8 +1001,10 @@ export default function Page() {
   async function addFiles(fileList: FileList | File[] | null) {
     if (!fileList) return;
     if (files.length === 0) {
-      setDatasetId(createDatasetId());
+      const nextDatasetId = createDatasetId();
+      setDatasetId(nextDatasetId);
       setDocsIngestSignature(null);
+      void syncConversationDataset(nextDatasetId);
     }
     const incoming = Array.isArray(fileList) ? fileList : Array.from(fileList);
 
@@ -675,7 +1035,7 @@ export default function Page() {
             truncated = true;
           }
           return { ...base, isText: true, text, truncated };
-        } catch (e: any) {
+        } catch {
           return { ...base, error: "Failed to read file", isText: false };
         }
       })
@@ -739,6 +1099,28 @@ export default function Page() {
     void resetDataset(oldId);
   }
 
+  function startNewChat(options?: { clearCustomerName?: boolean }) {
+    activeConversationLoadRef.current += 1;
+    const nextDatasetId = createDatasetId();
+    setChat([]);
+    setMessage("");
+    setConversationId(null);
+    setOutputs([]);
+    setSelectedOutputId(null);
+    setExpandedSources({});
+    setGenerateError(null);
+    setGenerateProgress(null);
+    setPreviewRefreshing(false);
+    setDatasetId(nextDatasetId);
+    setDocsIngestSignature(null);
+    setSolutionIngestSignature(null);
+    setCorpusType(null);
+    setCorpusReason(null);
+    if (options?.clearCustomerName) {
+      setCustomerName("");
+    }
+  }
+
   function upsertOutput(output: OutputFile) {
     setOutputs((prev) => {
       const existingIndex = prev.findIndex((o) => o.filename === output.filename);
@@ -766,28 +1148,41 @@ export default function Page() {
     if (!solutionFile?.file) {
       throw new Error("No solution file found");
     }
+    const currentSignature = `${activeDatasetId}:${solutionFile.name}:${solutionFile.size}`;
+    const alreadyIngested = solutionIngestSignature === currentSignature;
 
     // Step 1: FIRST - Ingest the ZIP file into ChromaDB (parses ALL files, FREE with Sentence-BERT)
     // This happens BEFORE doc generation so RAG chat can use the full solution content
-    onProgress?.("Ingesting solution into RAG...", 15);
-    const ingestFormData = new FormData();
-    ingestFormData.append("file", solutionFile.file);
-    ingestFormData.append("dataset_id", activeDatasetId);
-    
-    const ingestRes = await fetch("/api/rag-ingest-zip", {
-      method: "POST",
-      body: ingestFormData,
-    });
-    
-    if (ingestRes.ok) {
-      const ingestData = await ingestRes.json();
-      const type = ingestData?.corpus_type || ingestData?.details?.corpus_type || null;
-      const reason = ingestData?.corpus_reason || ingestData?.details?.corpus_reason || null;
-      setCorpusType(type);
-      setCorpusReason(reason);
-      console.log("Solution ingested into ChromaDB:", ingestData);
-    } else {
-      console.warn("Failed to ingest solution into ChromaDB - continuing with doc generation");
+    if (!alreadyIngested) {
+      onProgress?.("Ingesting solution into RAG...", 15);
+      const ingestFormData = new FormData();
+      ingestFormData.append("file", solutionFile.file);
+      ingestFormData.append("dataset_id", activeDatasetId);
+
+      const ingestRes = await fetch("/api/rag-ingest-zip", {
+        method: "POST",
+        body: ingestFormData,
+      });
+
+      if (ingestRes.ok) {
+        const ingestData = await ingestRes.json();
+        const stored = ingestData?.details?.chunks_stored ?? ingestData?.chunks_stored ?? 0;
+
+        if (stored <= 0) {
+          throw new Error("Solution parsed but no chunks were indexed for chat.");
+        }
+
+        const type = ingestData?.corpus_type || ingestData?.details?.corpus_type || null;
+        const reason = ingestData?.corpus_reason || ingestData?.details?.corpus_reason || null;
+        setCorpusType(type);
+        setCorpusReason(reason);
+        setSolutionIngestSignature(currentSignature);
+        console.log("Solution ingested into ChromaDB:", ingestData);
+      } else if (ingestRes.status === 409) {
+        console.warn("Ingest already in progress for this dataset. Continuing.");
+      } else {
+        throw new Error("Failed to ingest solution into ChromaDB.");
+      }
     }
 
     // Step 2: Parse solution with PAC CLI (for doc generation metadata)
@@ -803,9 +1198,9 @@ export default function Page() {
     const parsePayload = await parseRes.json().catch(() => ({}));
     if (!parseRes.ok) {
       const parsed = parseApiError(parsePayload, "Failed to parse solution with PAC CLI");
-      const err = new Error(parsed.message);
-      (err as any).code = parsed.code;
-      (err as any).hint = parsed.hint;
+      const err = new Error(parsed.message) as AppError;
+      err.code = parsed.code;
+      err.hint = parsed.hint;
       throw err;
     }
 
@@ -868,6 +1263,7 @@ export default function Page() {
       body: JSON.stringify({
         solution: parsedSolution,
         doc_type: "markdown",
+        systemPrompt: (systemPrompt && systemPrompt.trim()) || undefined,
         provider: llmSelection.provider,
         model: modelForProvider,
         dataset_id: activeDatasetId,
@@ -879,9 +1275,9 @@ export default function Page() {
       const errorData = await genRes.json().catch(() => ({}));
       const parsed = parseApiError(errorData, "Failed to generate documentation");
       const message = mapProviderError(parsed.message, genRes.status);
-      const err = new Error(message);
-      (err as any).code = parsed.code;
-      (err as any).hint = parsed.hint;
+      const err = new Error(message) as AppError;
+      err.code = parsed.code;
+      err.hint = parsed.hint;
       throw err;
     }
 
@@ -922,6 +1318,19 @@ export default function Page() {
     };
     upsertOutput(output);
     setSelectedOutputId(output.id);
+
+    if (status === "authenticated" && session?.user) {
+      const savedConversationId = await persistConversationDocument({
+        filename: output.filename,
+        markdown: documentation,
+        htmlPreview: output.htmlPreview || "",
+        bytesBase64: output.bytesBase64 || "",
+        mime: output.mime,
+      });
+      if (savedConversationId !== conversationId) {
+        setConversationId(savedConversationId);
+      }
+    }
 
     if (chat.length > 0) {
       const successId = createMessageId();
@@ -1056,6 +1465,7 @@ export default function Page() {
           return;
         }
 
+
         const documentation = await generateDocumentationFromParsedSolution(
           parsedSolution,
           activeDatasetId,
@@ -1081,18 +1491,18 @@ export default function Page() {
 
       if (!res.ok) {
         const text = await res.text();
-        let parsedPayload: any = {};
+        let parsedPayload: unknown = {};
         try {
           parsedPayload = JSON.parse(text);
         } catch {
           parsedPayload = {};
         }
-        const parsed = parseApiError(parsedPayload, text || `HTTP ${res.status}`);
+        const parsed = parseApiError(parsedPayload as ApiErrorPayload, text || `HTTP ${res.status}`);
         throw new Error(mapProviderError(parsed.message, res.status));
       }
 
       const data = await res.json();
-      const outputsFromApi: any[] = Array.isArray(data?.outputs) ? data.outputs : [];
+      const outputsFromApi: ApiOutput[] = Array.isArray(data?.outputs) ? (data.outputs as ApiOutput[]) : [];
 
       if (!outputsFromApi.length) {
         throw new Error("Invalid generate response");
@@ -1114,11 +1524,11 @@ export default function Page() {
         };
         upsertOutput(output);
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       setGenerateError({
-        message: e?.message ?? "Failed to generate documentation",
-        code: e?.code,
-        hint: e?.hint,
+        message: e instanceof Error ? e.message : "Failed to generate documentation",
+        code: (e as AppError | undefined)?.code,
+        hint: (e as AppError | undefined)?.hint,
       });
       setGenerateProgress({ stage: "Failed", percent: 0, failed: true });
     } finally {
@@ -1217,7 +1627,7 @@ export default function Page() {
 
       if (!ragRes.ok) {
         const errText = await ragRes.text();
-        let parsed: any = {};
+        let parsed: { error?: string; detail?: string } = {};
         try {
           parsed = JSON.parse(errText);
         } catch {
@@ -1302,12 +1712,20 @@ export default function Page() {
             body: JSON.stringify({
               conversation_id: conversationId ?? undefined,
               dataset_id: activeDatasetId,
+              customer_name: customerName.trim() || undefined,
               messages: toSave,
             }),
           });
           if (res.ok) {
             const data = await res.json();
-            if (data.conversation_id) setConversationId(data.conversation_id);
+            if (data.conversation_id) {
+              setConversationId(data.conversation_id);
+            }
+            const listRes = await fetch("/api/conversations");
+            if (listRes.ok) {
+              const listData = await listRes.json();
+              setConversationList(listData.conversations || []);
+            }
           }
         } catch {
           // ignore save errors
@@ -1322,8 +1740,8 @@ export default function Page() {
         return;
       }
 
-    } catch (e: any) {
-      const msg = e?.message ?? "Unknown error";
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
 
       // replace last assistant message with the error
       setChat((c) =>
@@ -1338,9 +1756,11 @@ export default function Page() {
 
   async function loadConversation(id: string) {
     try {
+      const loadToken = ++activeConversationLoadRef.current;
       const res = await fetch(`/api/conversations/${id}`);
       if (!res.ok) return;
       const data = await res.json();
+      if (loadToken !== activeConversationLoadRef.current) return;
       const msgs = data.messages || [];
       setChat(
         msgs.map((m: { id: string; role: string; content: string }) => ({
@@ -1349,8 +1769,37 @@ export default function Page() {
           content: m.content,
         }))
       );
-      if (data.dataset_id) setDatasetId(data.dataset_id);
+      if (data.dataset_id && files.length === 0) setDatasetId(data.dataset_id);
+      setCustomerName(data.customer_name || "");
       setConversationId(data.id);
+      void restorePersistedOutput(data, id, loadToken);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function saveConversationName() {
+    if (!conversationId) return;
+    const trimmedCustomer = customerName.trim();
+    const dateLabel = new Date().toLocaleDateString("en-GB");
+    const nextTitle = trimmedCustomer ? `${trimmedCustomer} - ${dateLabel}` : `New chat - ${dateLabel}`;
+
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_name: trimmedCustomer || null,
+          title: nextTitle,
+        }),
+      });
+      if (!res.ok) return;
+
+      const listRes = await fetch("/api/conversations");
+      if (listRes.ok) {
+        const data = await listRes.json();
+        setConversationList(data.conversations || []);
+      }
     } catch {
       // ignore
     }
@@ -1362,9 +1811,7 @@ export default function Page() {
       if (!res.ok) return;
       setConversationList((prev) => prev.filter((c) => c.id !== id));
       if (conversationId === id) {
-        setChat([]);
-        setMessage("");
-        setConversationId(null);
+        startNewChat({ clearCustomerName: true });
       }
     } catch {
       // ignore
@@ -1391,6 +1838,7 @@ export default function Page() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <SettingsButton
+            isAuthenticated={status === "authenticated"}
             provider={provider}
             setProvider={setProvider}
             models={models}
@@ -1412,6 +1860,9 @@ export default function Page() {
             setEndpoint={setEndpoint}
             sharePointToken={sharePointToken}
             setSharePointToken={setSharePointToken}
+            systemPrompt={systemPrompt}
+            setSystemPrompt={setSystemPrompt}
+            systemPromptDefault={DEFAULT_SOLUTION_SYSTEM_PROMPT}
           />
           <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation Generator</h1>
         </div>
@@ -1448,7 +1899,7 @@ export default function Page() {
       {/* Responsive grid: 4 columns desktop, 2 columns medium, 1 column small */}
       <div className="app-grid">
         <section className="panel">
-        <FileUploader
+          <FileUploader
           files={files}
           onAdd={(fl) => addFiles(fl)}
           onRemove={removeFile}
@@ -1486,8 +1937,16 @@ export default function Page() {
           {status === "authenticated" && conversationList.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#555" }}>Past conversations</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto", paddingRight: 8 }}>
                 {conversationList.map((conv) => (
+                  (() => {
+                    const customerLabel = conv.customer_name || "Unassigned customer";
+                    const titleLabel = conv.title || new Date(conv.updated_at * 1000).toLocaleDateString();
+                    const customerTrimmed = (conv.customer_name || "").trim();
+                    const isTitlePrefixedByCustomer =
+                      !!customerTrimmed &&
+                      titleLabel.toLowerCase().startsWith(`${customerTrimmed.toLowerCase()} - `);
+                    return (
                     <div
                       key={conv.id}
                       style={{
@@ -1504,13 +1963,18 @@ export default function Page() {
                           padding: "6px 10px",
                           textAlign: "left",
                           fontSize: 12,
-                          border: conversationId === conv.id ? "1px solid #1f7aec" : "1px solid #ddd",
+                          border: conversationId === conv.id ? "1px solid #1f7aec" : "1px solid var(--border)",
                           borderRadius: 6,
-                          background: conversationId === conv.id ? "#e8f0fe" : "#fafafa",
+                          background: conversationId === conv.id ? "var(--input-bg)" : "var(--input-bg)",
                           cursor: "pointer",
                         }}
                       >
-                        {conv.title || "Chat"} · {new Date(conv.updated_at * 1000).toLocaleDateString()}
+                        {!isTitlePrefixedByCustomer && (
+                          <div style={{ fontWeight: 600, color: "var(--foreground)" }}>{customerLabel}</div>
+                        )}
+                        <div style={{ fontSize: 11, color: "var(--foreground)" }}>
+                          {titleLabel}
+                        </div>
                       </button>
                       <button
                         type="button"
@@ -1519,17 +1983,78 @@ export default function Page() {
                         style={{
                           padding: "4px 8px",
                           fontSize: 12,
-                          border: "1px solid #ccc",
+                          minWidth: 28,
+                          flexShrink: 0,
+                          border: "1px solid var(--border)",
                           borderRadius: 6,
-                          background: "#fff",
+                          background: "var(--input-bg)",
                           cursor: "pointer",
-                          color: "#666",
+                          color: "var(--foreground)",
                         }}
                       >
                         ×
                       </button>
                     </div>
-                  ))}
+                    );
+                  })()
+                ))}
+              </div>
+            </div>
+          )}
+
+          {status === "authenticated" && (
+            <div style={{ marginBottom: 12, display: "grid", gap: 6 }}>
+              <label htmlFor="customer-name" style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>
+                Customer name
+              </label>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  id="customer-name"
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="e.g. Acme Corp"
+                  style={{
+                    flex: 1,
+                    padding: "6px 8px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    fontSize: 12,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    startNewChat();
+                  }}
+                  style={{
+                    padding: "6px 10px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    background: "var(--input-bg)",
+                    color: "var(--foreground)",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  }}
+                >
+                  New chat
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void saveConversationName(); }}
+                  disabled={!conversationId}
+                  style={{
+                    padding: "6px 10px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    background: conversationId ? "var(--input-bg)" : "var(--input-bg)",
+                    cursor: conversationId ? "pointer" : "not-allowed",
+                    fontSize: 12,
+                    color: conversationId ? "var(--foreground)" : "var(--foreground)",
+                  }}
+                >
+                  Save name
+                </button>
               </div>
             </div>
           )}
@@ -1550,9 +2075,7 @@ export default function Page() {
                   // ignore
                 }
               }
-              setChat([]);
-              setMessage("");
-              setConversationId(null);
+              startNewChat({ clearCustomerName: true });
             }}
             expandedSources={expandedSources}
             onToggleSources={(id) => setExpandedSources((prev) => ({ ...prev, [id]: !prev[id] }))}
@@ -1649,10 +2172,11 @@ export default function Page() {
           <div className="panel-header">File Preview</div>
           <PreviewPanel
             out={getSelectedOutput()}
-            previewBlobUrl={previewBlobUrlRef.current}
+            isRefreshing={previewRefreshing}
             pdfRenderError={pdfRenderError}
             onDownload={(o) => downloadOutput(o)}
             onOpenPdf={() => { if (previewBlobUrlRef.current) window.open(previewBlobUrlRef.current, "_blank"); }}
+            onSaveQuickEdit={(outputId, markdown) => saveQuickEditOutput(outputId, markdown)}
           />
         </section>
       </div>

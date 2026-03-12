@@ -1,35 +1,27 @@
-# ESE1  
-# Power Platform Documentation Generator
+# ESE1 - Power Platform Documentation Generator
+
+You can find the steps to setting up and runing the app below, please make sure that you read over them carefully as everything listed below is required to run the app
 
 ---
 
-## 1. Objective
-
-Build an application that automatically generates high-quality technical documentation from Microsoft Power Platform solution files, powered by a Retrieval-Augmented Generation (RAG) pipeline for backend processing and NextJS as the user-facing interface.
-
-The solution simplifies documentation production for consultants, developers, and business users by analysing solution components and producing structured, import-ready outputs.
-
----
-
-## 2. Secrets Management (Azure Key Vault)
-
-This project does NOT store API keys or client secrets in the repository.
-
-All sensitive configuration is managed via Azure Key Vault and injected into Docker containers at runtime.
-
-### Prerequisites
+## 1. Prerequisites
 
 Before running locally, ensure you have:
 
 - Docker Desktop installed and running  
 - Azure CLI installed  
-- Access to the Azure Key Vault (docgenvault) with one of the following roles:
-  - Key Vault Secrets User (read access)
-  - Key Vault Administrator (manage access)
+- Access to an Azure Key Vault
+- The latest release .zip
 
 ---
 
-## Install Azure CLI
+## 2. Install Docker
+
+Head to [docker's webstie](https://www.docker.com/) where you should see the option to download docker desktop for your operating system, and then follow the install process
+
+---
+
+## 3. Install Azure CLI
 
 ### Windows
 
@@ -43,7 +35,7 @@ Verify installation:
 
     az --version
 
----
+
 
 ### macOS (Homebrew)
 
@@ -56,7 +48,7 @@ Verify installation:
 
     az --version
 
----
+
 
 ### Linux (Ubuntu / Debian)
 
@@ -70,73 +62,70 @@ Verify installation:
 
 ---
 
-## First-Time Setup
+## 4. Azure Key Vault Setup
 
-Login to Azure:
+Head to [Azure](https://portal.azure.com/#home) and make sure that you setup (or are apart of) a Key Vault with the following naming scheme:
+
+
+| Name | Value |
+| ------ | ------ |
+|    AI-API-KEY    |   *your OpenAI key*     |
+|    AZURE-AD-CLIENT-ID    |    *your client ID*    |
+| AZURE-AD-CLIENT-SECRET | *your client secret* |
+| AZURE-AD-TENANT-ID | *your tenant ID* |
+| AZURE-OPENAI-ENDPOINT | *your OpenAI endpoint* |
+| NEXTAUTH-SECRET | *your next auth secret* |
+
+Then login to Azure by opening your terminal and typing:
 
     az login
 
-If prompted, select the correct subscription.
+If prompted, select the correct subscription
 
 ---
 
-## Python Dependency Profiles
+## 5. Download latest release
 
-This repository uses split Python dependency sets:
-
-- `requirements.txt`: core runtime dependencies only (no heavyweight ML embedding stack).
-- `requirements-ml.txt`: optional ML/RAG extras (LlamaIndex, ChromaDB, FAISS, sentence-transformers).
-- `requirements-ci.txt`: minimal CI test dependencies.
-
-Install by use case:
-
-    pip install -r requirements.txt
-
-For full ML/RAG workflows:
-
-    pip install -r requirements.txt -r requirements-ml.txt
-
-For CI-only checks:
-
-    pip install -r requirements-ci.txt
-
-Note: existing Docker/dev backend setup uses `rag_backend/requirements.txt` and remains unchanged.
+Download the latest release of the app from [here](https://github.com/JoaoManuel2005/ese1/releases), simply click on the docker-images.zip folder which contatins all the artifacts and it will start downloading
 
 ---
 
-## Running the Full Application (Docker)
+## 6. Running the Full Application
 
-To fetch secrets from Azure Key Vault and start all services:
+Extract the docker-images.zip folder that you just downloaded into your desired directory, and make sure you have docker desktop running
 
-Windows:
 
-    .\scripts\up.ps1
 
-macOS / Linux:
+Open the docker-images folder in your terminal:
 
-    chmod +x scripts/up.sh
-    ./scripts/up.sh
+`C:\Users\...\docker-images>`
 
-This script will:
+To fetch secrets from Azure Key Vault and start all services use the following commands for your operating system:
 
-- Fetch required secrets from Azure Key Vault  
-- Generate a local .env.generated file (gitignored)  
-- Build and start all Docker containers  
+### Windows:
 
-Secrets are pulled from the Azure Key Vault named docgenvault. Make sure you have run `az login` first.  
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+    .\scripts\run-with-images.ps1
 
-If secrets are rotated in Azure, simply re-run the script.
+### macOS / Linux:
 
-Important:
+    chmod +x scripts/run-with-images.sh
+    ./scripts/run-with-images.sh
 
-- .env.generated is automatically created and must NEVER be committed.  
-- Secrets are centrally managed in Azure Key Vault.  
+
+After running the script you should see the containers up and running on docker desktop, you can expand docker-images to see:
+- rag-backend-dotnet
+- pac-cli
+- documentation-generator
+
+You should be able to see to see `port 3000:3000` or similar next to the documentation-generator container, you can simply click that to start the app in your browser
 
 ---
 
-## 3. Core Features & Requirements
+## 8. Using the app
 
-### Must Haves
+- When setting up the Azure Key Vault your api keys and endpoints should already be set for you, if not you can navigate to settings and input the details in there
+- Upload solution files by drag and drop or clicking 'Browse' in the input files section
 
 | Requirement | Description |
 |-------------|-------------|
@@ -149,54 +138,9 @@ Important:
 | Tech Stack Alignment | Backend uses C#, NodeJS, JavaScript, .NET |
 | User-Friendly Frontend | UI built with NextJS for non-technical users |
 
+- Generate documentation by clicking 'Parse & Generate Docs'
+
+- Sign in to use the chat history feature and to remember changes made to your system prompt
+
+- You can start/stop the app anytime by opening docker desktop and clicking the start/stop button under actions next to docker-images
 ---
-
-## 4. High-Level Architecture
-
-User (NextJS)  
-↓  
-API Layer (.NET / NodeJS)  
-↓  
-Solution File Parser (C#)  
-↓  
-RAG Pipeline (LLM + Vector DB)  
-↓  
-Documentation + ERD + Architecture Output  
-
----
-
-## 5. Target Users
-
-- Power Platform Developers  
-- Solution Architects  
-- Documentation Teams  
-- Business Analysts  
-- Non-technical stakeholders  
-
----
-
-## 6. Success Criteria
-
-- Generates technical documentation from solution files with minimal interaction  
-- Produces valid ERDs and architecture diagrams  
-- Output importable into target system  
-- Works with customer tech stack  
-- Usable without technical training  
-
----
-
-## Dataset Scoping & Reset Behaviour
-
-Each upload session uses a dataset_id.
-
-All ingestion and retrieval calls include the active dataset_id to prevent data leakage between sessions.
-
-Clearing files resets the dataset server-side via /rag/reset.
-
----
-
-## Debugging
-
-- Confirm active dataset ID in the UI  
-- Check /rag/status?dataset_id=<id> for document count  
-- If sources are incorrect, reset and re-ingest  

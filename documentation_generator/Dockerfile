@@ -86,8 +86,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Copy Playwright browsers from deps stage
 COPY --from=deps --chown=nextjs:nodejs /root/.cache/ms-playwright /home/nextjs/.cache/ms-playwright
 
-# Runtime settings storage
-RUN mkdir -p /app/runtime-data && chown -R nextjs:nodejs /app/runtime-data
+# Runtime settings storage and app data (SQLite DB, user settings)
+RUN mkdir -p /app/runtime-data /app/data && chown -R nextjs:nodejs /app/runtime-data /app/data
 
 USER nextjs
 

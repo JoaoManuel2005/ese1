@@ -16,7 +16,7 @@ export type OutputFile = {
   createdAt: number;
   bytesBase64: string;
   htmlPreview?: string;
-  markdownContent?: string; // Store original markdown for Mermaid rendering
+  markdownContent?: string;
 };
 
 export type ChatMessage = {

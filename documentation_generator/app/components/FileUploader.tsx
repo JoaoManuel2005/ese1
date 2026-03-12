@@ -149,7 +149,7 @@ export default function FileUploader({
                         onClick={() => onRemove(index)}
                         aria-label={`Remove ${file.name}`}
                         style={{
-                          border: "none",
+                          border: "1px solid var(--border)",
                           background: "var(--panel-bg)",
                           color: "var(--danger)",
                           borderRadius: 8,

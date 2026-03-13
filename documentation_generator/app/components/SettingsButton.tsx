@@ -1,7 +1,66 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import type { FC } from "react";
+import { PublicClientApplication } from "@azure/msal-browser";
+import { SHAREPOINT_CONNECT_REQUEST } from "../auth/authRequests";
+
+type SharePointMsalRuntimeConfig = {
+  clientId: string;
+  authority: string;
+  redirectUri: string;
+};
+
+let sharedSharePointMsalInstance: PublicClientApplication | null = null;
+let sharedSharePointMsalInitPromise: Promise<PublicClientApplication> | null = null;
+let sharedSharePointMsalConfigKey: string | null = null;
+let sharedSharePointPopupPromise: Promise<unknown> | null = null;
+
+function getSharePointMsalConfigKey(config: SharePointMsalRuntimeConfig): string {
+  return [config.clientId, config.authority, config.redirectUri].join("|");
+}
+
+async function getSharedSharePointMsalInstance(
+  config: SharePointMsalRuntimeConfig
+): Promise<PublicClientApplication> {
+  const configKey = getSharePointMsalConfigKey(config);
+  if (!sharedSharePointMsalInstance || sharedSharePointMsalConfigKey !== configKey) {
+    const nextInstance = new PublicClientApplication({
+      auth: {
+        clientId: config.clientId,
+        authority: config.authority,
+        redirectUri: config.redirectUri,
+      },
+      cache: {
+        cacheLocation: "sessionStorage",
+        storeAuthStateInCookie: false,
+      },
+    } as any);
+
+    sharedSharePointMsalInstance = nextInstance;
+    sharedSharePointMsalConfigKey = configKey;
+    sharedSharePointMsalInitPromise = nextInstance.initialize()
+      .then(() => nextInstance)
+      .catch((error) => {
+        if (sharedSharePointMsalConfigKey === configKey) {
+          sharedSharePointMsalInstance = null;
+          sharedSharePointMsalInitPromise = null;
+          sharedSharePointMsalConfigKey = null;
+        }
+        throw error;
+      });
+  }
+
+  if (!sharedSharePointMsalInitPromise || !sharedSharePointMsalInstance) {
+    throw new Error("SharePoint authentication is not initialized.");
+  }
+
+  return sharedSharePointMsalInitPromise;
+}
+
+function isSharePointMsalInteractionInProgress(): boolean {
+  return sharedSharePointPopupPromise !== null;
+}
 
 type Props = {
   isAuthenticated: boolean;
@@ -24,6 +83,8 @@ type Props = {
   setApiKey: (k: string) => void;
   endpoint: string;
   setEndpoint: (e: string) => void;
+  sharePointToken: string | null;
+  setSharePointToken: (token: string | null) => void;
   systemPrompt: string;
   setSystemPrompt: (v: string) => void;
   systemPromptDefault: string;
@@ -50,6 +111,8 @@ const SettingsButton: FC<Props> = ({
   setApiKey,
   endpoint,
   setEndpoint,
+  sharePointToken,
+  setSharePointToken,
   systemPrompt,
   setSystemPrompt,
   systemPromptDefault,
@@ -70,6 +133,15 @@ const SettingsButton: FC<Props> = ({
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
   const [maskedApiKey, setMaskedApiKey] = useState<string | null>(null);
+  const [connectingSharePoint, setConnectingSharePoint] = useState(false);
+  const [sharePointError, setSharePointError] = useState<string | null>(null);
+  const [sharePointUserEmail, setSharePointUserEmail] = useState<string | null>(null);
+  const [sharePointAuthClientId, setSharePointAuthClientId] = useState<string | null>(null);
+  const [sharePointAuthAuthority, setSharePointAuthAuthority] = useState("https://login.microsoftonline.com/organizations");
+  const [sharePointMsalInteractionInProgress, setSharePointMsalInteractionInProgress] = useState(
+    isSharePointMsalInteractionInProgress()
+  );
+  const sharePointPopupInFlightRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -115,6 +187,16 @@ const SettingsButton: FC<Props> = ({
         setApiKey("");
         setApiKeyConfigured(!!data?.openaiApiKeyConfigured);
         setMaskedApiKey(typeof data?.openaiApiKeyMasked === "string" ? data.openaiApiKeyMasked : null);
+        setSharePointAuthClientId(
+          typeof data?.azureAdClientId === "string" && data.azureAdClientId.trim()
+            ? data.azureAdClientId
+            : null
+        );
+        setSharePointAuthAuthority(
+          typeof data?.azureAdAuthority === "string" && data.azureAdAuthority.trim()
+            ? data.azureAdAuthority
+            : "https://login.microsoftonline.com/organizations"
+        );
         if (typeof data?.systemPrompt === "string" && data.systemPrompt.trim().length > 0) {
           setSystemPrompt(data.systemPrompt);
         } else if (!isAuthenticated && typeof window !== "undefined") {
@@ -139,7 +221,7 @@ const SettingsButton: FC<Props> = ({
     return () => {
       cancelled = true;
     };
-  }, [open, setApiKey, setEndpoint, setProvider, setSelectedModel, setSystemPrompt]);
+  }, [isAuthenticated, open, setApiKey, setEndpoint, setProvider, setSelectedModel, setSystemPrompt]);
 
   async function saveSettings(systemPromptOverride?: string) {
     setSaveState("saving");
@@ -204,6 +286,129 @@ const SettingsButton: FC<Props> = ({
   const inputBg = "var(--panel-bg)";
   const backdrop = theme === "dark" ? "rgba(0,0,0,0.6)" : "rgba(0,0,0,0.25)";
   const smallText = "var(--muted)";
+  const sharePointConnected = Boolean(sharePointToken);
+
+  function clearSharePointMsalState(clientId?: string | null) {
+    if (typeof window === "undefined") return;
+
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < window.sessionStorage.length; i += 1) {
+        const key = window.sessionStorage.key(i);
+        if (!key || !key.startsWith("msal.")) continue;
+        if (!clientId || key.includes(clientId) || key.includes("interaction.status")) {
+          keysToRemove.push(key);
+        }
+      }
+
+      for (const key of keysToRemove) {
+        window.sessionStorage.removeItem(key);
+      }
+    } catch {}
+  }
+
+  async function handleConnectSharePointAccount() {
+    if (
+      connectingSharePoint ||
+      sharePointPopupInFlightRef.current ||
+      isSharePointMsalInteractionInProgress()
+    ) {
+      setSharePointMsalInteractionInProgress(isSharePointMsalInteractionInProgress());
+      if (isSharePointMsalInteractionInProgress()) {
+        setSharePointError("A sign-in window is already open. Close it and try again.");
+      }
+      return;
+    }
+
+    sharePointPopupInFlightRef.current = true;
+    setConnectingSharePoint(true);
+    setSharePointError(null);
+
+    let popupTimeoutId: number | null = null;
+
+    try {
+      if (!sharePointAuthClientId) {
+        throw new Error(
+          loadingSettings
+            ? "Authentication settings are still loading. Please try again."
+            : "Azure AD client ID is not configured for SharePoint sign-in."
+        );
+      }
+
+      clearSharePointMsalState(sharePointAuthClientId);
+
+      const sharePointPopupRedirectUri = `${window.location.origin}/auth/popup-close.html`;
+      const msalInstance = await getSharedSharePointMsalInstance({
+        clientId: sharePointAuthClientId,
+        authority: sharePointAuthAuthority,
+        redirectUri: typeof window !== "undefined" ? window.location.origin : "",
+      });
+
+      const loginRequest = {
+        ...SHAREPOINT_CONNECT_REQUEST,
+        scopes: [...SHAREPOINT_CONNECT_REQUEST.scopes],
+        // Keep the popup on a static page so the Next app doesn't boot inside it.
+        redirectUri: sharePointPopupRedirectUri,
+      };
+
+      const popupTimeoutMs = 120000;
+      const popupPromise = msalInstance.loginPopup(loginRequest);
+      sharedSharePointPopupPromise = popupPromise;
+      setSharePointMsalInteractionInProgress(true);
+      void popupPromise
+        .finally(() => {
+          if (sharedSharePointPopupPromise === popupPromise) {
+            sharedSharePointPopupPromise = null;
+          }
+          setSharePointMsalInteractionInProgress(false);
+        })
+        .catch(() => {});
+
+      const response = await Promise.race([
+        popupPromise,
+        new Promise<never>((_, reject) => {
+          popupTimeoutId = window.setTimeout(() => {
+            reject({
+              errorCode: "monitor_window_timeout",
+              message: "Sign-in timed out. Close the popup and try again.",
+            });
+          }, popupTimeoutMs);
+        }),
+      ]);
+
+      if (response.accessToken) {
+        setSharePointToken(response.accessToken);
+        const email = response.account?.username || response.account?.name || "Connected";
+        setSharePointUserEmail(email);
+        try {
+          sessionStorage.setItem("sharepoint_access_token", response.accessToken);
+          sessionStorage.setItem("sharepoint_user_email", email);
+        } catch {}
+      } else {
+        throw new Error("No access token received");
+      }
+    } catch (err: any) {
+      console.error("SharePoint auth error:", err);
+
+      if (err.errorCode === "user_cancelled") {
+        setSharePointError("Login cancelled");
+      } else if (err.errorCode === "popup_window_error") {
+        setSharePointError("Popup blocked. Please allow popups for this site.");
+      } else if (err.errorCode === "monitor_window_timeout") {
+        setSharePointError("Sign-in timed out. Close the popup and try again.");
+      } else if (err.errorCode === "interaction_in_progress") {
+        setSharePointError("A sign-in window is already open. Close it and try again.");
+      } else {
+        setSharePointError(err.message || "Authentication failed");
+      }
+    } finally {
+      if (popupTimeoutId) {
+        window.clearTimeout(popupTimeoutId);
+      }
+      sharePointPopupInFlightRef.current = false;
+      setConnectingSharePoint(false);
+    }
+  }
 
   return (
     <>
@@ -467,6 +672,59 @@ const SettingsButton: FC<Props> = ({
                   </div>
                 </div>
               )}
+
+              {/* SharePoint Authentication Section */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
+                <div style={{ fontWeight: 600, color: "#0078d4" }}>SharePoint Integration</div>
+                <div style={{ fontSize: 12, color: smallText }}>
+                  Connect your Microsoft account to automatically fetch SharePoint metadata (lists, libraries, columns) when parsing Power Platform solutions.
+                </div>
+                {isAuthenticated && !sharePointConnected && (
+                  <div style={{ fontSize: 12, color: smallText, background: theme === "dark" ? "#1a1a1a" : "#f8f9fa", padding: 8, borderRadius: 6 }}>
+                    App sign-in is active. SharePoint access stays disconnected until you connect it here.
+                  </div>
+                )}
+
+                {sharePointConnected ? (
+                  <div style={{ background: theme === "dark" ? "#1a2e1a" : "#e8f5e9", border: `1px solid ${theme === "dark" ? "#2d5" : "#4caf50"}`, borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontSize: 13, color: theme === "dark" ? "#8ce99a" : "#2e7d32", fontWeight: 600, marginBottom: 4 }}>✓ SharePoint connected</div>
+                    {sharePointUserEmail && (
+                      <div style={{ fontSize: 12, color: smallText }}>Account: {sharePointUserEmail}</div>
+                    )}
+                    <button
+                      onClick={() => {
+                        setSharePointToken(null);
+                        setSharePointUserEmail(null);
+                        setSharePointError(null);
+                        try {
+                          sessionStorage.removeItem("sharepoint_access_token");
+                          sessionStorage.removeItem("sharepoint_user_email");
+                        } catch {}
+                      }}
+                      style={{ marginTop: 8, padding: "6px 12px", border: `1px solid ${borderColor}`, background: inputBg, color: textColor, borderRadius: 6, cursor: "pointer", fontSize: 12 }}
+                    >
+                      Disconnect SharePoint
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <button
+                      onClick={() => void handleConnectSharePointAccount()}
+                      disabled={connectingSharePoint || sharePointMsalInteractionInProgress}
+                      style={{ padding: "8px 16px", border: `1px solid #0078d4`, background: connectingSharePoint || sharePointMsalInteractionInProgress ? "#999" : "#0078d4", color: "#fff", borderRadius: 8, cursor: connectingSharePoint || sharePointMsalInteractionInProgress ? "not-allowed" : "pointer", fontWeight: 600, fontSize: 13 }}
+                    >
+                      {connectingSharePoint ? "Connecting SharePoint..." : "Connect SharePoint Account"}
+                    </button>
+                    {sharePointError && (
+                      <div style={{ marginTop: 8, fontSize: 12, color: "#d32f2f" }}>SharePoint connection error: {sharePointError}</div>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ fontSize: 11, color: smallText, background: theme === "dark" ? "#1a1a1a" : "#f8f9fa", padding: 8, borderRadius: 6 }}>
+                  <strong>Privacy:</strong> Token stored in browser session only. Cleared when tab closes. Used only for SharePoint metadata access.
+                </div>
+              </div>
             </div>
 
           </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { signIn, signOut, useSession } from 'next-auth/react';
+import { BASE_LOGIN_AUTHORIZATION_PARAMS } from "../auth/authRequests";
 
 export default function SignInButton() {
   const { data: session, status } = useSession();
@@ -39,7 +40,7 @@ export default function SignInButton() {
           />
         )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <span style={{ fontSize: '12px' }}>Signed in as</span>
+          <span style={{ fontSize: '12px' }}>App signed in as</span>
           <span style={{ fontSize: '14px', fontWeight: 500 }}>
             {session.user.email || session.user.name}
           </span>
@@ -72,7 +73,7 @@ export default function SignInButton() {
 
   return (
     <button
-      onClick={() => signIn()}
+      onClick={() => signIn("azure-ad", undefined, BASE_LOGIN_AUTHORIZATION_PARAMS)}
       style={{
         padding: '8px 16px',
         borderRadius: '8px',

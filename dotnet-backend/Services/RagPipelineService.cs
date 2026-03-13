@@ -1447,6 +1447,7 @@ public class RagPipelineService
             })
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var hasSharePointRefsWithoutMetadata = sharePointUrls.Count > 0 && (solution.SharePointMetadata == null || solution.SharePointMetadata.Count == 0);
 
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"# {solution.SolutionName} - Solution Documentation");
@@ -1501,6 +1502,79 @@ public class RagPipelineService
             dependencies.ForEach(d => sb.AppendLine($"- {d}"));
         sb.AppendLine();
 
+        // SharePoint Metadata (if available from Microsoft Graph)
+        if (solution.SharePointMetadata != null && solution.SharePointMetadata.Count > 0)
+        {
+            sb.AppendLine("## SharePoint Integration Details");
+            sb.AppendLine("The following SharePoint sites and data structures were automatically detected:");
+            sb.AppendLine();
+
+            foreach (var site in solution.SharePointMetadata)
+            {
+                if (!string.IsNullOrEmpty(site.ErrorMessage))
+                {
+                    sb.AppendLine($"### ⚠️ {site.SiteUrl}");
+                    sb.AppendLine($"**Error:** {site.ErrorMessage}");
+                    sb.AppendLine();
+                    continue;
+                }
+
+                sb.AppendLine($"### {site.SiteName}");
+                sb.AppendLine($"**Site URL:** {site.SiteUrl}");
+                sb.AppendLine();
+
+                if (site.Lists.Count > 0)
+                {
+                    sb.AppendLine("#### SharePoint Lists");
+                    foreach (var list in site.Lists)
+                    {
+                        sb.AppendLine($"- **{list.DisplayName ?? list.Name}**");
+                        if (!string.IsNullOrEmpty(list.Description))
+                            sb.AppendLine($"  - Description: {list.Description}");
+                        sb.AppendLine($"  - URL: {list.WebUrl}");
+                        
+                        if (list.Columns.Count > 0)
+                        {
+                            sb.AppendLine("  - Columns:");
+                            foreach (var col in list.Columns)
+                            {
+                                var required = col.Required ? " (Required)" : "";
+                                sb.AppendLine($"    - `{col.DisplayName ?? col.Name}` ({col.Type}){required}");
+                            }
+                        }
+                        sb.AppendLine();
+                    }
+                }
+
+                if (site.Libraries.Count > 0)
+                {
+                    sb.AppendLine("#### Document Libraries");
+                    foreach (var lib in site.Libraries)
+                    {
+                        sb.AppendLine($"- **{lib.DisplayName ?? lib.Name}**");
+                        if (!string.IsNullOrEmpty(lib.Description))
+                            sb.AppendLine($"  - Description: {lib.Description}");
+                        sb.AppendLine($"  - URL: {lib.WebUrl}");
+                        sb.AppendLine();
+                    }
+                }
+
+                sb.AppendLine("---");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("*This data was automatically fetched from SharePoint using Microsoft Graph API*");
+            sb.AppendLine();
+        }
+        else if (hasSharePointRefsWithoutMetadata)
+        {
+            sb.AppendLine("## SharePoint Integration Details");
+            sb.AppendLine("SharePoint references were detected in the solution export.");
+            sb.AppendLine("Additional SharePoint metadata was not available during documentation generation.");
+            sb.AppendLine("Use the SharePoint URLs and references listed above as the available evidence.");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## Deployment Guide");
         sb.AppendLine("1. Import the solution ZIP into the target Power Platform environment.");
         sb.AppendLine("2. Configure environment variables from exported definitions.");
@@ -1530,8 +1604,38 @@ public class RagPipelineService
         var byType = solution.Components
             .GroupBy(c => c.Type)
             .ToDictionary(g => g.Key, g => g.ToList());
+        var sharePointUrls = solution.Components
+            .Where(c => c.Type.Equals("knowledge_source_item", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(c =>
+            {
+                var urls = new List<string>();
+                if (c.Metadata == null) return urls;
+                if (c.Metadata.TryGetValue("web_url", out var web) && web is string wu && !string.IsNullOrWhiteSpace(wu)) urls.Add(wu);
+                if (c.Metadata.TryGetValue("site_url", out var site) && site is string su && !string.IsNullOrWhiteSpace(su)) urls.Add(su);
+                return urls;
+            })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var hasSharePointMetadata = solution.SharePointMetadata != null && solution.SharePointMetadata.Count > 0;
 
         var sb = new System.Text.StringBuilder();
+        if (sharePointUrls.Count > 0)
+        {
+            sb.AppendLine("## SHAREPOINT EVIDENCE");
+            sb.AppendLine($"- SharePoint references detected in solution export: {string.Join(", ", sharePointUrls)}");
+            if (hasSharePointMetadata)
+            {
+                sb.AppendLine("- Additional SharePoint metadata is available and may be used when present.");
+            }
+            else
+            {
+                sb.AppendLine("- Additional SharePoint metadata was not available during this run.");
+                sb.AppendLine("- Treat SharePoint URLs and explicit component references as valid export evidence.");
+                sb.AppendLine("- Do not describe missing SharePoint list/library/column details as 'Not found in solution export' unless the export itself lacks the reference.");
+            }
+            sb.AppendLine();
+        }
+
         foreach (var (type, comps) in byType)
         {
             sb.AppendLine($"\n## {type.ToUpper()}S ({comps.Count})");
@@ -1608,9 +1712,10 @@ public class RagPipelineService
         sb.AppendLine("2. List every component under its exact type with proper prefix.");
         sb.AppendLine("3. Apply naming convention prefixes to component names in ALL diagrams and text.");
         sb.AppendLine("4. Prefer concrete values from metadata (URLs, IDs, table names, connectors) when available.");
-        sb.AppendLine("5. If a detail is unavailable, write: 'Not found in solution export'.");
+        sb.AppendLine("5. If a detail is genuinely absent from the solution export, write: 'Not found in solution export'.");
         sb.AppendLine("6. Do not invent new systems, APIs, or architecture layers not present in the component data.");
         sb.AppendLine("7. For Dataverse/SharePoint, surface every explicit reference found in components and metadata.");
+        sb.AppendLine("8. If SharePoint references are present but additional SharePoint metadata is unavailable, omit those extra details or write: 'Additional SharePoint metadata was not available'.");
         sb.AppendLine();
         
         sb.AppendLine("DOCUMENT STRUCTURE (follow this exact structure):");
@@ -1852,7 +1957,7 @@ public class RagPipelineService
                   + "3. ER Diagrams MUST follow Schema.md format: organize entities into sections (CORE ENTITY, CHILD ENTITY, LOOKUP, BRIDGE, USER/OWNER MODEL), include all relationships at the end. "
                   + "4. Place diagrams in their designated sections (Architecture in Solution Architecture, Component Map in Component Catalog, etc.). "
                   + "5. Every component provided must appear in the output under the correct type with proper prefix. "
-                  + "6. For component metadata: When trigger/connector metadata is available, use it. When not available for flows, infer reasonable values from flow names and descriptions. For other missing details, write 'Not found in solution export'. "
+                  + "6. For component metadata: When trigger/connector metadata is available, use it. When not available for flows, infer reasonable values from flow names and descriptions. Use 'Not found in solution export' only when the solution export itself lacks the detail. If SharePoint references exist but richer SharePoint metadata is unavailable, omit that extra detail or state 'Additional SharePoint metadata was not available'. "
                   + "7. Never omit component types, and preserve exact component names with appropriate prefixes. "
                   + "8. Mermaid diagrams are mandatory and must match the provided formats exactly with valid syntax.";
 

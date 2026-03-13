@@ -27,6 +27,7 @@ builder.Services.AddSingleton<ConversationMemoryService>();
 builder.Services.AddSingleton<PacParserService>();
 builder.Services.AddSingleton<OnnxEmbeddingService>();
 builder.Services.AddSingleton<RagPipelineService>();
+builder.Services.AddSingleton<SharePointService>();
 
 // CORS — mirror Python CORSMiddleware settings
 builder.Services.AddCors(options =>

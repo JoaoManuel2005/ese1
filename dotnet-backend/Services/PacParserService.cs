@@ -109,14 +109,20 @@ public class PacParserService
     // ── Public API ──────────────────────────────────────────────────────────────
     public ParsedSolution ParseSolution(string zipPath, string tempDir)
     {
+        ParsedSolution solution;
         if (PacAvailable && _pacPath == "docker-container")
         {
             _logger.LogInformation("[PAC] Using PAC CLI Docker container to parse solution");
-            return ParseViaPacDocker(zipPath, tempDir);
+            solution = ParseViaPacDocker(zipPath, tempDir);
+        }
+        else
+        {
+            _logger.LogWarning("[PAC] PAC CLI not available, falling back to direct ZIP parsing");
+            solution = ParseDirectly(zipPath);
         }
 
-        _logger.LogWarning("[PAC] PAC CLI not available, falling back to direct ZIP parsing");
-        return ParseDirectly(zipPath);
+        PopulateSharepointRefs(solution);
+        return solution;
     }
 
     public (string Type, string Reason) ClassifyUpload(string zipPath)
@@ -137,8 +143,12 @@ public class PacParserService
     }
 
     // Test helper: parse an already extracted solution directory without PAC/docker path.
-    public ParsedSolution ParseExtractedDirectoryForTests(string extractedDir) =>
-        ParseExtractedDirectory(extractedDir);
+    public ParsedSolution ParseExtractedDirectoryForTests(string extractedDir)
+    {
+        var solution = ParseExtractedDirectory(extractedDir);
+        PopulateSharepointRefs(solution);
+        return solution;
+    }
 
     // ── PAC CLI via Docker ──────────────────────────────────────────────────────
     private ParsedSolution ParseViaPacDocker(string zipPath, string tempDir)
@@ -1814,6 +1824,177 @@ print(json.dumps(result))
         "380" => "Bot",
         _     => $"Component_{typeCode}"
     };
+
+    private static void PopulateSharepointRefs(ParsedSolution solution)
+    {
+        if (solution == null)
+            return;
+
+        var refs = new List<SharePointRef>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var component in solution.Components)
+        {
+            if (component.Metadata == null || component.Metadata.Count == 0)
+                continue;
+            if (component.Type.Equals("data_source", StringComparison.OrdinalIgnoreCase))
+                continue; // Summary component; skip to avoid duplicate references.
+
+            var source = $"{component.Type}:{component.Name}";
+            var metadataKind = NormalizeSharePointKind(GetMetadataString(component.Metadata, "type"));
+
+            foreach (var url in ExtractSharePointUrls(component.Metadata))
+            {
+                var normalizedUrl = url.Trim();
+                if (normalizedUrl.Length == 0)
+                    continue;
+
+                var kind = metadataKind != "unknown"
+                    ? metadataKind
+                    : InferSharePointKindFromUrl(normalizedUrl);
+
+                var key = $"{normalizedUrl}|{kind}|{source}";
+                if (!seen.Add(key))
+                    continue;
+
+                refs.Add(new SharePointRef
+                {
+                    Url = normalizedUrl,
+                    Kind = kind,
+                    Source = source
+                });
+            }
+        }
+
+        solution.SharepointRefs = refs;
+    }
+
+    private static IEnumerable<string> ExtractSharePointUrls(Dictionary<string, object> metadata)
+    {
+        var singleKeys = new[] { "web_url", "site_url" };
+        foreach (var key in singleKeys)
+        {
+            var candidate = GetMetadataString(metadata, key);
+            if (IsSharePointUrl(candidate))
+                yield return candidate!;
+        }
+
+        if (metadata.TryGetValue("sharepoint_urls", out var sharePointUrls))
+        {
+            foreach (var value in ExtractStringValues(sharePointUrls))
+            {
+                if (IsSharePointUrl(value))
+                    yield return value;
+            }
+        }
+    }
+
+    private static string? GetMetadataString(Dictionary<string, object> metadata, string key)
+    {
+        if (!metadata.TryGetValue(key, out var value) || value == null)
+            return null;
+
+        return value switch
+        {
+            string s => s,
+            JsonElement je when je.ValueKind == JsonValueKind.String => je.GetString(),
+            JsonElement je when je.ValueKind == JsonValueKind.Number => je.GetRawText(),
+            JsonElement je when je.ValueKind == JsonValueKind.True => "true",
+            JsonElement je when je.ValueKind == JsonValueKind.False => "false",
+            _ => value.ToString()
+        };
+    }
+
+    private static IEnumerable<string> ExtractStringValues(object value)
+    {
+        switch (value)
+        {
+            case string s when !string.IsNullOrWhiteSpace(s):
+                var trimmed = s.Trim();
+                if (trimmed.StartsWith("[", StringComparison.Ordinal))
+                {
+                    foreach (var parsed in TryExtractJsonArrayStrings(trimmed))
+                        yield return parsed;
+                    yield break;
+                }
+                yield return trimmed;
+                yield break;
+            case IEnumerable<string> strings:
+                foreach (var s in strings.Where(s => !string.IsNullOrWhiteSpace(s)))
+                    yield return s;
+                yield break;
+            case JsonElement je when je.ValueKind == JsonValueKind.Array:
+                foreach (var item in je.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.String)
+                    {
+                        var valueText = item.GetString();
+                        if (!string.IsNullOrWhiteSpace(valueText))
+                            yield return valueText;
+                    }
+                }
+                yield break;
+        }
+    }
+
+    private static IReadOnlyList<string> TryExtractJsonArrayStrings(string jsonArrayText)
+    {
+        var values = new List<string>();
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonArrayText);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return values;
+
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                    continue;
+                var value = item.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                    values.Add(value);
+            }
+        }
+        catch
+        {
+            // Keep parser resilient; ignore malformed metadata payloads.
+        }
+
+        return values;
+    }
+
+    private static bool IsSharePointUrl(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Contains("sharepoint.com", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeSharePointKind(string? rawKind)
+    {
+        if (string.IsNullOrWhiteSpace(rawKind))
+            return "unknown";
+
+        var normalized = rawKind.Trim().ToLowerInvariant();
+        if (normalized.Contains("list"))
+            return "list";
+        if (normalized.Contains("library") || normalized.Contains("drive"))
+            return "library";
+        if (normalized.Contains("site") || normalized.Contains("web"))
+            return "site";
+        return "unknown";
+    }
+
+    private static string InferSharePointKindFromUrl(string url)
+    {
+        var lower = url.ToLowerInvariant();
+        if (lower.Contains("/lists/"))
+            return "list";
+        if (lower.Contains("/shared%20documents")
+            || lower.Contains("/shared documents")
+            || lower.Contains("/forms/"))
+            return "library";
+        if (lower.Contains("/sites/") || lower.Contains("/teams/"))
+            return "site";
+        return "unknown";
+    }
 
     private void ParseCustomizationsXml(string dir, ParsedSolution solution)
     {

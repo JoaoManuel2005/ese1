@@ -4,6 +4,13 @@ import { authOptions } from "../auth/[...nextauth]/route";
 import { getRuntimeConfig, maskApiKey, setRuntimeConfig } from "../../../lib/runtimeConfig";
 import { getUserSystemPrompt, upsertUserSystemPrompt } from "../../../lib/userSettings";
 
+function getAzureAdAuthority(): string {
+  const tenantId = process.env.AZURE_AD_TENANT_ID?.trim();
+  return tenantId
+    ? `https://login.microsoftonline.com/${tenantId}`
+    : "https://login.microsoftonline.com/organizations";
+}
+
 function buildPublicConfig(
   config: Awaited<ReturnType<typeof getRuntimeConfig>>,
   systemPrompt: string | null = null
@@ -14,6 +21,8 @@ function buildPublicConfig(
     azureOpenAiEndpoint: config.azureOpenAiEndpoint ?? null,
     openaiApiKeyConfigured: !!config.openaiApiKey,
     openaiApiKeyMasked: maskApiKey(config.openaiApiKey),
+    azureAdClientId: process.env.AZURE_AD_CLIENT_ID?.trim() || null,
+    azureAdAuthority: getAzureAdAuthority(),
     systemPrompt,
   };
 }

@@ -13,6 +13,16 @@ import OutputsList from "./components/OutputsList";
 import PreviewPanel from "./components/PreviewPanel";
 import SignInButton from "./components/SignInButton";
 import { useSession, getSession } from "next-auth/react";
+import {
+  buildSolutionForGeneration,
+  fetchSharePointEnrichmentWithUserToken,
+  hasDetectedSharePointReferences,
+  type ParsedSolutionResult,
+  type SharePointEnrichmentStatus,
+  type SharePointMetadata,
+  shouldAttemptSharePointUserEnrichment,
+  splitParsedSolutionData,
+} from "./utils/solutionSharePoint";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -50,6 +60,26 @@ type GenerateError = {
   message: string;
   code?: string;
   hint?: string;
+};
+
+type ParseSolutionApiResponse = {
+  ok: true;
+  data: ParsedSolutionResult;
+  authenticationRequired: boolean;
+  sharePointUrls: string[];
+  sharePointEnrichmentStatus: SharePointEnrichmentStatus;
+  message?: string;
+  sharePointEnrichmentEnabled: boolean;
+};
+
+type BaseSolutionParseResult = {
+  parsedSolution: ParsedSolutionResult;
+  sharePointDetected: boolean;
+  sharePointUrls: string[];
+  sharePointEnrichmentStatus: SharePointEnrichmentStatus;
+  sharePointMetadata: SharePointMetadata[] | null;
+  activeDatasetId: string;
+  sharePointEnrichmentEnabled: boolean;
 };
 
 type ApiErrorPayload = {
@@ -108,8 +138,12 @@ export default function Page() {
   const [modelsError, setModelsError] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [endpoint, setEndpoint] = useState("");
+  const [sharePointToken, setSharePointToken] = useState<string | null>(null);
+  const [parsedSolution, setParsedSolution] = useState<ParsedSolutionResult | null>(null);
+  const [sharePointUrls, setSharePointUrls] = useState<string[]>([]);
+  const [sharePointEnrichmentStatus, setSharePointEnrichmentStatus] = useState<SharePointEnrichmentStatus>("not_needed");
+  const [sharePointMetadata, setSharePointMetadata] = useState<SharePointMetadata[] | null>(null);
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SOLUTION_SYSTEM_PROMPT);
-
   const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number; provider?: string; model?: string; backend_online?: boolean } | null>(null);
   const [corpusType, setCorpusType] = useState<"solution_zip" | "docs" | "unknown" | null>(null);
   const [corpusReason, setCorpusReason] = useState<string | null>(null);
@@ -134,6 +168,15 @@ export default function Page() {
   const hasAttemptedInitialRestoreRef = useRef(false);
   const activeConversationLoadRef = useRef(0);
   const { data: session, status } = useSession();
+
+  // Load SharePoint token from sessionStorage on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const token = sessionStorage.getItem("sharepoint_access_token");
+      if (token) setSharePointToken(token);
+    } catch {}
+  }, []);
 
   function mapProviderError(msg: string, status?: number) {
     const lower = msg.toLowerCase();
@@ -202,6 +245,30 @@ export default function Page() {
   function buildRenderTitle(filename: string) {
     const base = filename.replace(/\.pdf$/i, "").replace(/[_-]+/g, " ").trim();
     return base || "Documentation";
+  }
+
+  function resetParsedSolutionState() {
+    setParsedSolution(null);
+    setSharePointUrls([]);
+    setSharePointEnrichmentStatus("not_needed");
+    setSharePointMetadata(null);
+  }
+
+  async function enrichExistingParsedSolutionWithSharePoint(accessToken: string) {
+    if (!parsedSolution || sharePointUrls.length === 0) {
+      return { status: sharePointEnrichmentStatus, metadata: sharePointMetadata };
+    }
+
+    const enrichment = await fetchSharePointEnrichmentWithUserToken({
+      accessToken,
+      sharePointUrls,
+      fallbackMetadata: sharePointMetadata,
+    });
+
+    setSharePointMetadata(enrichment.metadata);
+    setSharePointEnrichmentStatus(enrichment.status);
+
+    return enrichment;
   }
 
   async function renderOutputFromMarkdown({
@@ -587,7 +654,7 @@ export default function Page() {
         const msgs = convData.messages || [];
 
         if (cancelled) return;
-        
+
         setChat(
           msgs.map((m: { id: string; role: string; content: string }) => ({
             id: m.id,
@@ -776,7 +843,7 @@ export default function Page() {
           }
           return;
         }
-        
+
         const stored = data?.details?.chunks_stored ?? data?.chunks_stored ?? 0;
         if (stored <= 0) {
           if (!cancelled) {
@@ -785,7 +852,7 @@ export default function Page() {
           }
           return;
         }
-        
+
         if (!cancelled) {
           setSolutionIngestSignature(signature);
           setCorpusType(data?.corpus_type || "solution_zip");
@@ -970,6 +1037,7 @@ export default function Page() {
         setDatasetId(createDatasetId());
         setDocsIngestSignature(null);
         setSolutionIngestSignature(null);
+        resetParsedSolutionState();
         void resetDataset(oldId);
         return next;
       }
@@ -978,6 +1046,7 @@ export default function Page() {
         setDatasetId(createDatasetId());
         setDocsIngestSignature(null);
         setSolutionIngestSignature(null);
+        resetParsedSolutionState();
         void resetDataset(oldId);
         return next;
       }
@@ -1013,6 +1082,7 @@ export default function Page() {
     setDocsIngestSignature(null);
     setSolutionIngestSignature(null);
     setDatasetId(createDatasetId());
+    resetParsedSolutionState();
     void resetDataset(oldId);
   }
 
@@ -1033,6 +1103,7 @@ export default function Page() {
     setSolutionIngestSignature(null);
     setCorpusType(null);
     setCorpusReason(null);
+    resetParsedSolutionState();
     if (options?.clearCustomerName) {
       setCustomerName("");
     }
@@ -1055,8 +1126,8 @@ export default function Page() {
     return uploadClassification?.type === "power_platform_solution_zip";
   }
 
-  // Generate docs for Power Platform solution using PAC CLI + RAG
-  async function generateSolutionDocs(onProgress?: (stage: string, percent: number) => void) {
+  // Base parse path for Power Platform solution (ingest + parse).
+  async function runBaseSolutionParse(onProgress?: (stage: string, percent: number) => void): Promise<BaseSolutionParseResult> {
     const activeDatasetId = datasetId || createDatasetId();
     if (!datasetId) {
       setDatasetId(activeDatasetId);
@@ -1114,18 +1185,92 @@ export default function Page() {
 
     const parsePayload = await parseRes.json().catch(() => ({}));
     if (!parseRes.ok) {
-      const parsed = parseApiError(parsePayload, "Failed to parse solution with PAC CLI");
+      const parsed = parseApiError(parsePayload as ApiErrorPayload, "Failed to parse solution with PAC CLI");
       const err = new Error(parsed.message) as AppError;
       err.code = parsed.code;
       err.hint = parsed.hint;
       throw err;
     }
 
-    const parsedSolution = parsePayload?.data || parsePayload;
+    const {
+      data: parsedSolutionPayload,
+      sharePointEnrichmentEnabled,
+      authenticationRequired,
+      sharePointUrls: detectedSharePointUrls,
+      sharePointEnrichmentStatus: initialSharePointEnrichmentStatus,
+    } = parsePayload as ParseSolutionApiResponse;
 
-    // Step 3: Generate documentation with RAG pipeline (API key from runtime settings)
+    const { parsedSolution: baseParsedSolution, sharePointMetadata: initialSharePointMetadata } =
+      splitParsedSolutionData(parsedSolutionPayload);
+    const hasDetectedSharePoint = hasDetectedSharePointReferences(
+      baseParsedSolution,
+      detectedSharePointUrls
+    );
+    let resolvedSharePointMetadata = initialSharePointMetadata;
+    let resolvedSharePointEnrichmentStatus = initialSharePointEnrichmentStatus;
+
+    if (
+      shouldAttemptSharePointUserEnrichment({
+        authenticationRequired,
+        detectedSharePointUrls,
+        sharePointToken,
+      })
+    ) {
+      const enrichment = await fetchSharePointEnrichmentWithUserToken({
+        accessToken: sharePointToken as string,
+        sharePointUrls: detectedSharePointUrls,
+        fallbackMetadata: initialSharePointMetadata,
+      });
+      resolvedSharePointMetadata = enrichment.metadata;
+      resolvedSharePointEnrichmentStatus = enrichment.status;
+    }
+
+    setParsedSolution(baseParsedSolution);
+    setSharePointUrls(detectedSharePointUrls);
+    setSharePointEnrichmentStatus(resolvedSharePointEnrichmentStatus);
+    setSharePointMetadata(resolvedSharePointMetadata);
+
+    return {
+      parsedSolution: baseParsedSolution,
+      sharePointDetected: hasDetectedSharePoint,
+      sharePointUrls: detectedSharePointUrls,
+      sharePointEnrichmentStatus: resolvedSharePointEnrichmentStatus,
+      sharePointMetadata: resolvedSharePointMetadata,
+      activeDatasetId,
+      sharePointEnrichmentEnabled,
+    };
+  }
+
+  useEffect(() => {
+    if (!sharePointToken || !parsedSolution || sharePointUrls.length === 0) return;
+    if (sharePointEnrichmentStatus !== "detected_requires_auth") return;
+
+    let cancelled = false;
+
+    void (async () => {
+      await enrichExistingParsedSolutionWithSharePoint(sharePointToken);
+      if (cancelled) return;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    parsedSolution,
+    sharePointEnrichmentStatus,
+    sharePointToken,
+    sharePointUrls,
+  ]);
+
+  async function generateDocumentationFromParsedSolution(
+    parsedSolution: ParsedSolutionResult,
+    activeDatasetId: string,
+    sharePointMetadataForGeneration: SharePointMetadata[] | null,
+    onProgress?: (stage: string, percent: number) => void
+  ) {
     onProgress?.("Generating documentation with AI...", 65);
     const modelForProvider = llmSelection.model;
+    const solutionForGeneration = buildSolutionForGeneration(parsedSolution, sharePointMetadataForGeneration);
 
     // Extract user preferences from chat history
     const userPreferences = chat
@@ -1136,7 +1281,7 @@ export default function Page() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        solution: parsedSolution,
+        solution: solutionForGeneration,
         doc_type: "markdown",
         systemPrompt: (systemPrompt && systemPrompt.trim()) || undefined,
         provider: llmSelection.provider,
@@ -1157,8 +1302,67 @@ export default function Page() {
     }
 
     const docResult = await genRes.json();
-    
-    return { parsedSolution, documentation: docResult.documentation };
+    return docResult.documentation as string;
+  }
+
+  async function createSolutionOutput(parsedSolution: ParsedSolutionResult, documentation: string) {
+    const solutionName = parsedSolution.solution_name || "solution";
+    const componentsCount = Array.isArray(parsedSolution.components) ? parsedSolution.components.length : 0;
+    const filename = `${solutionName}_documentation.pdf`;
+    const metadata = `Version: ${parsedSolution.version || "N/A"} | Publisher: ${parsedSolution.publisher || "Unknown"} | Components: ${componentsCount}`;
+
+    const pdfResponse = await fetch("/api/markdown-to-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        markdown: documentation,
+        title: `${solutionName} Documentation`,
+        metadata,
+      }),
+    });
+
+    if (!pdfResponse.ok) {
+      const errorData = await pdfResponse.json().catch(() => ({}));
+      throw new Error(errorData.error || "Failed to generate PDF");
+    }
+
+    const pdfData = await pdfResponse.json();
+    const output: OutputFile = {
+      id: `${filename}-${Date.now()}`,
+      filename,
+      bytesBase64: pdfData.pdfBase64,
+      mime: "application/pdf",
+      createdAt: Date.now(),
+      htmlPreview: pdfData.html,
+      markdownContent: documentation,
+    };
+    upsertOutput(output);
+    setSelectedOutputId(output.id);
+
+    if (status === "authenticated" && session?.user) {
+      const savedConversationId = await persistConversationDocument({
+        filename: output.filename,
+        markdown: documentation,
+        htmlPreview: output.htmlPreview || "",
+        bytesBase64: output.bytesBase64 || "",
+        mime: output.mime,
+      });
+      if (savedConversationId !== conversationId) {
+        setConversationId(savedConversationId);
+      }
+    }
+
+    if (chat.length > 0) {
+      const successId = createMessageId();
+      setChat((c) => [
+        ...c,
+        {
+          id: successId,
+          role: "assistant",
+          content: "Document regenerated successfully. Your preferences have been applied. Check the Output Files panel to view the updated PDF.",
+        },
+      ]);
+    }
   }
 
   async function generateDocs() {
@@ -1168,73 +1372,42 @@ export default function Page() {
     setGenerateProgress(hasSolutionFile() ? { stage: "Starting...", percent: 0 } : { stage: "Generating...", percent: 0 });
 
     try {
-      // Check if we have a solution file - use PAC CLI + RAG pipeline
       if (hasSolutionFile()) {
-        const { parsedSolution, documentation } = await generateSolutionDocs((stage, percent) =>
+        const {
+          parsedSolution,
+          sharePointDetected: solutionSharePointDetected,
+          sharePointEnrichmentStatus: solutionSharePointEnrichmentStatus,
+          sharePointMetadata: parsedSharePointMetadata,
+          activeDatasetId,
+          sharePointEnrichmentEnabled,
+        } = await runBaseSolutionParse((stage, percent) =>
           setGenerateProgress({ stage, percent })
         );
-        
-        // Create output with the generated documentation
-        const filename = `${parsedSolution.solution_name || "solution"}_documentation.pdf`;
-        
-        // Generate PDF with Mermaid support using the markdown-to-pdf API
-        const metadata = `Version: ${parsedSolution.version} | Publisher: ${parsedSolution.publisher} | Components: ${parsedSolution.components?.length || 0}`;
-        const pdfResponse = await fetch("/api/markdown-to-pdf", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            markdown: documentation,
-            title: `${parsedSolution.solution_name} Documentation`,
-            metadata: metadata,
-          }),
-        });
 
-        if (!pdfResponse.ok) {
-          const errorData = await pdfResponse.json().catch(() => ({}));
-          throw new Error(errorData.error || "Failed to generate PDF");
-        }
+        const sharepointRefs = Array.isArray(parsedSolution?.sharepointRefs)
+          ? parsedSolution.sharepointRefs
+          : [];
 
-        const pdfData = await pdfResponse.json();
-        const pdfBase64 = pdfData.pdfBase64;
-        const htmlContent = pdfData.html;
-
-        const output: OutputFile = {
-          id: `${filename}-${Date.now()}`,
-          filename: filename,
-          bytesBase64: pdfBase64,
-          mime: "application/pdf",
-          createdAt: Date.now(),
-          htmlPreview: htmlContent,
-          markdownContent: documentation, // Store original markdown for Mermaid rendering
-        };
-        upsertOutput(output);
-        setSelectedOutputId(output.id);
-        if (status === "authenticated" && session?.user) {
-          const savedConversationId = await persistConversationDocument({
-            filename: output.filename,
-            markdown: documentation,
-            htmlPreview: output.htmlPreview || "",
-            bytesBase64: output.bytesBase64 || "",
-            mime: output.mime,
+        if (
+          sharePointEnrichmentEnabled &&
+          solutionSharePointDetected &&
+          sharepointRefs.length > 0 &&
+          solutionSharePointEnrichmentStatus !== "available"
+        ) {
+          setGenerateProgress({
+            stage: "SharePoint references detected - continuing with base documentation",
+            percent: 55,
           });
-          if (savedConversationId !== conversationId) {
-            setConversationId(savedConversationId);
-          }
         }
 
-        // Add success message to chat if there are existing chat messages
-        if (chat.length > 0) {
-          const successId = createMessageId();
-          setChat((c) => [
-            ...c,
-            {
-              id: successId,
-              role: "assistant",
-              content: `✅ Document regenerated successfully! Your preferences have been applied. Check the Output Files panel to view the updated PDF.`,
-            },
-          ]);
-        }
 
+        const documentation = await generateDocumentationFromParsedSolution(
+          parsedSolution,
+          activeDatasetId,
+          parsedSharePointMetadata,
+          (stage, percent) => setGenerateProgress({ stage, percent })
+        );
+        await createSolutionOutput(parsedSolution, documentation);
         setGenerateProgress({ stage: "Complete", percent: 100 });
         return;
       }
@@ -1621,6 +1794,8 @@ export default function Page() {
             setApiKey={setApiKey}
             endpoint={endpoint}
             setEndpoint={setEndpoint}
+            sharePointToken={sharePointToken}
+            setSharePointToken={setSharePointToken}
             systemPrompt={systemPrompt}
             setSystemPrompt={setSystemPrompt}
             systemPromptDefault={DEFAULT_SOLUTION_SYSTEM_PROMPT}
@@ -1955,3 +2130,4 @@ const placeholderBox: React.CSSProperties = {
   color: "#6b6b75",
   fontSize: 14,
 };
+

@@ -60,6 +60,7 @@ type SharePointRef = {
 };
 
 type ParsedSolutionResult = {
+  solutionName?: string;
   solution_name?: string;
   version?: string;
   publisher?: string;
@@ -67,6 +68,15 @@ type ParsedSolutionResult = {
   sharepointRefs?: SharePointRef[];
   sharePointMetadata?: SharePointMetadata[];
   [key: string]: unknown;
+};
+
+type ParseSolutionApiResponse = {
+  ok: true;
+  data: ParsedSolutionResult;
+  authenticationRequired: boolean;
+  sharePointUrls: string[];
+  message?: string;
+  sharePointEnrichmentEnabled: boolean;
 };
 
 type SharePointMetadata = {
@@ -1198,17 +1208,19 @@ export default function Page() {
 
     const parsePayload = await parseRes.json().catch(() => ({}));
     if (!parseRes.ok) {
-      const parsed = parseApiError(parsePayload, "Failed to parse solution with PAC CLI");
+      const parsed = parseApiError(parsePayload as ApiErrorPayload, "Failed to parse solution with PAC CLI");
       const err = new Error(parsed.message) as AppError;
       err.code = parsed.code;
       err.hint = parsed.hint;
       throw err;
     }
 
-    const parsedSolution = (parsePayload?.data || parsePayload) as ParsedSolutionResult;
-    const sharePointEnrichmentEnabled = Boolean(parsePayload?.sharePointEnrichmentEnabled);
-    const authenticationRequired = Boolean(parsePayload?.authenticationRequired);
-    const detectedSharePointUrls = parsePayload?.sharePointUrls || [];
+    const {
+      data: parsedSolution,
+      sharePointEnrichmentEnabled,
+      authenticationRequired,
+      sharePointUrls: detectedSharePointUrls,
+    } = parsePayload as ParseSolutionApiResponse;
 
     // Check if SharePoint authentication is required and user has no token
     if (authenticationRequired && detectedSharePointUrls.length > 0 && !sharePointToken) {

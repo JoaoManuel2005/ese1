@@ -16,6 +16,7 @@ public class SharePointService
     private readonly IConfiguration _config;
     private GraphServiceClient? _graphClient;
     private bool _isConfigured;
+    private bool _isEnrichmentEnabled;
 
     public SharePointService(ILogger<SharePointService> logger, IConfiguration config)
     {
@@ -26,6 +27,10 @@ public class SharePointService
 
     private void InitializeGraphClient()
     {
+        _isEnrichmentEnabled = ParseBooleanFlag(
+            _config["FEATURE_SHAREPOINT_ENRICHMENT"] ?? Environment.GetEnvironmentVariable("FEATURE_SHAREPOINT_ENRICHMENT")
+        );
+
         var tenantId = _config["SharePoint:TenantId"] ?? Environment.GetEnvironmentVariable("SHAREPOINT_TENANT_ID");
         var clientId = _config["SharePoint:ClientId"] ?? Environment.GetEnvironmentVariable("SHAREPOINT_CLIENT_ID");
         var clientSecret = _config["SharePoint:ClientSecret"] ?? Environment.GetEnvironmentVariable("SHAREPOINT_CLIENT_SECRET");
@@ -52,6 +57,18 @@ public class SharePointService
     }
 
     public bool IsConfigured => _isConfigured;
+    public bool IsEnrichmentEnabled => _isEnrichmentEnabled;
+
+    private static bool ParseBooleanFlag(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized is "1" or "true" or "yes" or "on";
+    }
 
     /// <summary>
     /// Fetch metadata for multiple SharePoint URLs

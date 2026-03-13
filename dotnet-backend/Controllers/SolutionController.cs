@@ -67,32 +67,53 @@ public class SolutionController : ControllerBase
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            // If SharePoint URLs detected but service not configured, signal frontend for user auth
-            if (sharePointUrls.Count > 0 && !_sharePoint.IsConfigured)
+            var parseResponse = new ParseSolutionResponse
             {
-                Console.WriteLine($"[ParseSolution] Detected {sharePointUrls.Count} SharePoint URL(s) but service not configured - requiring user authentication");
-                return Ok(new
-                {
-                    data = solution,
-                    authenticationRequired = true,
-                    sharePointUrls = sharePointUrls,
-                    message = "SharePoint authentication required"
-                });
+                Data = solution,
+                SharePointUrls = sharePointUrls,
+                SharePointEnrichmentStatus = SharePointEnrichmentStatuses.NotNeeded
+            };
+
+            if (sharePointUrls.Count == 0)
+            {
+                return Ok(parseResponse);
             }
 
-            // Automatically fetch SharePoint metadata if service is configured
-            if (_sharePoint.IsConfigured && sharePointUrls.Count > 0)
+            if (!_sharePoint.IsEnrichmentEnabled)
             {
-                Console.WriteLine($"[ParseSolution] Detected {sharePointUrls.Count} SharePoint URL(s), fetching metadata...");
-                var spResponse = await _sharePoint.FetchMetadataAsync(sharePointUrls, includeColumns: true);
-                if (spResponse.Success)
-                {
-                    solution.SharePointMetadata = spResponse.Sites;
-                    Console.WriteLine($"[ParseSolution] ✓ Fetched SharePoint metadata for {spResponse.Sites.Count} site(s)");
-                }
+                Console.WriteLine($"[ParseSolution] Detected {sharePointUrls.Count} SharePoint URL(s) but enrichment is disabled");
+                parseResponse.SharePointEnrichmentStatus = SharePointEnrichmentStatuses.Disabled;
+                parseResponse.Message = "SharePoint references detected. Enrichment is disabled.";
+                return Ok(parseResponse);
             }
 
-            return Ok(solution);
+            if (!_sharePoint.IsConfigured)
+            {
+                Console.WriteLine($"[ParseSolution] Detected {sharePointUrls.Count} SharePoint URL(s) but service not configured - optional enrichment requires user authentication");
+                parseResponse.SharePointEnrichmentStatus = SharePointEnrichmentStatuses.DetectedRequiresAuth;
+                parseResponse.AuthenticationRequired = true;
+                parseResponse.Message = "SharePoint authentication required for optional enrichment";
+                return Ok(parseResponse);
+            }
+
+            Console.WriteLine($"[ParseSolution] Detected {sharePointUrls.Count} SharePoint URL(s), fetching metadata...");
+            var spResponse = await _sharePoint.FetchMetadataAsync(sharePointUrls, includeColumns: true);
+            if (spResponse.Sites.Count > 0)
+            {
+                solution.SharePointMetadata = spResponse.Sites;
+            }
+
+            if (spResponse.Success)
+            {
+                Console.WriteLine($"[ParseSolution] ✓ Fetched SharePoint metadata for {spResponse.Sites.Count} site(s)");
+                parseResponse.SharePointEnrichmentStatus = SharePointEnrichmentStatuses.Available;
+                return Ok(parseResponse);
+            }
+
+            Console.WriteLine($"[ParseSolution] SharePoint enrichment failed for {sharePointUrls.Count} URL(s): {spResponse.ErrorMessage ?? "Unknown error"}");
+            parseResponse.SharePointEnrichmentStatus = SharePointEnrichmentStatuses.Failed;
+            parseResponse.Message = spResponse.ErrorMessage ?? "SharePoint enrichment failed.";
+            return Ok(parseResponse);
         }
         catch (Exception ex)
         {

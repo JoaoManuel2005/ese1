@@ -24,6 +24,24 @@ public class ParsedSolution
     public List<SharePointMetadata>? SharePointMetadata { get; set; }
 }
 
+public static class SharePointEnrichmentStatuses
+{
+    public const string NotNeeded = "not_needed";
+    public const string DetectedRequiresAuth = "detected_requires_auth";
+    public const string Disabled = "disabled";
+    public const string Available = "available";
+    public const string Failed = "failed";
+}
+
+public class ParseSolutionResponse
+{
+    public ParsedSolution Data { get; set; } = new();
+    public string SharePointEnrichmentStatus { get; set; } = SharePointEnrichmentStatuses.NotNeeded;
+    public bool AuthenticationRequired { get; set; }
+    public List<string> SharePointUrls { get; set; } = new();
+    public string? Message { get; set; }
+}
+
 public class SharePointRef
 {
     [JsonPropertyName("url")]

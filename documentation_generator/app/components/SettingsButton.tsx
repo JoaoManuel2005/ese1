@@ -286,6 +286,7 @@ const SettingsButton: FC<Props> = ({
   const inputBg = "var(--panel-bg)";
   const backdrop = theme === "dark" ? "rgba(0,0,0,0.6)" : "rgba(0,0,0,0.25)";
   const smallText = "var(--muted)";
+  const sharePointConnected = Boolean(sharePointToken);
 
   function clearSharePointMsalState(clientId?: string | null) {
     if (typeof window === "undefined") return;
@@ -677,10 +678,15 @@ const SettingsButton: FC<Props> = ({
                 <div style={{ fontSize: 12, color: smallText }}>
                   Connect your Microsoft account to automatically fetch SharePoint metadata (lists, libraries, columns) when parsing Power Platform solutions.
                 </div>
+                {isAuthenticated && !sharePointConnected && (
+                  <div style={{ fontSize: 12, color: smallText, background: theme === "dark" ? "#1a1a1a" : "#f8f9fa", padding: 8, borderRadius: 6 }}>
+                    App sign-in is active. SharePoint access stays disconnected until you connect it here.
+                  </div>
+                )}
 
-                {sharePointToken ? (
+                {sharePointConnected ? (
                   <div style={{ background: theme === "dark" ? "#1a2e1a" : "#e8f5e9", border: `1px solid ${theme === "dark" ? "#2d5" : "#4caf50"}`, borderRadius: 8, padding: 12 }}>
-                    <div style={{ fontSize: 13, color: theme === "dark" ? "#8ce99a" : "#2e7d32", fontWeight: 600, marginBottom: 4 }}>✓ Connected</div>
+                    <div style={{ fontSize: 13, color: theme === "dark" ? "#8ce99a" : "#2e7d32", fontWeight: 600, marginBottom: 4 }}>✓ SharePoint connected</div>
                     {sharePointUserEmail && (
                       <div style={{ fontSize: 12, color: smallText }}>Account: {sharePointUserEmail}</div>
                     )}
@@ -696,7 +702,7 @@ const SettingsButton: FC<Props> = ({
                       }}
                       style={{ marginTop: 8, padding: "6px 12px", border: `1px solid ${borderColor}`, background: inputBg, color: textColor, borderRadius: 6, cursor: "pointer", fontSize: 12 }}
                     >
-                      Disconnect
+                      Disconnect SharePoint
                     </button>
                   </div>
                 ) : (
@@ -706,10 +712,10 @@ const SettingsButton: FC<Props> = ({
                       disabled={connectingSharePoint || sharePointMsalInteractionInProgress}
                       style={{ padding: "8px 16px", border: `1px solid #0078d4`, background: connectingSharePoint || sharePointMsalInteractionInProgress ? "#999" : "#0078d4", color: "#fff", borderRadius: 8, cursor: connectingSharePoint || sharePointMsalInteractionInProgress ? "not-allowed" : "pointer", fontWeight: 600, fontSize: 13 }}
                     >
-                      {connectingSharePoint ? "Connecting..." : "Connect SharePoint Account"}
+                      {connectingSharePoint ? "Connecting SharePoint..." : "Connect SharePoint Account"}
                     </button>
                     {sharePointError && (
-                      <div style={{ marginTop: 8, fontSize: 12, color: "#d32f2f" }}>{sharePointError}</div>
+                      <div style={{ marginTop: 8, fontSize: 12, color: "#d32f2f" }}>SharePoint connection error: {sharePointError}</div>
                     )}
                   </div>
                 )}

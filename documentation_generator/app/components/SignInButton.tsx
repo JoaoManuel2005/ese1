@@ -40,7 +40,7 @@ export default function SignInButton() {
           />
         )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <span style={{ fontSize: '12px' }}>Signed in as</span>
+          <span style={{ fontSize: '12px' }}>App signed in as</span>
           <span style={{ fontSize: '14px', fontWeight: 500 }}>
             {session.user.email || session.user.name}
           </span>

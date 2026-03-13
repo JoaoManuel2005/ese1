@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import type { FC } from "react";
 import { PublicClientApplication } from "@azure/msal-browser";
+import { SHAREPOINT_CONNECT_REQUEST } from "../auth/authRequests";
 
 type SharePointMsalRuntimeConfig = {
   clientId: string;
@@ -343,8 +344,7 @@ const SettingsButton: FC<Props> = ({
       });
 
       const loginRequest = {
-        scopes: ["Sites.Read.All", "User.Read"],
-        prompt: "select_account" as const,
+        ...SHAREPOINT_CONNECT_REQUEST,
         // Keep the popup on a static page so the Next app doesn't boot inside it.
         redirectUri: sharePointPopupRedirectUri,
       };

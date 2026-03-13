@@ -13,6 +13,16 @@ import OutputsList from "./components/OutputsList";
 import PreviewPanel from "./components/PreviewPanel";
 import SignInButton from "./components/SignInButton";
 import { useSession, getSession } from "next-auth/react";
+import {
+  buildSolutionForGeneration,
+  fetchSharePointEnrichmentWithUserToken,
+  hasDetectedSharePointReferences,
+  type ParsedSolutionResult,
+  type SharePointEnrichmentStatus,
+  type SharePointMetadata,
+  shouldAttemptSharePointUserEnrichment,
+  splitParsedSolutionData,
+} from "./utils/solutionSharePoint";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -52,25 +62,6 @@ type GenerateError = {
   hint?: string;
 };
 
-type SharePointRef = {
-  url: string;
-  kind: "site" | "list" | "library" | "unknown";
-  source: string;
-};
-
-type SharePointEnrichmentStatus = "not_needed" | "detected_requires_auth" | "disabled" | "available" | "failed";
-
-type ParsedSolutionResult = {
-  solutionName?: string;
-  solution_name?: string;
-  version?: string;
-  publisher?: string;
-  components?: unknown[];
-  sharepointRefs?: SharePointRef[];
-  sharePointMetadata?: SharePointMetadata[];
-  [key: string]: unknown;
-};
-
 type ParseSolutionApiResponse = {
   ok: true;
   data: ParsedSolutionResult;
@@ -79,42 +70,6 @@ type ParseSolutionApiResponse = {
   sharePointEnrichmentStatus: SharePointEnrichmentStatus;
   message?: string;
   sharePointEnrichmentEnabled: boolean;
-};
-
-type SharePointMetadata = {
-  siteUrl: string;
-  siteId: string;
-  siteName: string;
-  lists: SharePointList[];
-  libraries: SharePointLibrary[];
-  errorMessage?: string;
-};
-
-type SharePointList = {
-  id: string;
-  name: string;
-  displayName: string;
-  description?: string;
-  columns: SharePointColumn[];
-  webUrl: string;
-  itemCount?: number;
-};
-
-type SharePointLibrary = {
-  id: string;
-  name: string;
-  displayName: string;
-  description?: string;
-  webUrl: string;
-  driveType: string;
-};
-
-type SharePointColumn = {
-  name: string;
-  displayName: string;
-  type: string;
-  required: boolean;
-  readOnly: boolean;
 };
 
 type BaseSolutionParseResult = {
@@ -299,105 +254,16 @@ export default function Page() {
     setSharePointMetadata(null);
   }
 
-  function splitParsedSolutionData(solution: ParsedSolutionResult) {
-    const { sharePointMetadata, ...baseParsedSolution } = solution;
-    return {
-      parsedSolution: baseParsedSolution as ParsedSolutionResult,
-      sharePointMetadata: Array.isArray(sharePointMetadata) ? sharePointMetadata : null,
-    };
-  }
-
-  function buildSolutionForGeneration(
-    baseParsedSolution: ParsedSolutionResult,
-    sharePointMetadataForGeneration: SharePointMetadata[] | null
-  ): ParsedSolutionResult {
-    if (!sharePointMetadataForGeneration?.length) {
-      return baseParsedSolution;
-    }
-
-    return {
-      ...baseParsedSolution,
-      sharePointMetadata: sharePointMetadataForGeneration,
-    };
-  }
-
-  async function fetchSharePointEnrichmentWithUserToken(
-    accessToken: string,
-    detectedSharePointUrls: string[],
-    fallbackMetadata: SharePointMetadata[] | null
-  ): Promise<{
-    metadata: SharePointMetadata[] | null;
-    status: SharePointEnrichmentStatus;
-    error?: string;
-  }> {
-    let resolvedSharePointMetadata = fallbackMetadata;
-    let resolvedSharePointEnrichmentStatus: SharePointEnrichmentStatus =
-      fallbackMetadata?.length ? "available" : "failed";
-
-    try {
-      const spRes = await fetch("/api/fetch-sharepoint-metadata-with-user-token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accessToken,
-          sharePointUrls: detectedSharePointUrls,
-          includeColumns: true,
-        }),
-      });
-
-      if (spRes.ok) {
-        const spData = await spRes.json().catch(() => ({}));
-        if (Array.isArray(spData.sites)) {
-          resolvedSharePointMetadata = spData.sites;
-        }
-
-        if (spData.success || resolvedSharePointMetadata?.length) {
-          resolvedSharePointEnrichmentStatus = "available";
-        } else if (!resolvedSharePointMetadata?.length) {
-          resolvedSharePointEnrichmentStatus = "failed";
-        }
-
-        return {
-          metadata: resolvedSharePointMetadata,
-          status: resolvedSharePointEnrichmentStatus,
-          error: typeof spData?.error === "string" ? spData.error : undefined,
-        };
-      }
-
-      const errorMessage = await readRouteError(spRes, "Failed to fetch SharePoint metadata.");
-      if (!resolvedSharePointMetadata?.length) {
-        resolvedSharePointEnrichmentStatus = "failed";
-      }
-
-      return {
-        metadata: resolvedSharePointMetadata,
-        status: resolvedSharePointEnrichmentStatus,
-        error: errorMessage,
-      };
-    } catch (err: any) {
-      console.error("Failed to fetch SharePoint metadata:", err);
-      if (!resolvedSharePointMetadata?.length) {
-        resolvedSharePointEnrichmentStatus = "failed";
-      }
-
-      return {
-        metadata: resolvedSharePointMetadata,
-        status: resolvedSharePointEnrichmentStatus,
-        error: err?.message || "Failed to fetch SharePoint metadata.",
-      };
-    }
-  }
-
   async function enrichExistingParsedSolutionWithSharePoint(accessToken: string) {
     if (!parsedSolution || sharePointUrls.length === 0) {
       return { status: sharePointEnrichmentStatus, metadata: sharePointMetadata };
     }
 
-    const enrichment = await fetchSharePointEnrichmentWithUserToken(
+    const enrichment = await fetchSharePointEnrichmentWithUserToken({
       accessToken,
       sharePointUrls,
-      sharePointMetadata
-    );
+      fallbackMetadata: sharePointMetadata,
+    });
 
     setSharePointMetadata(enrichment.metadata);
     setSharePointEnrichmentStatus(enrichment.status);
@@ -1336,17 +1202,25 @@ export default function Page() {
 
     const { parsedSolution: baseParsedSolution, sharePointMetadata: initialSharePointMetadata } =
       splitParsedSolutionData(parsedSolutionPayload);
-    const sharePointRefs = Array.isArray(baseParsedSolution.sharepointRefs) ? baseParsedSolution.sharepointRefs : [];
-    const hasDetectedSharePoint = detectedSharePointUrls.length > 0 || sharePointRefs.length > 0;
+    const hasDetectedSharePoint = hasDetectedSharePointReferences(
+      baseParsedSolution,
+      detectedSharePointUrls
+    );
     let resolvedSharePointMetadata = initialSharePointMetadata;
     let resolvedSharePointEnrichmentStatus = initialSharePointEnrichmentStatus;
 
-    if (authenticationRequired && detectedSharePointUrls.length > 0 && sharePointToken) {
-      const enrichment = await fetchSharePointEnrichmentWithUserToken(
-        sharePointToken,
+    if (
+      shouldAttemptSharePointUserEnrichment({
+        authenticationRequired,
         detectedSharePointUrls,
-        initialSharePointMetadata
-      );
+        sharePointToken,
+      })
+    ) {
+      const enrichment = await fetchSharePointEnrichmentWithUserToken({
+        accessToken: sharePointToken as string,
+        sharePointUrls: detectedSharePointUrls,
+        fallbackMetadata: initialSharePointMetadata,
+      });
       resolvedSharePointMetadata = enrichment.metadata;
       resolvedSharePointEnrichmentStatus = enrichment.status;
     }

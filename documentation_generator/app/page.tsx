@@ -12,8 +12,7 @@ import ChatWindow from "./components/ChatWindow";
 import OutputsList from "./components/OutputsList";
 import PreviewPanel from "./components/PreviewPanel";
 import SignInButton from "./components/SignInButton";
-import { useSession, getSession, signIn } from "next-auth/react";
-import { BASE_LOGIN_AUTHORIZATION_PARAMS } from "./auth/authRequests";
+import { useSession, getSession } from "next-auth/react";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -118,10 +117,6 @@ type SharePointColumn = {
   readOnly: boolean;
 };
 
-type PendingSolutionGeneration = {
-  activeDatasetId: string;
-};
-
 type BaseSolutionParseResult = {
   parsedSolution: ParsedSolutionResult;
   sharePointDetected: boolean;
@@ -130,16 +125,6 @@ type BaseSolutionParseResult = {
   sharePointMetadata: SharePointMetadata[] | null;
   activeDatasetId: string;
   sharePointEnrichmentEnabled: boolean;
-};
-
-type SharePointConnection = {
-  id: string;
-  label: string;
-  tenantId: string;
-  accountEmail: string;
-  createdAt: string;
-  lastUsedAt?: string;
-  status: "active" | "expired" | "revoked";
 };
 
 type ApiErrorPayload = {
@@ -198,16 +183,8 @@ export default function Page() {
   const [modelsError, setModelsError] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [endpoint, setEndpoint] = useState("");
-  const [showSharePointModal, setShowSharePointModal] = useState(false);
-  const [sharePointModalNotice, setSharePointModalNotice] = useState<string | null>(null);
-  const [pendingSolutionGeneration, setPendingSolutionGeneration] = useState<PendingSolutionGeneration | null>(null);
-  const [sharePointConnections, setSharePointConnections] = useState<SharePointConnection[]>([]);
-  const [selectedSharePointConnectionId, setSelectedSharePointConnectionId] = useState<string>("");
-  const [savingSharePointConnection, setSavingSharePointConnection] = useState(false);
   const [sharePointToken, setSharePointToken] = useState<string | null>(null);
-  const [sharePointNotification, setSharePointNotification] = useState<{ urls: string[]; show: boolean }>({ urls: [], show: false });
   const [parsedSolution, setParsedSolution] = useState<ParsedSolutionResult | null>(null);
-  const [sharePointDetected, setSharePointDetected] = useState(false);
   const [sharePointUrls, setSharePointUrls] = useState<string[]>([]);
   const [sharePointEnrichmentStatus, setSharePointEnrichmentStatus] = useState<SharePointEnrichmentStatus>("not_needed");
   const [sharePointMetadata, setSharePointMetadata] = useState<SharePointMetadata[] | null>(null);
@@ -317,11 +294,9 @@ export default function Page() {
 
   function resetParsedSolutionState() {
     setParsedSolution(null);
-    setSharePointDetected(false);
     setSharePointUrls([]);
     setSharePointEnrichmentStatus("not_needed");
     setSharePointMetadata(null);
-    setSharePointNotification({ urls: [], show: false });
   }
 
   function splitParsedSolutionData(solution: ParsedSolutionResult) {
@@ -344,6 +319,90 @@ export default function Page() {
       ...baseParsedSolution,
       sharePointMetadata: sharePointMetadataForGeneration,
     };
+  }
+
+  async function fetchSharePointEnrichmentWithUserToken(
+    accessToken: string,
+    detectedSharePointUrls: string[],
+    fallbackMetadata: SharePointMetadata[] | null
+  ): Promise<{
+    metadata: SharePointMetadata[] | null;
+    status: SharePointEnrichmentStatus;
+    error?: string;
+  }> {
+    let resolvedSharePointMetadata = fallbackMetadata;
+    let resolvedSharePointEnrichmentStatus: SharePointEnrichmentStatus =
+      fallbackMetadata?.length ? "available" : "failed";
+
+    try {
+      const spRes = await fetch("/api/fetch-sharepoint-metadata-with-user-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken,
+          sharePointUrls: detectedSharePointUrls,
+          includeColumns: true,
+        }),
+      });
+
+      if (spRes.ok) {
+        const spData = await spRes.json().catch(() => ({}));
+        if (Array.isArray(spData.sites)) {
+          resolvedSharePointMetadata = spData.sites;
+        }
+
+        if (spData.success || resolvedSharePointMetadata?.length) {
+          resolvedSharePointEnrichmentStatus = "available";
+        } else if (!resolvedSharePointMetadata?.length) {
+          resolvedSharePointEnrichmentStatus = "failed";
+        }
+
+        return {
+          metadata: resolvedSharePointMetadata,
+          status: resolvedSharePointEnrichmentStatus,
+          error: typeof spData?.error === "string" ? spData.error : undefined,
+        };
+      }
+
+      const errorMessage = await readRouteError(spRes, "Failed to fetch SharePoint metadata.");
+      if (!resolvedSharePointMetadata?.length) {
+        resolvedSharePointEnrichmentStatus = "failed";
+      }
+
+      return {
+        metadata: resolvedSharePointMetadata,
+        status: resolvedSharePointEnrichmentStatus,
+        error: errorMessage,
+      };
+    } catch (err: any) {
+      console.error("Failed to fetch SharePoint metadata:", err);
+      if (!resolvedSharePointMetadata?.length) {
+        resolvedSharePointEnrichmentStatus = "failed";
+      }
+
+      return {
+        metadata: resolvedSharePointMetadata,
+        status: resolvedSharePointEnrichmentStatus,
+        error: err?.message || "Failed to fetch SharePoint metadata.",
+      };
+    }
+  }
+
+  async function enrichExistingParsedSolutionWithSharePoint(accessToken: string) {
+    if (!parsedSolution || sharePointUrls.length === 0) {
+      return { status: sharePointEnrichmentStatus, metadata: sharePointMetadata };
+    }
+
+    const enrichment = await fetchSharePointEnrichmentWithUserToken(
+      accessToken,
+      sharePointUrls,
+      sharePointMetadata
+    );
+
+    setSharePointMetadata(enrichment.metadata);
+    setSharePointEnrichmentStatus(enrichment.status);
+
+    return enrichment;
   }
 
   async function renderOutputFromMarkdown({
@@ -1283,49 +1342,19 @@ export default function Page() {
     let resolvedSharePointEnrichmentStatus = initialSharePointEnrichmentStatus;
 
     if (authenticationRequired && detectedSharePointUrls.length > 0 && sharePointToken) {
-      try {
-        const spRes = await fetch("/api/fetch-sharepoint-metadata-with-user-token", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            accessToken: sharePointToken,
-            sharePointUrls: detectedSharePointUrls,
-            includeColumns: true,
-          }),
-        });
-
-        if (spRes.ok) {
-          const spData = await spRes.json();
-          if (Array.isArray(spData.sites)) {
-            resolvedSharePointMetadata = spData.sites;
-          }
-          if (spData.success) {
-            resolvedSharePointEnrichmentStatus = "available";
-          } else if (!resolvedSharePointMetadata?.length) {
-            resolvedSharePointEnrichmentStatus = "failed";
-          }
-        } else if (!resolvedSharePointMetadata?.length) {
-          resolvedSharePointEnrichmentStatus = "failed";
-        }
-      } catch (err) {
-        console.error("Failed to fetch SharePoint metadata:", err);
-        if (!resolvedSharePointMetadata?.length) {
-          resolvedSharePointEnrichmentStatus = "failed";
-        }
-      }
+      const enrichment = await fetchSharePointEnrichmentWithUserToken(
+        sharePointToken,
+        detectedSharePointUrls,
+        initialSharePointMetadata
+      );
+      resolvedSharePointMetadata = enrichment.metadata;
+      resolvedSharePointEnrichmentStatus = enrichment.status;
     }
 
     setParsedSolution(baseParsedSolution);
-    setSharePointDetected(hasDetectedSharePoint);
     setSharePointUrls(detectedSharePointUrls);
     setSharePointEnrichmentStatus(resolvedSharePointEnrichmentStatus);
     setSharePointMetadata(resolvedSharePointMetadata);
-
-    if (authenticationRequired && detectedSharePointUrls.length > 0 && !sharePointToken) {
-      setSharePointNotification({ urls: detectedSharePointUrls, show: true });
-    } else {
-      setSharePointNotification({ urls: [], show: false });
-    }
 
     return {
       parsedSolution: baseParsedSolution,
@@ -1337,6 +1366,27 @@ export default function Page() {
       sharePointEnrichmentEnabled,
     };
   }
+
+  useEffect(() => {
+    if (!sharePointToken || !parsedSolution || sharePointUrls.length === 0) return;
+    if (sharePointEnrichmentStatus !== "detected_requires_auth") return;
+
+    let cancelled = false;
+
+    void (async () => {
+      await enrichExistingParsedSolutionWithSharePoint(sharePointToken);
+      if (cancelled) return;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    parsedSolution,
+    sharePointEnrichmentStatus,
+    sharePointToken,
+    sharePointUrls,
+  ]);
 
   async function generateDocumentationFromParsedSolution(
     parsedSolution: ParsedSolutionResult,
@@ -1441,112 +1491,10 @@ export default function Page() {
     }
   }
 
-  async function continueWithoutSharePointEnrichment() {
-    if (!pendingSolutionGeneration) {
-      setShowSharePointModal(false);
-      return;
-    }
-
-    setShowSharePointModal(false);
-    setSharePointModalNotice(null);
-    setGenerateError(null);
-    setGenerating(true);
-
-    try {
-      if (!parsedSolution) {
-        throw new Error("Parsed solution unavailable.");
-      }
-
-      const { activeDatasetId } = pendingSolutionGeneration;
-      const documentation = await generateDocumentationFromParsedSolution(
-        parsedSolution,
-        activeDatasetId,
-        sharePointMetadata,
-        (stage, percent) => setGenerateProgress({ stage, percent })
-      );
-      await createSolutionOutput(parsedSolution, documentation);
-      setGenerateProgress({ stage: "Complete", percent: 100 });
-    } catch (e: any) {
-      setGenerateError({
-        message: e?.message ?? "Failed to generate documentation",
-        code: e?.code,
-        hint: e?.hint,
-      });
-      setGenerateProgress({ stage: "Failed", percent: 0, failed: true });
-    } finally {
-      setGenerating(false);
-      setPendingSolutionGeneration(null);
-    }
-  }
-
-  async function createSharePointConnectionFromSession() {
-    const response = await fetch("/api/sharepoint/connections", {
-      method: "POST",
-    });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload?.error || "Failed to create SharePoint connection.");
-    }
-
-    const connection = payload?.connection as SharePointConnection | undefined;
-    if (!connection) {
-      throw new Error("SharePoint connection was not returned by the server.");
-    }
-
-    setSharePointConnections((prev) => {
-      const next = [connection, ...prev.filter((c) => c.id !== connection.id)];
-      return next.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    });
-    setSelectedSharePointConnectionId(connection.id);
-    return connection;
-  }
-
-  async function handleConnectSharePoint() {
-    if (savingSharePointConnection) return;
-    setSavingSharePointConnection(true);
-    setSharePointModalNotice(null);
-
-    try {
-      if (status !== "authenticated") {
-        const result = await signIn("azure-ad", {
-          redirect: false,
-          callbackUrl: window.location.href,
-        }, BASE_LOGIN_AUTHORIZATION_PARAMS);
-
-        if (result?.error) {
-          setSharePointModalNotice(`Sign-in failed: ${result.error}`);
-          return;
-        }
-
-        if (result?.url && !result.ok) {
-          window.location.href = result.url;
-          return;
-        }
-
-        const refreshedSession = await getSession();
-        if (!refreshedSession?.user?.email) {
-          setSharePointModalNotice("Sign in is required before adding a SharePoint connection.");
-          return;
-        }
-      }
-
-      const connection = await createSharePointConnectionFromSession();
-      setSharePointModalNotice(`Connected: ${connection.label}`);
-    } catch (error: any) {
-      setSharePointModalNotice(error?.message || "Failed to create SharePoint connection.");
-    } finally {
-      setSavingSharePointConnection(false);
-    }
-  }
-
   async function generateDocs() {
     if (generating || files.length === 0) return;
     setGenerating(true);
     setGenerateError(null);
-    setShowSharePointModal(false);
-    setSharePointModalNotice(null);
-    setPendingSolutionGeneration(null);
     setGenerateProgress(hasSolutionFile() ? { stage: "Starting...", percent: 0 } : { stage: "Generating...", percent: 0 });
 
     try {
@@ -1554,6 +1502,7 @@ export default function Page() {
         const {
           parsedSolution,
           sharePointDetected: solutionSharePointDetected,
+          sharePointEnrichmentStatus: solutionSharePointEnrichmentStatus,
           sharePointMetadata: parsedSharePointMetadata,
           activeDatasetId,
           sharePointEnrichmentEnabled,
@@ -1565,11 +1514,16 @@ export default function Page() {
           ? parsedSolution.sharepointRefs
           : [];
 
-        if (sharePointEnrichmentEnabled && solutionSharePointDetected && sharepointRefs.length > 0) {
-          setPendingSolutionGeneration({ activeDatasetId });
-          setShowSharePointModal(true);
-          setGenerateProgress({ stage: "SharePoint references detected", percent: 55 });
-          return;
+        if (
+          sharePointEnrichmentEnabled &&
+          solutionSharePointDetected &&
+          sharepointRefs.length > 0 &&
+          solutionSharePointEnrichmentStatus !== "available"
+        ) {
+          setGenerateProgress({
+            stage: "SharePoint references detected - continuing with base documentation",
+            percent: 55,
+          });
         }
 
 
@@ -1940,7 +1894,6 @@ export default function Page() {
   const hasInvalidZip = uploadType === "unsupported" && files.some((f) => f.name.toLowerCase().endsWith(".zip"));
   const displayType = corpusType || uploadType;
   const displayReason = corpusReason || uploadReason;
-  const detectedSharePointSiteCount = sharePointUrls.length || sharePointNotification.urls.length;
 
   return (
     <main className="app-shell" style={{ fontFamily: "system-ui" }}>
@@ -2291,163 +2244,6 @@ export default function Page() {
           />
         </section>
       </div>
-
-      {showSharePointModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 0, 0, 0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-            padding: 16,
-          }}
-        >
-          <div
-            style={{
-              width: "min(560px, 100%)",
-              borderRadius: 12,
-              background: "#fff",
-              border: "1px solid #ddd",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
-              padding: 18,
-              display: "grid",
-              gap: 12,
-            }}
-          >
-            <div style={{ fontSize: 18, fontWeight: 700 }}>SharePoint References Detected</div>
-            <div style={{ fontSize: 14, color: "#444", lineHeight: 1.45 }}>
-              This solution references SharePoint. You can continue with the current static parse, or connect to SharePoint for enrichment.
-            </div>
-            {sharePointModalNotice && (
-              <div
-                style={{
-                  fontSize: 13,
-                  color: "#7a1a1a",
-                  background: "#fff5f5",
-                  border: "1px solid #f5c2c7",
-                  borderRadius: 8,
-                  padding: "8px 10px",
-                }}
-              >
-                {sharePointModalNotice}
-              </div>
-            )}
-            {sharePointConnections.length > 0 && (
-              <div style={{ display: "grid", gap: 6 }}>
-                <label htmlFor="sharepoint-connection-select" style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>
-                  Saved SharePoint connections
-                </label>
-                <select
-                  id="sharepoint-connection-select"
-                  value={selectedSharePointConnectionId}
-                  onChange={(e) => setSelectedSharePointConnectionId(e.target.value)}
-                  style={{
-                    border: "1px solid #ccc",
-                    borderRadius: 8,
-                    padding: "8px 10px",
-                    fontSize: 14,
-                    background: "#fff",
-                  }}
-                >
-                  {sharePointConnections.map((connection) => (
-                    <option key={connection.id} value={connection.id}>
-                      {connection.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
-              <button
-                type="button"
-                onClick={() => void continueWithoutSharePointEnrichment()}
-                disabled={generating}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  border: "1px solid #1f7aec",
-                  background: "#1f7aec",
-                  color: "#fff",
-                  cursor: generating ? "not-allowed" : "pointer",
-                  opacity: generating ? 0.7 : 1,
-                }}
-              >
-                Continue without SharePoint enrichment
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleConnectSharePoint()}
-                disabled={savingSharePointConnection}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  border: "1px solid #aaa",
-                  background: "#fff",
-                  color: "#222",
-                  cursor: savingSharePointConnection ? "not-allowed" : "pointer",
-                  opacity: savingSharePointConnection ? 0.7 : 1,
-                }}
-              >
-                {savingSharePointConnection ? "Connecting..." : "Connect to SharePoint"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SharePoint Notification Banner */}
-      {sharePointNotification.show && sharePointDetected && sharePointEnrichmentStatus === "detected_requires_auth" && (
-        <div style={{
-          position: "fixed",
-          bottom: 20,
-          right: 20,
-          background: "#fff3cd",
-          border: "1px solid #ffc107",
-          borderRadius: 12,
-          padding: 16,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-          maxWidth: 400,
-          zIndex: 9998,
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 8 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#856404" }}>
-              📋 SharePoint Sites Detected
-            </div>
-            <button
-              onClick={() => setSharePointNotification({ urls: [], show: false })}
-              style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 18, color: "#856404" }}
-            >
-              ×
-            </button>
-          </div>
-          <div style={{ fontSize: 13, color: "#856404", marginBottom: 12 }}>
-            Found {detectedSharePointSiteCount} SharePoint {detectedSharePointSiteCount === 1 ? "site" : "sites"}. Connect your Microsoft account in Settings to fetch list and library metadata.
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              onClick={() => {
-                setSharePointNotification({ urls: [], show: false });
-                // Trigger settings modal to open (you'd need to expose this via ref or state)
-                document.querySelector<HTMLButtonElement>('button[title="Settings"]')?.click();
-              }}
-              style={{ padding: "6px 12px", background: "#ffc107", color: "#000", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 12 }}
-            >
-              Open Settings
-            </button>
-            <button
-              onClick={() => setSharePointNotification({ urls: [], show: false })}
-              style={{ padding: "6px 12px", background: "transparent", color: "#856404", border: "1px solid #856404", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
     </main>
   );
 }

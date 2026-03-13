@@ -1,6 +1,7 @@
 "use client";
 
 import { signIn, signOut, useSession } from 'next-auth/react';
+import { BASE_LOGIN_AUTHORIZATION_PARAMS } from "../auth/authRequests";
 
 export default function SignInButton() {
   const { data: session, status } = useSession();
@@ -72,7 +73,7 @@ export default function SignInButton() {
 
   return (
     <button
-      onClick={() => signIn()}
+      onClick={() => signIn("azure-ad", undefined, BASE_LOGIN_AUTHORIZATION_PARAMS)}
       style={{
         padding: '8px 16px',
         borderRadius: '8px',

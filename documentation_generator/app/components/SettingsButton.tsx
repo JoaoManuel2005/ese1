@@ -346,6 +346,7 @@ const SettingsButton: FC<Props> = ({
 
       const loginRequest = {
         ...SHAREPOINT_CONNECT_REQUEST,
+        scopes: [...SHAREPOINT_CONNECT_REQUEST.scopes],
         // Keep the popup on a static page so the Next app doesn't boot inside it.
         redirectUri: sharePointPopupRedirectUri,
       };

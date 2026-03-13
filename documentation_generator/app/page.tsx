@@ -13,6 +13,7 @@ import OutputsList from "./components/OutputsList";
 import PreviewPanel from "./components/PreviewPanel";
 import SignInButton from "./components/SignInButton";
 import { useSession, getSession, signIn } from "next-auth/react";
+import { BASE_LOGIN_AUTHORIZATION_PARAMS } from "./auth/authRequests";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -1411,7 +1412,7 @@ export default function Page() {
         const result = await signIn("azure-ad", {
           redirect: false,
           callbackUrl: window.location.href,
-        });
+        }, BASE_LOGIN_AUTHORIZATION_PARAMS);
 
         if (result?.error) {
           setSharePointModalNotice(`Sign-in failed: ${result.error}`);

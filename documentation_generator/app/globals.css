@@ -3,7 +3,7 @@
 :root {
   --background: #ffffff;
   --foreground: #000000;
-  --border: #e0e0e5;
+  --border: #FF0000;
   --panel-bg: #fff;
   --panel-bg-selected: #f0f6ff;
   --input-bg: #fff;
@@ -14,6 +14,29 @@
   --warning: #a60;
 }
 
+/* theme switching via data attribute */
+[data-theme="light"] {
+  --background: #FFFFFF;
+  --foreground: #000000;
+  --border: #FF0000;
+  --panel-bg: #E3E3E3;
+  --panel-bg-selected: #f0f6ff;
+  --input-bg: #fff;
+  --muted: #555;
+  --danger: #a00;
+}
+
+[data-theme="dark"] {
+  --background: #000000;
+  --foreground: #FFFFFF;
+  --border: #FF0000;
+  --panel-bg: #3A3939;
+  --panel-bg-selected: #1a2744;
+  --input-bg: #111;
+  --muted: #bbb;
+  --danger: #ff6b6b;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -22,10 +45,11 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
+  /* only apply system dark styles if the user hasn't explicitly chosen a theme */
+  :root:not([data-theme]) {
+    --background: #000000;
     --foreground: #ffffff;
-    --border: #333;
+    --border: #FF0000;
     --panel-bg: #0f0f0f;
     --panel-bg-selected: #1a2744;
     --input-bg: #111;

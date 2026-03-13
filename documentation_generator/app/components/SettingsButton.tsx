@@ -148,29 +148,10 @@ const SettingsButton: FC<Props> = ({
       localStorage.setItem("ui-theme", theme);
     } catch {}
 
-    if (theme === "dark") {
-      document.documentElement.style.setProperty("--background", "#0a0a0a");
-      document.documentElement.style.setProperty("--foreground", "#ffffff");
-      document.documentElement.style.setProperty("--border", "#333");
-      document.documentElement.style.setProperty("--input-bg", "#111");
-      document.documentElement.style.setProperty("--panel-bg", "#0f0f0f");
-      document.documentElement.style.setProperty("--panel-bg-selected", "#1a2744");
-      document.documentElement.style.setProperty("--muted", "#bbb");
-      document.documentElement.style.setProperty("--danger", "#ff6b6b");
-      document.body.style.background = "#0a0a0a";
-      document.body.style.color = "#ffffff";
-    } else {
-      document.documentElement.style.setProperty("--background", "#ffffff");
-      document.documentElement.style.setProperty("--foreground", "#000000");
-      document.documentElement.style.setProperty("--border", "#e0e0e5");
-      document.documentElement.style.setProperty("--input-bg", "#fff");
-      document.documentElement.style.setProperty("--panel-bg", "#fff");
-      document.documentElement.style.setProperty("--panel-bg-selected", "#f0f6ff");
-      document.documentElement.style.setProperty("--muted", "#555");
-      document.documentElement.style.setProperty("--danger", "#a00");
-      document.body.style.background = "";
-      document.body.style.color = "";
-    }
+    // simply toggle a data attribute; all variable values come from globals.css
+    document.documentElement.setAttribute("data-theme", theme);
+
+    // we don't need to manually touch individual vars or body styles any more
   }, [theme]);
 
   useEffect(() => {
@@ -299,10 +280,9 @@ const SettingsButton: FC<Props> = ({
     }
   }
 
-  const modalBg = theme === "dark" ? "#0a0a0a" : "#fff";
-  const textColor = theme === "dark" ? "#ffffff" : "#000000";
-  const borderColor = theme === "dark" ? "#333" : "#ddd";
-  const inputBg = theme === "dark" ? "#111" : "#fff";
+  const textColor = "var(--foreground)";
+  const borderColor = "var(--border)";
+  const inputBg = "var(--panel-bg)";
   const backdrop = theme === "dark" ? "rgba(0,0,0,0.6)" : "rgba(0,0,0,0.25)";
   const smallText = "var(--muted)";
 
@@ -437,7 +417,7 @@ const SettingsButton: FC<Props> = ({
         title="Settings"
         style={{
           border: "1px solid var(--border)",
-          background: "var(--input-bg)",
+          background: "var(--panel-bg)",
           color: "var(--foreground)",
           padding: "6px 10px",
           borderRadius: 8,
@@ -471,7 +451,7 @@ const SettingsButton: FC<Props> = ({
             style={{
               width: 720,
               maxWidth: "95%",
-              background: modalBg,
+              background: inputBg,
               color: textColor,
               borderRadius: 10,
               padding: 20,
@@ -497,7 +477,7 @@ const SettingsButton: FC<Props> = ({
             </div>
 
             {saveMessage && (
-              <div style={{ fontSize: 12, color: saveState === "error" ? "#a00" : smallText }}>
+              <div style={{ fontSize: 12, color: saveState === "error" ? "var(--danger)" : smallText }}>
                 {saveMessage}
               </div>
             )}
@@ -633,7 +613,7 @@ const SettingsButton: FC<Props> = ({
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
-                <div style={{ fontWeight: 600, color: "#0a6b3d" }}>API Key (Secure)</div>
+                <div style={{ fontWeight: 600, color: "var(--success)" }}>API Key (Secure)</div>
                 <div style={{ fontSize: 12, color: smallText }}>
                   Stored server-side for runtime use. Not stored in browser storage.
                 </div>
@@ -647,7 +627,7 @@ const SettingsButton: FC<Props> = ({
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
-                <div style={{ fontWeight: 600, color: "#0a6b3d" }}>RAG Mode (FREE)</div>
+                <div style={{ fontWeight: 600, color: "var(--success)" }}>RAG Mode (FREE)</div>
                 <div style={{ fontSize: 12, color: smallText }}>Chat uses FREE hybrid search (Sentence-BERT + BM25). No API key needed for chat!</div>
               </div>
 
@@ -683,7 +663,7 @@ const SettingsButton: FC<Props> = ({
                     />
                   </div>
 
-                  <div style={{ fontSize: 12, color: smallText, background: theme === "dark" ? "#1a1a1a" : "#f8f9fa", padding: 10, borderRadius: 6, border: `1px solid ${borderColor}` }}>
+                  <div style={{ fontSize: 12, color: smallText, background: "var(--panel-bg-selected)", padding: 10, borderRadius: 6, border: `1px solid ${borderColor}` }}>
                     <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠️ Rate Limits</div>
                     <div>• <strong>50,000 tokens</strong> per minute</div>
                     <div>• <strong>50 requests</strong> per minute</div>

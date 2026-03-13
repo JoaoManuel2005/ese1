@@ -4,6 +4,59 @@ import { isSharePointEnrichmentEnabled } from "../../../lib/featureFlags";
 
 const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8001";
 
+type ParsedSolutionPayload = Record<string, unknown>;
+
+type BackendParseSolutionEnvelope = {
+  data: ParsedSolutionPayload;
+  authenticationRequired?: boolean;
+  sharePointUrls?: string[];
+  message?: string;
+};
+
+type ParseSolutionApiSuccess = {
+  ok: true;
+  data: ParsedSolutionPayload;
+  authenticationRequired: boolean;
+  sharePointUrls: string[];
+  message?: string;
+  sharePointEnrichmentEnabled: boolean;
+};
+
+function isBackendParseSolutionEnvelope(value: unknown): value is BackendParseSolutionEnvelope {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "data" in value &&
+    typeof (value as { data?: unknown }).data === "object" &&
+    (value as { data?: unknown }).data !== null
+  );
+}
+
+function normalizeParseSolutionResponse(payload: unknown): ParseSolutionApiSuccess {
+  const sharePointEnrichmentEnabled = isSharePointEnrichmentEnabled();
+
+  if (isBackendParseSolutionEnvelope(payload)) {
+    return {
+      ok: true,
+      data: payload.data,
+      authenticationRequired: Boolean(payload.authenticationRequired),
+      sharePointUrls: Array.isArray(payload.sharePointUrls)
+        ? payload.sharePointUrls.filter((url): url is string => typeof url === "string")
+        : [],
+      message: typeof payload.message === "string" ? payload.message : undefined,
+      sharePointEnrichmentEnabled,
+    };
+  }
+
+  return {
+    ok: true,
+    data: typeof payload === "object" && payload !== null ? (payload as ParsedSolutionPayload) : {},
+    authenticationRequired: false,
+    sharePointUrls: [],
+    sharePointEnrichmentEnabled,
+  };
+}
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
@@ -58,11 +111,7 @@ export async function POST(req: Request) {
     }
 
     const data = await response.json();
-    return NextResponse.json({
-      ok: true,
-      data,
-      sharePointEnrichmentEnabled: isSharePointEnrichmentEnabled(),
-    });
+    return NextResponse.json(normalizeParseSolutionResponse(data));
   } catch (error: any) {
     console.error("Parse solution error:", error);
     return jsonError("SERVER_ERROR", error?.message || "Internal server error", undefined, 500);

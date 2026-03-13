@@ -1,5 +1,6 @@
 import NextAuth, { NextAuthOptions } from "next-auth";
 import AzureADProvider from 'next-auth/providers/azure-ad';
+import { BASE_LOGIN_AUTHORIZATION_PARAMS } from "../../../auth/authRequests";
 
 function getTenantIdFromProfile(profile: unknown): string | undefined {
   if (!profile || typeof profile !== "object") return undefined;
@@ -30,10 +31,7 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
       tenantId: "organizations",
       authorization: {
-        params: {
-          prompt: "select_account",
-          scope: "openid profile email User.Read Sites.Read.All offline_access",
-        },
+        params: BASE_LOGIN_AUTHORIZATION_PARAMS,
       },
     })
   ],

@@ -5,11 +5,13 @@ import { isSharePointEnrichmentEnabled } from "../../../lib/featureFlags";
 const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8001";
 
 type ParsedSolutionPayload = Record<string, unknown>;
+type SharePointEnrichmentStatus = "not_needed" | "detected_requires_auth" | "disabled" | "available" | "failed";
 
 type BackendParseSolutionEnvelope = {
   data: ParsedSolutionPayload;
   authenticationRequired?: boolean;
   sharePointUrls?: string[];
+  sharePointEnrichmentStatus?: SharePointEnrichmentStatus;
   message?: string;
 };
 
@@ -18,9 +20,22 @@ type ParseSolutionApiSuccess = {
   data: ParsedSolutionPayload;
   authenticationRequired: boolean;
   sharePointUrls: string[];
+  sharePointEnrichmentStatus: SharePointEnrichmentStatus;
   message?: string;
   sharePointEnrichmentEnabled: boolean;
 };
+
+function normalizeSharePointEnrichmentStatus(value: unknown): SharePointEnrichmentStatus {
+  switch (value) {
+    case "detected_requires_auth":
+    case "disabled":
+    case "available":
+    case "failed":
+      return value;
+    default:
+      return "not_needed";
+  }
+}
 
 function isBackendParseSolutionEnvelope(value: unknown): value is BackendParseSolutionEnvelope {
   return (
@@ -43,6 +58,7 @@ function normalizeParseSolutionResponse(payload: unknown): ParseSolutionApiSucce
       sharePointUrls: Array.isArray(payload.sharePointUrls)
         ? payload.sharePointUrls.filter((url): url is string => typeof url === "string")
         : [],
+      sharePointEnrichmentStatus: normalizeSharePointEnrichmentStatus(payload.sharePointEnrichmentStatus),
       message: typeof payload.message === "string" ? payload.message : undefined,
       sharePointEnrichmentEnabled,
     };
@@ -53,6 +69,7 @@ function normalizeParseSolutionResponse(payload: unknown): ParseSolutionApiSucce
     data: typeof payload === "object" && payload !== null ? (payload as ParsedSolutionPayload) : {},
     authenticationRequired: false,
     sharePointUrls: [],
+    sharePointEnrichmentStatus: "not_needed",
     sharePointEnrichmentEnabled,
   };
 }

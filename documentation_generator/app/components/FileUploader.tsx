@@ -33,22 +33,33 @@ export default function FileUploader({
     const incoming = Array.from(list);
     const validFiles = incoming.filter((file) => file.name.toLowerCase().endsWith(".zip"));
     const invalidFiles = incoming.filter((file) => !file.name.toLowerCase().endsWith(".zip"));
+    const replacementFile = validFiles[0];
+    const skippedValidFiles = validFiles.slice(1);
 
-    if (invalidFiles.length > 0) {
+    if (invalidFiles.length > 0 || skippedValidFiles.length > 0) {
       const invalidNames = invalidFiles
         .slice(0, 2)
         .map((file) => file.name)
         .join(", ");
-      const moreCount = invalidFiles.length - 2;
-      setUploadError(
-        `Only .zip solution files are supported. Rejected: ${invalidNames}${moreCount > 0 ? ` and ${moreCount} more` : ""}.`
-      );
+      const skippedNames = skippedValidFiles
+        .slice(0, 2)
+        .map((file) => file.name)
+        .join(", ");
+      const rejectedParts = [
+        invalidFiles.length > 0
+          ? `Rejected: ${invalidNames}${invalidFiles.length - 2 > 0 ? ` and ${invalidFiles.length - 2} more` : ""}.`
+          : null,
+        skippedValidFiles.length > 0
+          ? `Only one .zip solution file can be uploaded at a time. Ignored: ${skippedNames}${skippedValidFiles.length - 2 > 0 ? ` and ${skippedValidFiles.length - 2} more` : ""}.`
+          : null,
+      ].filter(Boolean);
+      setUploadError(rejectedParts.join(" "));
     } else {
       setUploadError(null);
     }
 
-    if (validFiles.length > 0) {
-      onAdd(validFiles);
+    if (replacementFile) {
+      onAdd([replacementFile]);
     }
 
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -92,7 +103,6 @@ export default function FileUploader({
               ref={fileInputRef}
               type="file"
               accept=".zip,application/zip,application/x-zip-compressed"
-              multiple
               disabled={uploadDisabled}
               style={{ display: "none" }}
               onChange={(e) => void addFiles(e.target.files)}
@@ -171,7 +181,7 @@ export default function FileUploader({
                 )}
               </div>
 
-              <div className="panel-scroll hide-scrollbar" style={{ maxHeight: "200px", overflowY: "auto", overflowX: "hidden" }}>
+              <div style={{ overflowX: "hidden" }}>
                 <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8, overflowX: "hidden" }}>
                   {files.map((file, index) => (
                     <li

@@ -921,51 +921,91 @@ public class RagPipelineService
         sb.AppendLine("erDiagram");
         sb.AppendLine();
 
+        // Build entity blocks using real field names from lookup_relationships metadata where available
         foreach (var (table, idx) in tables.Select((t, i) => (t, i)))
         {
-            // Use the entity ID WITHOUT "TABLE_" prefix — underscores in ER entity names
-            // cause silent parse failures in Mermaid 11.x erDiagram rendering.
             var entity = entityMap[table.Name];
             var pkName = entity.Length > 12 ? entity[..12] : entity;
 
             sb.AppendLine($"    {entity} {{");
             sb.AppendLine($"        string {pkName}ID PK");
-            sb.AppendLine($"        string Name");
-            sb.AppendLine($"        string Status");
+
+            // Add real lookup field names as FK fields if available
+            if (table.Metadata != null && table.Metadata.TryGetValue("lookup_relationships", out var lrObj)
+                && lrObj is List<string> lookups && lookups.Count > 0)
+            {
+                foreach (var lr in lookups.Take(4)) // cap at 4 FK fields for readability
+                {
+                    var fieldName = lr.Split(':')[0];
+                    // Sanitize field name for mermaid: strip non-alphanumeric except underscore
+                    var safeName = Regex.Replace(fieldName, @"[^A-Za-z0-9_]", "");
+                    if (!string.IsNullOrWhiteSpace(safeName))
+                        sb.AppendLine($"        string {safeName} FK");
+                }
+            }
+            else
+            {
+                sb.AppendLine($"        string Name");
+                sb.AppendLine($"        string Status");
+            }
+
             sb.AppendLine($"    }}");
             sb.AppendLine();
         }
 
-        // Instead of a linear chain, create a Star/Hub-and-spoke model 
-        // anchored around the first table and a SystemUser.
-        // erDiagram labels MUST be unquoted plain words — quoted strings are invalid syntax.
-        var entityList = entityMap.Values.ToList();
-        
-        // Always include SystemUser to anchor the data model
-        sb.AppendLine("    SystemUser {");
-        sb.AppendLine("        string UserID PK");
-        sb.AppendLine("        string Email");
-        sb.AppendLine("        string Role");
-        sb.AppendLine("    }");
-        sb.AppendLine();
+        // Build relationships from real lookup data
+        // Structure: sourceEntity ||--o{ targetEntity : fieldName
+        var relationshipsWritten = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        if (entityList.Count > 0)
+        foreach (var table in tables)
         {
-            var primary = entityList[0];
-            sb.AppendLine($"    SystemUser ||--o{{ {primary} : owns");
+            if (table.Metadata == null) continue;
+            if (!table.Metadata.TryGetValue("lookup_relationships", out var lrObj)) continue;
+            if (lrObj is not List<string> lookups) continue;
 
-            string[] relations = { "contains", "references", "linked_to", "categorized_by" };
-            
-            for (int i = 1; i < entityList.Count; i++)
+            if (!entityMap.TryGetValue(table.Name, out var sourceEntity)) continue;
+
+            foreach (var lr in lookups)
             {
-                var rel = relations[i % relations.Length];
-                // Connect 1-to-many from the primary entity to the child entity
-                sb.AppendLine($"    {primary} ||--o{{ {entityList[i]} : {rel}");
-                
-                // Occasional connection back to SystemUser for variety
-                if (i % 3 == 0)
+                var parts = lr.Split(':', 2);
+                if (parts.Length != 2) continue;
+                var fieldName = parts[0];
+                var targetEntityName = parts[1];
+
+                // Only draw the edge if the target entity is also in our diagram
+                if (!entityMap.TryGetValue(targetEntityName, out var targetEntity)) continue;
+
+                var edgeKey = $"{sourceEntity}_{targetEntity}_{fieldName}";
+                if (relationshipsWritten.Contains(edgeKey)) continue;
+                relationshipsWritten.Add(edgeKey);
+
+                var safeLabel = Regex.Replace(fieldName, @"[^A-Za-z0-9_]", "");
+                sb.AppendLine($"    {targetEntity} ||--o{{ {sourceEntity} : {safeLabel}");
+            }
+        }
+
+        // Fallback: if no real relationships were found, use flow_dataverse_table co-occurrence
+        // (i.e., entities that appear together in the same flow are likely related)
+        if (relationshipsWritten.Count == 0)
+        {
+            var flowTableMap = solution.Components
+                .Where(c => c.Type.Equals("flow_dataverse_table", StringComparison.OrdinalIgnoreCase) && c.Name.Contains(':'))
+                .GroupBy(c => c.Name.Split(':')[0].Trim()) // group by flow name
+                .Select(g => g.Select(c => c.Name.Split(':').Last().Trim()).Distinct().ToList())
+                .Where(tables2 => tables2.Count >= 2)
+                .ToList();
+
+            foreach (var flowTables in flowTableMap)
+            {
+                // Connect each pair of tables used in the same flow
+                for (int i = 1; i < flowTables.Count; i++)
                 {
-                    sb.AppendLine($"    SystemUser ||--o{{ {entityList[i]} : assigned_to");
+                    if (!entityMap.TryGetValue(flowTables[0], out var a)) continue;
+                    if (!entityMap.TryGetValue(flowTables[i], out var b)) continue;
+                    var edgeKey = $"{a}_{b}";
+                    if (relationshipsWritten.Contains(edgeKey)) continue;
+                    relationshipsWritten.Add(edgeKey);
+                    sb.AppendLine($"    {a} ||--o{{ {b} : uses");
                 }
             }
         }
@@ -1793,6 +1833,7 @@ public class RagPipelineService
         sb.AppendLine("# MANDATORY MERMAID DIAGRAM FORMATS:");
         sb.AppendLine();
         sb.AppendLine("## 1. Architecture Diagram Format (REQUIRED in Solution Architecture section):");
+        sb.AppendLine("⚠️ FORMAT TEMPLATE ONLY — Replace ALL placeholder names (APP_MainApplication, FLOW_PrimaryAutomation, etc.) with REAL names from the solution component data above. Only include subgraphs/nodes for systems that actually exist in the solution.");
         sb.AppendLine("```mermaid");
         sb.AppendLine("flowchart LR");
         sb.AppendLine();
@@ -1840,7 +1881,7 @@ public class RagPipelineService
         
         sb.AppendLine("DIAGRAM REQUIREMENTS:");
         sb.AppendLine("1. Include fenced ```mermaid blocks (not images) for ALL required diagrams.");
-        sb.AppendLine("2. Use ONLY the exact formats shown above - match the structure precisely.");
+        sb.AppendLine("2. Follow the structure of the format templates — but ALWAYS substitute real component names. NEVER copy placeholder names like APP_MainApplication, FLOW_PrimaryAutomation, EXT1, EXT2 into your output.");
         sb.AppendLine("3. Apply naming convention prefixes (APP_, FLOW_, TABLE_, CONN_, EXT_, ENVVAR_) to ALL component names.");
         sb.AppendLine("4. Use actual component names from the solution with appropriate prefixes.");
         sb.AppendLine("5. Use ONLY component names/types present in the provided data - do not invent.");

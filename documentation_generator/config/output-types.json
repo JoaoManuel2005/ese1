@@ -1,0 +1,18 @@
+[
+  {
+    "id": "documentation",
+    "title": "Documentation",
+    "description": "Generate comprehensive technical documentation for your solution",
+    "prompt": "Generate comprehensive technical documentation with clear headings, component descriptions, and technical details. Structure the output with sections: Overview, Components, Data Model, Integrations, and Summary.",
+    "mime": "application/pdf",
+    "keywords": ["documentation", "docs", "pdf", "document", "standard", "report"]
+  },
+  {
+    "id": "diagrams",
+    "title": "Diagrams",
+    "description": "Generate a custom diagram for your solution",
+    "prompt": "Generate a specified diagram for the user from the given additional prompt, output the file in mermaid. Focus on creating clear, well-structured mermaid diagrams. Include flowcharts for processes, entity relationship diagrams for data models, and sequence diagrams for interactions where appropriate. Output all diagrams as fenced mermaid code blocks. Minimise prose — let the diagrams do the work.",
+    "mime": "application/pdf",
+    "keywords": ["diagram", "diagrams", "mermaid", "chart", "flowchart", "flow chart", "visual", "graph", "er diagram", "sequence diagram", "architecture"]
+  }
+]

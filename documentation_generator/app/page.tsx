@@ -101,6 +101,15 @@ type ApiOutput = {
   htmlPreview?: string;
   markdownContent?: string;
 };
+
+type OutputType = {
+  id: string;
+  title: string;
+  description: string;
+  prompt: string;
+  mime: string;
+  keywords: string[];
+};
 type PersistedDocument = {
   filename: string;
   markdown: string;
@@ -166,6 +175,8 @@ export default function Page() {
   const [conversationList, setConversationList] = useState<ConversationListItem[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [isClient, setIsClient] = useState(false);
+  const [outputTypes, setOutputTypes] = useState<OutputType[]>([]);
+  const [selectedOutputTypeId, setSelectedOutputTypeId] = useState<string>("documentation");
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
   const hasAttemptedInitialRestoreRef = useRef(false);
@@ -623,6 +634,19 @@ export default function Page() {
     if (!isClient || !datasetId) return;
     localStorage.setItem("datasetId", datasetId);
   }, [datasetId, isClient]);
+
+  // Load output types from config
+  useEffect(() => {
+    fetch("/api/output-types")
+      .then((r) => r.json())
+      .then((data: OutputType[]) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setOutputTypes(data);
+          setSelectedOutputTypeId(data[0].id);
+        }
+      })
+      .catch(() => {/* keep defaults */});
+  }, []);
 
   // Load system prompt: from API when authenticated, from sessionStorage when not
   useEffect(() => {
@@ -1291,13 +1315,20 @@ export default function Page() {
       .map(msg => `${msg.role}: ${msg.content}`)
       .join('\n');
 
+    // Append selected output type prompt to system prompt
+    const activeOutputType = outputTypes.find((t) => t.id === selectedOutputTypeId);
+    const baseSystemPrompt = (systemPrompt && systemPrompt.trim()) || undefined;
+    const effectiveSystemPrompt = activeOutputType
+      ? [baseSystemPrompt, activeOutputType.prompt].filter(Boolean).join("\n\n")
+      : baseSystemPrompt;
+
     const genRes = await fetch("/api/generate-solution-docs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         solution: solutionForGeneration,
         doc_type: "markdown",
-        systemPrompt: (systemPrompt && systemPrompt.trim()) || undefined,
+        systemPrompt: effectiveSystemPrompt || undefined,
         provider: llmSelection.provider,
         model: modelForProvider,
         dataset_id: activeDatasetId,
@@ -1322,7 +1353,9 @@ export default function Page() {
   async function createSolutionOutput(parsedSolution: ParsedSolutionResult, documentation: string) {
     const solutionName = parsedSolution.solution_name || "solution";
     const componentsCount = Array.isArray(parsedSolution.components) ? parsedSolution.components.length : 0;
-    const filename = `${solutionName}_documentation.pdf`;
+    const activeOutputType = outputTypes.find((t) => t.id === selectedOutputTypeId);
+    const outputLabel = activeOutputType ? activeOutputType.id : "documentation";
+    const filename = `${solutionName}_${outputLabel}.pdf`;
     const metadata = `Version: ${parsedSolution.version || "N/A"} | Publisher: ${parsedSolution.publisher || "Unknown"} | Components: ${componentsCount}`;
 
     const pdfResponse = await fetch("/api/markdown-to-pdf", {
@@ -1373,7 +1406,7 @@ export default function Page() {
         {
           id: successId,
           role: "assistant",
-          content: "Document regenerated successfully. Your preferences have been applied. Check the Output Files panel to view the updated PDF.",
+          content: `Document regenerated successfully as ${activeOutputType ? activeOutputType.title : "PDF"}. Your preferences have been applied. Check the Output Files panel to view the updated output.`,
         },
       ]);
     }
@@ -1625,6 +1658,15 @@ export default function Page() {
 
       // Check if user wants to regenerate documentation BEFORE updating chat
       const lowerText = text.toLowerCase();
+
+      // Detect output type intent from chat message and switch if matched
+      const matchedOutputType = outputTypes.find((t) =>
+        t.keywords.some((kw) => lowerText.includes(kw.toLowerCase()))
+      );
+      if (matchedOutputType && matchedOutputType.id !== selectedOutputTypeId) {
+        setSelectedOutputTypeId(matchedOutputType.id);
+      }
+
       const regenerateKeywords = [
         'regenerate', 'generate', 're-generate',
         'update doc', 'update documentation', 'update the doc',
@@ -2075,6 +2117,15 @@ export default function Page() {
         <section className="panel">
           <div className="panel-header">Output Files</div>
           <div style={{ marginBottom: 8 }}>
+            {outputTypes.length > 0 && (() => {
+              const active = outputTypes.find((t) => t.id === selectedOutputTypeId);
+              return active ? (
+                <div style={{ fontSize: 11, color: "#777", marginBottom: 6 }}>
+                  Output type: <strong style={{ color: "var(--foreground)" }}>{active.title}</strong>
+                  <span style={{ marginLeft: 6, color: "#aaa" }}>— change via chat (e.g. "generate a diagram")</span>
+                </div>
+              ) : null;
+            })()}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button
                 onClick={generateDocs}

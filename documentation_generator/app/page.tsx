@@ -1011,15 +1011,23 @@ export default function Page() {
     if (!fileList) return;
     const incoming = (Array.isArray(fileList) ? fileList : Array.from(fileList)).filter(isSolutionFile);
     if (!incoming.length) return;
-    if (files.length === 0) {
-      const nextDatasetId = createDatasetId();
-      setDatasetId(nextDatasetId);
-      setDocsIngestSignature(null);
-      void syncConversationDataset(nextDatasetId);
+    const [nextFile] = incoming;
+    if (!nextFile) return;
+    const nextDatasetId = createDatasetId();
+    const oldId = datasetId;
+    setDatasetId(nextDatasetId);
+    setDocsIngestSignature(null);
+    setSolutionIngestSignature(null);
+    setCorpusType(null);
+    setCorpusReason(null);
+    resetParsedSolutionState();
+    if (oldId) {
+      void resetDataset(oldId);
     }
+    void syncConversationDataset(nextDatasetId);
 
     const processed = await Promise.all(
-      incoming.map(async (file) => {
+      [nextFile].map(async (file) => {
         return {
           name: file.name,
           type: file.type || "unknown",
@@ -1031,7 +1039,7 @@ export default function Page() {
       })
     );
 
-    setFiles((prev) => [...prev, ...processed]);
+    setFiles(processed);
   }
 
   function removeFile(index: number) {

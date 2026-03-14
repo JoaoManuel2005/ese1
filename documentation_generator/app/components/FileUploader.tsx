@@ -72,7 +72,11 @@ export default function FileUploader({
               </div>
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
                 style={{
                   border: "1px solid var(--border)",
                   background: "var(--panel-bg)",

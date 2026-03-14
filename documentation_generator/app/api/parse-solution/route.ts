@@ -82,16 +82,16 @@ export async function POST(req: Request) {
     if (!file) {
       return jsonError(
         "INVALID_INPUT",
-        "This action requires a Power Platform solution (.zip).",
-        "Upload solution.zip or switch to Chat/RAG mode."
+        "Only .zip solution files are supported.",
+        "Upload a Power Platform solution .zip file."
       );
     }
 
     if (!file.name.toLowerCase().endsWith(".zip")) {
       return jsonError(
         "INVALID_INPUT",
-        "This action requires a Power Platform solution (.zip).",
-        "Upload solution.zip or switch to Chat/RAG mode."
+        "Only .zip solution files are supported.",
+        "Upload a Power Platform solution .zip file."
       );
     }
 

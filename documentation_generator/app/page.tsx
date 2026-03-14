@@ -1012,13 +1012,14 @@ export default function Page() {
 
   async function addFiles(fileList: FileList | File[] | null) {
     if (!fileList) return;
+    const incoming = (Array.isArray(fileList) ? fileList : Array.from(fileList)).filter(isSolutionFile);
+    if (!incoming.length) return;
     if (files.length === 0) {
       const nextDatasetId = createDatasetId();
       setDatasetId(nextDatasetId);
       setDocsIngestSignature(null);
       void syncConversationDataset(nextDatasetId);
     }
-    const incoming = Array.isArray(fileList) ? fileList : Array.from(fileList);
 
     const processed = await Promise.all(
       incoming.map(async (file) => {
@@ -1394,7 +1395,7 @@ export default function Page() {
   }
 
   async function generateDocs() {
-    if (generating || files.length === 0) return;
+    if (generating || files.length === 0 || !files.every((f) => f.name.toLowerCase().endsWith(".zip")) || !hasSolutionFile()) return;
     setGenerating(true);
     setGenerateError(null);
     setGenerateProgress(hasSolutionFile() ? { stage: "Starting...", percent: 0 } : { stage: "Generating...", percent: 0 });
@@ -1817,11 +1818,13 @@ export default function Page() {
     model: provider === "cloud" ? selectedModel || undefined : localModel || undefined,
   };
   const hasFiles = files.length > 0;
+  const hasOnlyZipFiles = hasFiles && files.every((f) => f.name.toLowerCase().endsWith(".zip"));
   const hasSolution = hasSolutionFile();
-  const hasOnlyNonSolution = hasFiles && !hasSolution;
+  const hasOnlyNonSolution = hasFiles && (!hasOnlyZipFiles || !hasSolution);
   const uploadType = uploadClassification?.type || null;
   const uploadReason = uploadClassification?.reason || null;
   const hasInvalidZip = uploadType === "unsupported" && files.some((f) => f.name.toLowerCase().endsWith(".zip"));
+  const canGenerate = hasOnlyZipFiles && hasSolution && !generating;
   const displayType = corpusType || uploadType;
   const displayReason = corpusReason || uploadReason;
 
@@ -2084,15 +2087,15 @@ export default function Page() {
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button
                 onClick={generateDocs}
-                disabled={!hasFiles || generating}
+                disabled={!canGenerate}
                 style={{
                   padding: "8px 12px",
                   borderRadius: 8,
                   border: hasSolution ? "1px solid var(--border)" : "1px solid var(--border)",
                   background: generating ? "#727476" : hasSolution ? "var(--panel-bg)" : "var(--panel-bg)",
                   color: "var(--foreground)",
-                  cursor: !hasFiles || generating ? "not-allowed" : "pointer",
-                  opacity: !hasFiles || generating ? 0.7 : 1,
+                  cursor: !canGenerate ? "not-allowed" : "pointer",
+                  opacity: !canGenerate ? 0.7 : 1,
                 }}
               >
                 {generating 
@@ -2106,7 +2109,7 @@ export default function Page() {
                 ? "Upload a .zip solution file to enable generation."
                 : hasSolution
                 ? "Will parse solution with PAC CLI, then generate docs with RAG pipeline."
-                : "Only .zip solution files are supported for solution documentation."}
+                : "Upload a valid Power Platform solution .zip to enable generation."}
               </div>
             </div>
             {generateProgress && (
@@ -2138,7 +2141,7 @@ export default function Page() {
           </div>
           {hasOnlyNonSolution && (
             <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
-              Only .zip solution files are supported for solution documentation.
+              Upload a valid Power Platform solution .zip to continue.
             </div>
           )}
           {generateError && (

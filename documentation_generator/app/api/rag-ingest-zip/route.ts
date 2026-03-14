@@ -55,10 +55,11 @@ export async function POST(req: Request) {
     const data = await response.json();
     return NextResponse.json(data);
 
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Internal server error";
     console.error("Ingest ZIP error:", error);
     return NextResponse.json(
-      { error: error?.message || "Internal server error" },
+      { error: message },
       { status: 500 }
     );
   }

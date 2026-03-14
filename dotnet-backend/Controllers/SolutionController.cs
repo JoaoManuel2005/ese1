@@ -32,7 +32,7 @@ public class SolutionController : ControllerBase
     public async Task<IActionResult> ParseSolution(IFormFile file)
     {
         if (!file.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            return BadRequest(Error("INVALID_SOLUTION_ZIP", "File must be a .zip Power Platform solution export."));
+            return BadRequest(Error("INVALID_SOLUTION_ZIP", "Only .zip solution files are supported."));
 
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);

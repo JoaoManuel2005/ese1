@@ -9,6 +9,8 @@ type Props = {
   clearFiles?: () => void;
   displayType?: string | null;
   displayReason?: string | null;
+  uploadDisabled?: boolean;
+  disabledMessage?: string | null;
 };
 
 export default function FileUploader({
@@ -18,12 +20,15 @@ export default function FileUploader({
   clearFiles,
   displayType,
   displayReason,
+  uploadDisabled = false,
+  disabledMessage = null,
 }: Props) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   function addFiles(list: FileList | null) {
+    if (uploadDisabled) return;
     if (!list) return;
     const incoming = Array.from(list);
     const validFiles = incoming.filter((file) => file.name.toLowerCase().endsWith(".zip"));
@@ -62,9 +67,13 @@ export default function FileUploader({
           <div className="panel-header">Input Files</div>
           <div
             className={`dropzone${isDragging ? " dragging" : ""}`}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (uploadDisabled) return;
+              fileInputRef.current?.click();
+            }}
             onDragOver={(e) => {
               e.preventDefault();
+              if (uploadDisabled) return;
               setIsDragging(true);
             }}
             onDragLeave={(e) => {
@@ -74,14 +83,17 @@ export default function FileUploader({
             onDrop={(e) => {
               e.preventDefault();
               setIsDragging(false);
+              if (uploadDisabled) return;
               void addFiles(e.dataTransfer.files);
             }}
+            style={uploadDisabled ? { opacity: 0.7, cursor: "not-allowed" } : undefined}
           >
             <input
               ref={fileInputRef}
               type="file"
               accept=".zip,application/zip,application/x-zip-compressed"
               multiple
+              disabled={uploadDisabled}
               style={{ display: "none" }}
               onChange={(e) => void addFiles(e.target.files)}
             />
@@ -97,15 +109,18 @@ export default function FileUploader({
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
+                  if (uploadDisabled) return;
                   fileInputRef.current?.click();
                 }}
+                disabled={uploadDisabled}
                 style={{
                   border: "1px solid var(--border)",
                   background: "var(--panel-bg)",
                   color: "var(--foreground)",
                   padding: "8px 12px",
                   borderRadius: 8,
-                  cursor: "pointer",
+                  cursor: uploadDisabled ? "not-allowed" : "pointer",
+                  opacity: uploadDisabled ? 0.7 : 1,
                   boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
                 }}
               >
@@ -113,6 +128,17 @@ export default function FileUploader({
               </button>
             </div>
           </div>
+          {disabledMessage && (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: "var(--danger)",
+              }}
+            >
+              {disabledMessage}
+            </div>
+          )}
           {uploadError && (
             <div
               style={{

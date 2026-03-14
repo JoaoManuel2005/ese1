@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     }
 
     if (!file.name.toLowerCase().endsWith(".zip")) {
-      return NextResponse.json({ error: "File must be a .zip solution file" }, { status: 400 });
+      return NextResponse.json({ error: "Only .zip solution files are supported." }, { status: 400 });
     }
 
     // Forward the ZIP file directly to the backend for full ingestion
@@ -55,10 +55,11 @@ export async function POST(req: Request) {
     const data = await response.json();
     return NextResponse.json(data);
 
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Internal server error";
     console.error("Ingest ZIP error:", error);
     return NextResponse.json(
-      { error: error?.message || "Internal server error" },
+      { error: message },
       { status: 500 }
     );
   }

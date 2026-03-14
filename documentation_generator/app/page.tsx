@@ -23,6 +23,10 @@ import {
   shouldAttemptSharePointUserEnrichment,
   splitParsedSolutionData,
 } from "./utils/solutionSharePoint";
+import {
+  canGenerateSolutionDocs,
+  hasInvalidSelectedFiles as hasInvalidSelectedFilesInState,
+} from "./utils/solutionUploadValidation";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -106,8 +110,7 @@ type PersistedDocument = {
 };
 
 const MAX_TEXT_CHARS = 200 * 1024; // ~200KB cap for in-memory text
-const TEXT_EXTS = ["txt", "md", "json", "csv", "js", "ts", "py"];
-const SOLUTION_EXT = "zip"; // Power Platform solution files
+const SOLUTION_EXT = "zip"; // Supported upload type for solution documentation
 const MAX_TOTAL_TEXT_CHARS = 400 * 1024; // overall cap we send to backend
 const DEFAULT_TEMP = 0.5;
 const DEFAULT_SOLUTION_SYSTEM_PROMPT =
@@ -999,12 +1002,6 @@ export default function Page() {
     return URL.createObjectURL(blob);
   }
 
-  function isTextFile(file: File) {
-    const ext = file.name.split(".").pop()?.toLowerCase();
-    if (!ext) return false;
-    return TEXT_EXTS.includes(ext);
-  }
-
   function isSolutionFile(file: File) {
     const ext = file.name.split(".").pop()?.toLowerCase();
     return ext === SOLUTION_EXT;
@@ -1012,48 +1009,37 @@ export default function Page() {
 
   async function addFiles(fileList: FileList | File[] | null) {
     if (!fileList) return;
-    if (files.length === 0) {
-      const nextDatasetId = createDatasetId();
-      setDatasetId(nextDatasetId);
-      setDocsIngestSignature(null);
-      void syncConversationDataset(nextDatasetId);
+    const incoming = (Array.isArray(fileList) ? fileList : Array.from(fileList)).filter(isSolutionFile);
+    if (!incoming.length) return;
+    const [nextFile] = incoming;
+    if (!nextFile) return;
+    const nextDatasetId = createDatasetId();
+    const oldId = datasetId;
+    setDatasetId(nextDatasetId);
+    setDocsIngestSignature(null);
+    setSolutionIngestSignature(null);
+    setCorpusType(null);
+    setCorpusReason(null);
+    resetParsedSolutionState();
+    if (oldId) {
+      void resetDataset(oldId);
     }
-    const incoming = Array.isArray(fileList) ? fileList : Array.from(fileList);
+    void syncConversationDataset(nextDatasetId);
 
     const processed = await Promise.all(
-      incoming.map(async (file) => {
-        const base: AttachedFile = {
+      [nextFile].map(async (file) => {
+        return {
           name: file.name,
           type: file.type || "unknown",
           size: file.size,
           isText: false,
           file,
+          text: "[Power Platform Solution - will be parsed with PAC CLI]",
         };
-
-        // Handle .zip solution files - keep original File reference
-        if (isSolutionFile(file)) {
-          return { ...base, text: "[Power Platform Solution - will be parsed with PAC CLI]", isText: false };
-        }
-
-        if (!isTextFile(file)) {
-          return { ...base, text: undefined, truncated: false };
-        }
-
-        try {
-          let text = await file.text();
-          let truncated = false;
-          if (text.length > MAX_TEXT_CHARS) {
-            text = text.slice(0, MAX_TEXT_CHARS) + `\n\n[Truncated after ${MAX_TEXT_CHARS} characters]`;
-            truncated = true;
-          }
-          return { ...base, isText: true, text, truncated };
-        } catch {
-          return { ...base, error: "Failed to read file", isText: false };
-        }
       })
     );
 
-    setFiles((prev) => [...prev, ...processed]);
+    setFiles(processed);
   }
 
   function removeFile(index: number) {
@@ -1394,7 +1380,7 @@ export default function Page() {
   }
 
   async function generateDocs() {
-    if (generating || files.length === 0) return;
+    if (generating || files.length === 0 || !files.every((f) => f.name.toLowerCase().endsWith(".zip")) || !hasSolutionFile()) return;
     setGenerating(true);
     setGenerateError(null);
     setGenerateProgress(hasSolutionFile() ? { stage: "Starting...", percent: 0 } : { stage: "Generating...", percent: 0 });
@@ -1817,11 +1803,17 @@ export default function Page() {
     model: provider === "cloud" ? selectedModel || undefined : localModel || undefined,
   };
   const hasFiles = files.length > 0;
+  const hasInvalidSelectedFiles = hasInvalidSelectedFilesInState(files);
+  const hasOnlyZipFiles = hasFiles && files.every((f) => f.name.toLowerCase().endsWith(".zip"));
   const hasSolution = hasSolutionFile();
-  const hasOnlyNonSolution = hasFiles && !hasSolution;
+  const hasOnlyNonSolution = hasFiles && (!hasOnlyZipFiles || !hasSolution);
   const uploadType = uploadClassification?.type || null;
   const uploadReason = uploadClassification?.reason || null;
   const hasInvalidZip = uploadType === "unsupported" && files.some((f) => f.name.toLowerCase().endsWith(".zip"));
+  const canGenerate = canGenerateSolutionDocs({ files, uploadClassification, generating });
+  const invalidStateMessage = hasInvalidSelectedFiles
+    ? "Remove the invalid file before uploading more files or generating documentation."
+    : null;
   const displayType = corpusType || uploadType;
   const displayReason = corpusReason || uploadReason;
 
@@ -1898,6 +1890,8 @@ export default function Page() {
           clearFiles={clearFiles}
           displayType={corpusType}
           displayReason={corpusReason}
+          uploadDisabled={hasInvalidSelectedFiles}
+          disabledMessage={invalidStateMessage}
         />
         </section>
 
@@ -2084,29 +2078,31 @@ export default function Page() {
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button
                 onClick={generateDocs}
-                disabled={!hasFiles || generating}
+                disabled={!canGenerate}
                 style={{
                   padding: "8px 12px",
                   borderRadius: 8,
                   border: hasSolution ? "1px solid var(--border)" : "1px solid var(--border)",
                   background: generating ? "#727476" : hasSolution ? "var(--panel-bg)" : "var(--panel-bg)",
                   color: "var(--foreground)",
-                  cursor: !hasFiles || generating ? "not-allowed" : "pointer",
-                  opacity: !hasFiles || generating ? 0.7 : 1,
+                  cursor: !canGenerate ? "not-allowed" : "pointer",
+                  opacity: !canGenerate ? 0.7 : 1,
                 }}
               >
                 {generating 
                   ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
-                  : (hasSolution ? "Parse & Generate Docs" : "Generate docs")}
+                  : (hasSolution ? "Parse & Generate Docs" : "Generate Documentation")}
               </button>
               <div style={{ fontSize: 12, color: "#555" }}>
               {hasInvalidZip
-                ? "Solution docs require a Power Platform solution (.zip export). For other files, use Chat/RAG mode."
+                ? "Only .zip solution files are supported for solution documentation."
+                : hasInvalidSelectedFiles
+                ? "Remove the invalid file before continuing."
                 : !hasFiles
-                ? "Select files to enable generation."
+                ? "Upload a .zip solution file to enable generation."
                 : hasSolution
                 ? "Will parse solution with PAC CLI, then generate docs with RAG pipeline."
-                : "Uses attached files with current model/system prompt/temperature."}
+                : "Upload a valid Power Platform solution .zip to enable generation."}
               </div>
             </div>
             {generateProgress && (
@@ -2138,7 +2134,9 @@ export default function Page() {
           </div>
           {hasOnlyNonSolution && (
             <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
-              Solution docs require a .zip export. For other files, use Chat/RAG mode or Generate docs.
+              {hasInvalidSelectedFiles
+                ? "Remove the invalid file before continuing."
+                : "Upload a valid Power Platform solution .zip to continue."}
             </div>
           )}
           {generateError && (

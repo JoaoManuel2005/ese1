@@ -118,4 +118,20 @@ describe("POST /api/parse-solution", () => {
       components: [{ id: "comp-1" }],
     });
   });
+
+  it("rejects non-zip uploads with a clear client-facing error", async () => {
+    const response = await POST(createRequest("notes.txt"));
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload).toEqual({
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "Only .zip solution files are supported.",
+        hint: "Upload a Power Platform solution .zip file.",
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

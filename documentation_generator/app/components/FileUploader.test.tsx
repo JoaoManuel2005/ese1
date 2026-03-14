@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import FileUploader from "./FileUploader";
 import type { AttachedFile } from "../types";
+import { fireEvent } from "@testing-library/react";
 
 function makeAttachedFile(overrides: Partial<AttachedFile> = {}): AttachedFile {
   return {
@@ -144,5 +145,68 @@ describe("FileUploader", () => {
       <FileUploader files={files} onAdd={vi.fn()} onRemove={vi.fn()} />
     );
     expect(screen.getByText("Failed to read")).toBeInTheDocument();
+  });
+
+  it("limits the file picker to zip files", () => {
+    const { container } = render(
+      <FileUploader files={[]} onAdd={vi.fn()} onRemove={vi.fn()} />
+    );
+
+    const input = container.querySelector('input[type="file"]');
+    expect(input).toHaveAttribute("accept", ".zip,application/zip,application/x-zip-compressed");
+  });
+
+  it("rejects non-zip files from the file picker and shows an error", () => {
+    const onAdd = vi.fn();
+    const { container } = render(
+      <FileUploader files={[]} onAdd={onAdd} onRemove={vi.fn()} />
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const txtFile = new File(["hello"], "notes.txt", { type: "text/plain" });
+
+    fireEvent.change(input, { target: { files: [txtFile] } });
+
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(screen.getByText(/Only \.zip solution files are supported\. Rejected: notes\.txt\./)).toBeInTheDocument();
+  });
+
+  it("accepts zip files and clears prior upload errors", () => {
+    const onAdd = vi.fn();
+    const { container } = render(
+      <FileUploader files={[]} onAdd={onAdd} onRemove={vi.fn()} />
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const txtFile = new File(["hello"], "notes.txt", { type: "text/plain" });
+    const zipFile = new File(["zip"], "solution.zip", { type: "application/zip" });
+
+    fireEvent.change(input, { target: { files: [txtFile] } });
+    expect(screen.getByText(/Rejected: notes\.txt\./)).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { files: [zipFile] } });
+
+    expect(onAdd).toHaveBeenCalledWith([zipFile]);
+    expect(screen.queryByText(/Rejected: notes\.txt\./)).not.toBeInTheDocument();
+  });
+
+  it("accepts dropped zip files and rejects dropped non-zip files", () => {
+    const onAdd = vi.fn();
+    render(<FileUploader files={[]} onAdd={onAdd} onRemove={vi.fn()} />);
+
+    const dropzone = screen.getByText("Upload a .zip solution file").closest(".dropzone");
+    expect(dropzone).not.toBeNull();
+
+    const zipFile = new File(["zip"], "solution.zip", { type: "application/zip" });
+    const txtFile = new File(["hello"], "notes.txt", { type: "text/plain" });
+
+    fireEvent.drop(dropzone!, {
+      dataTransfer: {
+        files: [zipFile, txtFile],
+      },
+    });
+
+    expect(onAdd).toHaveBeenCalledWith([zipFile]);
+    expect(screen.getByText(/Only \.zip solution files are supported\. Rejected: notes\.txt\./)).toBeInTheDocument();
   });
 });

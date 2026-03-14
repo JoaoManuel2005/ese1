@@ -356,7 +356,7 @@ public class PacParserService
                 _logger.LogInformation("[PAC]   Entity subdirectories: {Dirs}", string.Join(", ", subDirs));
                 
                 var entityXml = Path.Combine(entityDir, "Entity.xml");
-                
+
                 string displayName = entityName;
                 if (File.Exists(entityXml))
                 {
@@ -367,21 +367,15 @@ public class PacParserService
                     }
                     catch { /* use folder name */ }
                 }
-                
-                solution.Components.Add(new SolutionComponent
-                {
-                    Name = entityName,
-                    Type = "entity",
-                    Description = $"Table: {displayName}"
-                });
 
-                // Count INDIVIDUAL attributes/fields
+                // Parse lookup relationships from attribute XML files before creating the entity component
+                var lookupRelationships = new List<string>(); // "fieldName:targetEntity"
                 var attrsDir = Path.Combine(entityDir, "Attributes");
                 if (Directory.Exists(attrsDir))
                 {
                     var attrFiles = Directory.GetFiles(attrsDir, "*.xml");
                     _logger.LogInformation("[PAC]   Found {Count} attributes in {Entity}", attrFiles.Length, entityName);
-                    
+
                     foreach (var attrFile in attrFiles)
                     {
                         var attrName = Path.GetFileNameWithoutExtension(attrFile);
@@ -392,12 +386,48 @@ public class PacParserService
                             Description = $"Field: {attrName} (in {entityName})",
                             Metadata = new Dictionary<string, object> { ["entity"] = entityName }
                         });
+
+                        // Extract lookup target if this is a lookup field
+                        try
+                        {
+                            var attrDoc = XDocument.Load(attrFile);
+                            var attrType = attrDoc.Root?.Element("AttributeType")?.Value
+                                        ?? attrDoc.Root?.Attribute("Type")?.Value
+                                        ?? string.Empty;
+                            if (attrType.Equals("Lookup", StringComparison.OrdinalIgnoreCase)
+                                || attrType.Equals("LookupType", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var targets = attrDoc.Root?.Element("Targets")?.Value?.Trim();
+                                if (!string.IsNullOrWhiteSpace(targets))
+                                {
+                                    // Targets can be comma-separated for polymorphic lookups
+                                    foreach (var target in targets.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                                    {
+                                        if (!string.IsNullOrWhiteSpace(target))
+                                            lookupRelationships.Add($"{attrName}:{target}");
+                                    }
+                                }
+                            }
+                        }
+                        catch { /* skip malformed attribute files */ }
                     }
                 }
                 else
                 {
                     _logger.LogInformation("[PAC]   No Attributes directory found for {Entity}", entityName);
                 }
+
+                var entityMetadata = new Dictionary<string, object>();
+                if (lookupRelationships.Count > 0)
+                    entityMetadata["lookup_relationships"] = lookupRelationships;
+
+                solution.Components.Add(new SolutionComponent
+                {
+                    Name = entityName,
+                    Type = "entity",
+                    Description = $"Table: {displayName}",
+                    Metadata = entityMetadata.Count > 0 ? entityMetadata : null
+                });
 
                 // Count INDIVIDUAL forms
                 var formsDir = Path.Combine(entityDir, "FormXml");

@@ -2097,16 +2097,16 @@ export default function Page() {
               >
                 {generating 
                   ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
-                  : (hasSolution ? "Parse & Generate Docs" : "Generate docs")}
+                  : (hasSolution ? "Parse & Generate Docs" : "Generate Documentation")}
               </button>
               <div style={{ fontSize: 12, color: "#555" }}>
               {hasInvalidZip
-                ? "Solution docs require a Power Platform solution (.zip export). For other files, use Chat/RAG mode."
+                ? "Only .zip solution files are supported for solution documentation."
                 : !hasFiles
-                ? "Select files to enable generation."
+                ? "Upload a .zip solution file to enable generation."
                 : hasSolution
                 ? "Will parse solution with PAC CLI, then generate docs with RAG pipeline."
-                : "Uses attached files with current model/system prompt/temperature."}
+                : "Only .zip solution files are supported for solution documentation."}
               </div>
             </div>
             {generateProgress && (
@@ -2138,7 +2138,7 @@ export default function Page() {
           </div>
           {hasOnlyNonSolution && (
             <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
-              Solution docs require a .zip export. For other files, use Chat/RAG mode or Generate docs.
+              Only .zip solution files are supported for solution documentation.
             </div>
           )}
           {generateError && (

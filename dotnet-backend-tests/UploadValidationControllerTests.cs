@@ -75,9 +75,20 @@ public class UploadValidationControllerTests
 
     private static Dictionary<string, object?> ToDictionary(object value)
     {
+        if (value is IDictionary<string, object?> direct)
+        {
+            return new Dictionary<string, object?>(direct);
+        }
+
+        if (value is IDictionary<string, string?> stringDict)
+        {
+            return stringDict.ToDictionary(kvp => kvp.Key, kvp => (object?)kvp.Value);
+        }
+
         var dict = new Dictionary<string, object?>();
         foreach (var prop in value.GetType().GetProperties())
         {
+            if (prop.GetIndexParameters().Length > 0) continue;
             dict[prop.Name] = prop.GetValue(value);
         }
 

@@ -65,9 +65,9 @@ export default function FileUploader({
             />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <div>
-                <div style={{ color: "var(--foreground)", fontWeight: 600, marginBottom: 4 }}>Upload or drop files</div>
+                <div style={{ color: "var(--foreground)", fontWeight: 600, marginBottom: 4 }}>Upload a .zip solution file</div>
                 <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                  Docs (txt, md, json) or <strong>.zip solution files</strong>. {isDragging ? "Drop files here" : "Click to choose or drag & drop."}
+                  Only <strong>.zip solution files</strong> are supported. {isDragging ? "Drop the .zip file here" : "Click to choose or drag & drop."}
                 </div>
               </div>
               <button
@@ -141,11 +141,11 @@ export default function FileUploader({
                             <span style={{ color: "var(--primary)", fontWeight: 500 }}>📦 Power Platform Solution (PAC CLI + RAG)</span>
                           ) : file.isText ? (
                             <>
-                              <span style={{ color: "var(--success)" }}>Text loaded</span>
+                              <span style={{ color: "var(--warning)" }}>Only .zip solution files are supported</span>
                               {file.truncated && <span style={{ color: "var(--warning)" }}>(truncated)</span>}
                             </>
                           ) : (
-                            <span style={{ color: "var(--muted)" }}>Metadata only (preview not supported)</span>
+                            <span style={{ color: "var(--muted)" }}>Only .zip solution files are supported</span>
                           )}
                         </div>
                       </div>
@@ -177,7 +177,7 @@ export default function FileUploader({
                       {displayType === "solution_zip" || displayType === "power_platform_solution_zip"
                         ? "Detected: Power Platform solution"
                         : displayType === "docs" || displayType === "generic_docs"
-                        ? "Detected: Documents"
+                        ? "Detected: Unsupported file type"
                         : "Detected: Unknown"}
                     </span>
                     {displayReason && (
@@ -188,7 +188,7 @@ export default function FileUploader({
               </div>
             </div>
           ) : (
-            <div style={{ ...placeholderBox, marginTop: 12 }}>No files selected yet.</div>
+            <div style={{ ...placeholderBox, marginTop: 12 }}>No .zip solution file selected yet.</div>
           )}
         </div>
   );

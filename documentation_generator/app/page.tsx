@@ -167,7 +167,19 @@ export default function Page() {
   const previewBlobUrlRef = useRef<string | null>(null);
   const hasAttemptedInitialRestoreRef = useRef(false);
   const activeConversationLoadRef = useRef(0);
+  const conversationIdRef = useRef<string | null>(null);
+  const creatingConversationRef = useRef<Promise<string> | null>(null);
   const { data: session, status } = useSession();
+
+  function applyConversationId(nextConversationId: string | null) {
+    conversationIdRef.current = nextConversationId;
+    setConversationId(nextConversationId);
+  }
+
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
+
 
   // Load SharePoint token from sessionStorage on mount
   useEffect(() => {
@@ -326,36 +338,52 @@ export default function Page() {
       throw new Error("Sign in to save document edits.");
     }
 
-    const response = await fetch("/api/conversations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        dataset_id: datasetId || null,
-        customer_name: customerName.trim() || null,
-        document_filename: document?.filename ?? null,
-        document_markdown: document?.markdown ?? null,
-        document_html: document?.htmlPreview ?? null,
-        document_pdf_base64: document?.bytesBase64 ?? null,
-        document_mime: document?.mime ?? "application/pdf",
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(await readRouteError(response, "Failed to create conversation."));
+    if (conversationIdRef.current) return conversationIdRef.current;
+    if (creatingConversationRef.current) {
+      return creatingConversationRef.current;
     }
 
-    const data = await response.json().catch(() => ({}));
-    if (typeof data?.conversation_id !== "string" || !data.conversation_id) {
-      throw new Error("Failed to create conversation.");
-    }
+    const createPromise = (async () => {
+      const response = await fetch("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dataset_id: datasetId || null,
+          customer_name: customerName.trim() || null,
+          document_filename: document?.filename ?? null,
+          document_markdown: document?.markdown ?? null,
+          document_html: document?.htmlPreview ?? null,
+          document_pdf_base64: document?.bytesBase64 ?? null,
+          document_mime: document?.mime ?? "application/pdf",
+        }),
+      });
 
-    setConversationId(data.conversation_id);
-    void refreshConversationList();
-    return data.conversation_id as string;
+      if (!response.ok) {
+        throw new Error(await readRouteError(response, "Failed to create conversation."));
+      }
+
+      const data = await response.json().catch(() => ({}));
+      if (typeof data?.conversation_id !== "string" || !data.conversation_id) {
+        throw new Error("Failed to create conversation.");
+      }
+
+      applyConversationId(data.conversation_id);
+      void refreshConversationList();
+      return data.conversation_id as string;
+    })();
+
+    creatingConversationRef.current = createPromise;
+    try {
+      return await createPromise;
+    } finally {
+      if (creatingConversationRef.current === createPromise) {
+        creatingConversationRef.current = null;
+      }
+    }
   }
 
   async function syncConversationDataset(nextDatasetId: string, targetConversationId?: string | null) {
-    const activeConversationId = targetConversationId ?? conversationId;
+    const activeConversationId = targetConversationId ?? conversationIdRef.current;
     if (!activeConversationId || status !== "authenticated" || !session?.user) return;
     await fetch(`/api/conversations/${activeConversationId}`, {
       method: "PATCH",
@@ -370,7 +398,7 @@ export default function Page() {
       throw new Error("Sign in to save document edits.");
     }
 
-    const activeConversationId = targetConversationId ?? conversationId;
+    const activeConversationId = targetConversationId ?? conversationIdRef.current;
     if (!activeConversationId) {
       return createConversationSession(document);
     }
@@ -512,8 +540,8 @@ export default function Page() {
       bytesBase64: renderedOutput.bytesBase64 || "",
       mime: renderedOutput.mime,
     });
-    if (savedConversationId !== conversationId) {
-      setConversationId(savedConversationId);
+    if (savedConversationId !== conversationIdRef.current) {
+      applyConversationId(savedConversationId);
     }
 
     setOutputs((prev) => prev.map((output) => (output.id === outputId ? renderedOutput : output)));
@@ -664,7 +692,7 @@ export default function Page() {
         );
         if (convData.dataset_id) setDatasetId(convData.dataset_id);
         setCustomerName(convData.customer_name || "");
-        setConversationId(convData.id);
+        applyConversationId(convData.id);
         void restorePersistedOutput(convData, firstId, loadToken);
       } catch {
         // ignore restore errors
@@ -1091,7 +1119,7 @@ export default function Page() {
     const nextDatasetId = createDatasetId();
     setChat([]);
     setMessage("");
-    setConversationId(null);
+    applyConversationId(null);
     setOutputs([]);
     setSelectedOutputId(null);
     setExpandedSources({});
@@ -1347,8 +1375,8 @@ export default function Page() {
         bytesBase64: output.bytesBase64 || "",
         mime: output.mime,
       });
-      if (savedConversationId !== conversationId) {
-        setConversationId(savedConversationId);
+      if (savedConversationId !== conversationIdRef.current) {
+        applyConversationId(savedConversationId);
       }
     }
 
@@ -1513,6 +1541,29 @@ export default function Page() {
     const text = (textParam ?? message).trim();
     if (!text || loading) return;
 
+    const hasSolutionPendingIngestion =
+      files.some((f) => !!f.file && f.name.toLowerCase().endsWith(".zip")) &&
+      !solutionIngestSignature &&
+      corpusType === null;
+    const hasDocsPendingIngestion =
+      files.some((f) => f.isText && typeof f.text === "string") &&
+      !docsIngestSignature &&
+      corpusType === null;
+    if (hasSolutionPendingIngestion || hasDocsPendingIngestion) {
+      setChat((c) => [
+        ...c,
+        { id: createMessageId(), role: "user", content: text },
+        {
+          id: createMessageId(),
+          role: "assistant",
+          content: "Files are still being ingested. Please wait a few seconds and try again.",
+          sources: [],
+        },
+      ]);
+      setMessage("");
+      return;
+    }
+
     // Check if user wants to clear the chat
     if (text.toLowerCase() === 'clear') {
       setChat([]);
@@ -1538,6 +1589,12 @@ export default function Page() {
     setLoading(true);
 
     try {
+      const currentSession = await getSession();
+      let activeConversationIdForSave: string | null = conversationIdRef.current;
+      if (currentSession?.user && !activeConversationIdForSave) {
+        activeConversationIdForSave = await createConversationSession();
+      }
+
       // Always use FREE RAG mode - queries ChromaDB for context
       const modelForProvider = llmSelection.model;
       const focusFiles = getFocusFiles(text, files);
@@ -1635,7 +1692,6 @@ export default function Page() {
         )
       );
       // Persist this exchange when user is signed in
-      const currentSession = await getSession();
       if (currentSession?.user) {
         const toSave = [
           { role: "user" as const, content: text },
@@ -1646,7 +1702,7 @@ export default function Page() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              conversation_id: conversationId ?? undefined,
+              conversation_id: activeConversationIdForSave ?? undefined,
               dataset_id: activeDatasetId,
               customer_name: customerName.trim() || undefined,
               messages: toSave,
@@ -1655,7 +1711,7 @@ export default function Page() {
           if (res.ok) {
             const data = await res.json();
             if (data.conversation_id) {
-              setConversationId(data.conversation_id);
+              applyConversationId(data.conversation_id);
             }
             const listRes = await fetch("/api/conversations");
             if (listRes.ok) {
@@ -1707,7 +1763,7 @@ export default function Page() {
       );
       if (data.dataset_id && files.length === 0) setDatasetId(data.dataset_id);
       setCustomerName(data.customer_name || "");
-      setConversationId(data.id);
+      applyConversationId(data.id);
       void restorePersistedOutput(data, id, loadToken);
     } catch {
       // ignore

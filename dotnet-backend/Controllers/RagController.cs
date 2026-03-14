@@ -76,7 +76,7 @@ public class RagController : ControllerBase
         dataset_id ??= "default";
 
         if (!file.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            return BadRequest(JsonError("INVALID_SOLUTION_ZIP", "File must be a .zip export."));
+            return BadRequest(JsonError("INVALID_SOLUTION_ZIP", "Only .zip solution files are supported."));
 
         var ingestLock = IngestLocks.GetOrAdd(dataset_id, _ => new SemaphoreSlim(1, 1));
         if (!await ingestLock.WaitAsync(0))

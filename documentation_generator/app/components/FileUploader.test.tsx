@@ -19,7 +19,7 @@ describe("FileUploader", () => {
     render(
       <FileUploader files={[]} onAdd={vi.fn()} onRemove={vi.fn()} />
     );
-    expect(screen.getByText("No files selected yet.")).toBeInTheDocument();
+    expect(screen.getByText("No .zip solution file selected yet.")).toBeInTheDocument();
   });
 
   it("shows Input Files header", () => {
@@ -114,7 +114,7 @@ describe("FileUploader", () => {
     expect(screen.getByText("Detected: Power Platform solution")).toBeInTheDocument();
   });
 
-  it("shows Detected: Documents when displayType is docs", () => {
+  it("shows Detected: Unsupported file type when displayType is docs", () => {
     render(
       <FileUploader
         files={[makeAttachedFile()]}
@@ -123,7 +123,7 @@ describe("FileUploader", () => {
         displayType="docs"
       />
     );
-    expect(screen.getByText("Detected: Documents")).toBeInTheDocument();
+    expect(screen.getByText("Detected: Unsupported file type")).toBeInTheDocument();
   });
 
   it("shows Detected: Unknown for other displayType", () => {

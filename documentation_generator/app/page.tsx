@@ -106,8 +106,7 @@ type PersistedDocument = {
 };
 
 const MAX_TEXT_CHARS = 200 * 1024; // ~200KB cap for in-memory text
-const TEXT_EXTS = ["txt", "md", "json", "csv", "js", "ts", "py"];
-const SOLUTION_EXT = "zip"; // Power Platform solution files
+const SOLUTION_EXT = "zip"; // Supported upload type for solution documentation
 const MAX_TOTAL_TEXT_CHARS = 400 * 1024; // overall cap we send to backend
 const DEFAULT_TEMP = 0.5;
 const DEFAULT_SOLUTION_SYSTEM_PROMPT =
@@ -999,12 +998,6 @@ export default function Page() {
     return URL.createObjectURL(blob);
   }
 
-  function isTextFile(file: File) {
-    const ext = file.name.split(".").pop()?.toLowerCase();
-    if (!ext) return false;
-    return TEXT_EXTS.includes(ext);
-  }
-
   function isSolutionFile(file: File) {
     const ext = file.name.split(".").pop()?.toLowerCase();
     return ext === SOLUTION_EXT;
@@ -1023,34 +1016,14 @@ export default function Page() {
 
     const processed = await Promise.all(
       incoming.map(async (file) => {
-        const base: AttachedFile = {
+        return {
           name: file.name,
           type: file.type || "unknown",
           size: file.size,
           isText: false,
           file,
+          text: "[Power Platform Solution - will be parsed with PAC CLI]",
         };
-
-        // Handle .zip solution files - keep original File reference
-        if (isSolutionFile(file)) {
-          return { ...base, text: "[Power Platform Solution - will be parsed with PAC CLI]", isText: false };
-        }
-
-        if (!isTextFile(file)) {
-          return { ...base, text: undefined, truncated: false };
-        }
-
-        try {
-          let text = await file.text();
-          let truncated = false;
-          if (text.length > MAX_TEXT_CHARS) {
-            text = text.slice(0, MAX_TEXT_CHARS) + `\n\n[Truncated after ${MAX_TEXT_CHARS} characters]`;
-            truncated = true;
-          }
-          return { ...base, isText: true, text, truncated };
-        } catch {
-          return { ...base, error: "Failed to read file", isText: false };
-        }
       })
     );
 

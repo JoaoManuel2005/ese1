@@ -23,6 +23,10 @@ import {
   shouldAttemptSharePointUserEnrichment,
   splitParsedSolutionData,
 } from "./utils/solutionSharePoint";
+import {
+  canGenerateSolutionDocs,
+  hasInvalidSelectedFiles as hasInvalidSelectedFilesInState,
+} from "./utils/solutionUploadValidation";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -1791,16 +1795,14 @@ export default function Page() {
     model: provider === "cloud" ? selectedModel || undefined : localModel || undefined,
   };
   const hasFiles = files.length > 0;
-  const hasInvalidSelectedFiles = files.some(
-    (f) => !f.name.toLowerCase().endsWith(".zip") || Boolean(f.error)
-  );
+  const hasInvalidSelectedFiles = hasInvalidSelectedFilesInState(files);
   const hasOnlyZipFiles = hasFiles && files.every((f) => f.name.toLowerCase().endsWith(".zip"));
   const hasSolution = hasSolutionFile();
   const hasOnlyNonSolution = hasFiles && (!hasOnlyZipFiles || !hasSolution);
   const uploadType = uploadClassification?.type || null;
   const uploadReason = uploadClassification?.reason || null;
   const hasInvalidZip = uploadType === "unsupported" && files.some((f) => f.name.toLowerCase().endsWith(".zip"));
-  const canGenerate = !hasInvalidSelectedFiles && hasOnlyZipFiles && hasSolution && !generating;
+  const canGenerate = canGenerateSolutionDocs({ files, uploadClassification, generating });
   const invalidStateMessage = hasInvalidSelectedFiles
     ? "Remove the invalid file before uploading more files or generating documentation."
     : null;

@@ -209,4 +209,23 @@ describe("FileUploader", () => {
     expect(onAdd).toHaveBeenCalledWith([zipFile]);
     expect(screen.getByText(/Only \.zip solution files are supported\. Rejected: notes\.txt\./)).toBeInTheDocument();
   });
+
+  it("disables further uploads when uploadDisabled is true", async () => {
+    const user = userEvent.setup();
+    const onAdd = vi.fn();
+    render(
+      <FileUploader
+        files={[makeAttachedFile({ name: "bad.txt", error: "Invalid file type" })]}
+        onAdd={onAdd}
+        onRemove={vi.fn()}
+        uploadDisabled
+        disabledMessage="Remove the invalid file before uploading more files or generating documentation."
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Browse" }));
+
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(screen.getByText("Remove the invalid file before uploading more files or generating documentation.")).toBeInTheDocument();
+  });
 });

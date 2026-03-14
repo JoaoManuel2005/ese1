@@ -20,11 +20,32 @@ export default function FileUploader({
   displayReason,
 }: Props) {
   const [isDragging, setIsDragging] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   function addFiles(list: FileList | null) {
     if (!list) return;
-    onAdd(Array.from(list));
+    const incoming = Array.from(list);
+    const validFiles = incoming.filter((file) => file.name.toLowerCase().endsWith(".zip"));
+    const invalidFiles = incoming.filter((file) => !file.name.toLowerCase().endsWith(".zip"));
+
+    if (invalidFiles.length > 0) {
+      const invalidNames = invalidFiles
+        .slice(0, 2)
+        .map((file) => file.name)
+        .join(", ");
+      const moreCount = invalidFiles.length - 2;
+      setUploadError(
+        `Only .zip solution files are supported. Rejected: ${invalidNames}${moreCount > 0 ? ` and ${moreCount} more` : ""}.`
+      );
+    } else {
+      setUploadError(null);
+    }
+
+    if (validFiles.length > 0) {
+      onAdd(validFiles);
+    }
+
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -59,6 +80,7 @@ export default function FileUploader({
             <input
               ref={fileInputRef}
               type="file"
+              accept=".zip,application/zip,application/x-zip-compressed"
               multiple
               style={{ display: "none" }}
               onChange={(e) => void addFiles(e.target.files)}
@@ -91,6 +113,17 @@ export default function FileUploader({
               </button>
             </div>
           </div>
+          {uploadError && (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: "var(--danger)",
+              }}
+            >
+              {uploadError}
+            </div>
+          )}
 
           {files.length > 0 ? (
             <div style={{ marginTop: 12 }}>

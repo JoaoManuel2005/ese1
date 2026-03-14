@@ -129,9 +129,10 @@ export async function POST(req: Request) {
 
     const data = await response.json();
     return NextResponse.json(normalizeParseSolutionResponse(data));
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Parse solution error:", error);
-    return jsonError("SERVER_ERROR", error?.message || "Internal server error", undefined, 500);
+    const message = error instanceof Error ? error.message : "Internal server error";
+    return jsonError("SERVER_ERROR", message, undefined, 500);
   }
 }
 

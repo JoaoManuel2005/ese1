@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import FileUploader from "./FileUploader";
 import type { AttachedFile } from "../types";
 import { fireEvent } from "@testing-library/react";
+import { useState } from "react";
 
 function makeAttachedFile(overrides: Partial<AttachedFile> = {}): AttachedFile {
   return {
@@ -13,6 +14,29 @@ function makeAttachedFile(overrides: Partial<AttachedFile> = {}): AttachedFile {
     isText: false,
     ...overrides,
   };
+}
+
+function FileUploaderStateHarness() {
+  const [files, setFiles] = useState<AttachedFile[]>([]);
+
+  return (
+    <FileUploader
+      files={files}
+      onAdd={(newFiles) =>
+        setFiles((prev) => [
+          ...prev,
+          ...newFiles.map((file) => ({
+            name: file.name,
+            type: file.type || "unknown",
+            size: file.size,
+            isText: false,
+            file,
+          })),
+        ])
+      }
+      onRemove={(index) => setFiles((prev) => prev.filter((_, i) => i !== index))}
+    />
+  );
 }
 
 describe("FileUploader", () => {
@@ -169,6 +193,18 @@ describe("FileUploader", () => {
 
     expect(onAdd).not.toHaveBeenCalled();
     expect(screen.getByText(/Only \.zip solution files are supported\. Rejected: notes\.txt\./)).toBeInTheDocument();
+  });
+
+  it("does not add rejected invalid files to the selected file list", () => {
+    const { container } = render(<FileUploaderStateHarness />);
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const txtFile = new File(["hello"], "notes.txt", { type: "text/plain" });
+
+    fireEvent.change(input, { target: { files: [txtFile] } });
+
+    expect(screen.queryByText("notes.txt")).not.toBeInTheDocument();
+    expect(screen.getByText("No .zip solution file selected yet.")).toBeInTheDocument();
   });
 
   it("accepts zip files and clears prior upload errors", () => {

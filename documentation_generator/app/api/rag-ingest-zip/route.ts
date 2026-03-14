@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     }
 
     if (!file.name.toLowerCase().endsWith(".zip")) {
-      return NextResponse.json({ error: "File must be a .zip solution file" }, { status: 400 });
+      return NextResponse.json({ error: "Only .zip solution files are supported." }, { status: 400 });
     }
 
     // Forward the ZIP file directly to the backend for full ingestion

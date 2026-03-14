@@ -1818,13 +1818,19 @@ export default function Page() {
     model: provider === "cloud" ? selectedModel || undefined : localModel || undefined,
   };
   const hasFiles = files.length > 0;
+  const hasInvalidSelectedFiles = files.some(
+    (f) => !f.name.toLowerCase().endsWith(".zip") || Boolean(f.error)
+  );
   const hasOnlyZipFiles = hasFiles && files.every((f) => f.name.toLowerCase().endsWith(".zip"));
   const hasSolution = hasSolutionFile();
   const hasOnlyNonSolution = hasFiles && (!hasOnlyZipFiles || !hasSolution);
   const uploadType = uploadClassification?.type || null;
   const uploadReason = uploadClassification?.reason || null;
   const hasInvalidZip = uploadType === "unsupported" && files.some((f) => f.name.toLowerCase().endsWith(".zip"));
-  const canGenerate = hasOnlyZipFiles && hasSolution && !generating;
+  const canGenerate = !hasInvalidSelectedFiles && hasOnlyZipFiles && hasSolution && !generating;
+  const invalidStateMessage = hasInvalidSelectedFiles
+    ? "Remove the invalid file before uploading more files or generating documentation."
+    : null;
   const displayType = corpusType || uploadType;
   const displayReason = corpusReason || uploadReason;
 
@@ -1901,6 +1907,8 @@ export default function Page() {
           clearFiles={clearFiles}
           displayType={corpusType}
           displayReason={corpusReason}
+          uploadDisabled={hasInvalidSelectedFiles}
+          disabledMessage={invalidStateMessage}
         />
         </section>
 
@@ -2105,6 +2113,8 @@ export default function Page() {
               <div style={{ fontSize: 12, color: "#555" }}>
               {hasInvalidZip
                 ? "Only .zip solution files are supported for solution documentation."
+                : hasInvalidSelectedFiles
+                ? "Remove the invalid file before continuing."
                 : !hasFiles
                 ? "Upload a .zip solution file to enable generation."
                 : hasSolution
@@ -2141,7 +2151,9 @@ export default function Page() {
           </div>
           {hasOnlyNonSolution && (
             <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
-              Upload a valid Power Platform solution .zip to continue.
+              {hasInvalidSelectedFiles
+                ? "Remove the invalid file before continuing."
+                : "Upload a valid Power Platform solution .zip to continue."}
             </div>
           )}
           {generateError && (

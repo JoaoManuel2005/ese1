@@ -70,6 +70,10 @@ async function markdownToHtml(markdown: string, title: string, metadata?: string
     pre { background: #f6f8fa; padding: 10px; border-radius: 6px; overflow: auto; }
     pre.mermaid { background: transparent; padding: 0; }
     .meta { font-size: 12px; color: #666; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12px; table-layout: fixed; word-wrap: break-word; }
+    th { background: #f0f0f5; font-weight: 600; text-align: left; padding: 7px 10px; border: 1px solid #d0d0d8; }
+    td { padding: 6px 10px; border: 1px solid #d0d0d8; vertical-align: top; word-break: break-word; }
+    tr:nth-child(even) td { background: #f9f9fb; }
     /* Each mermaid diagram gets its own full landscape page */
     .mermaid {
       display: block;
@@ -100,34 +104,39 @@ async function markdownToHtml(markdown: string, title: string, metadata?: string
 </html>`;
 }
 
-async function htmlToPdf(html: string) {
+async function htmlToPdf(html: string, hasMermaid: boolean) {
   const browser = await chromium.launch({ headless: true });
-  // Use landscape A4 viewport: 297mm x 210mm at 150dpi = 1754 x 1240
-  const page = await browser.newPage({ viewport: { width: 1754, height: 1240 } });
-  await page.setContent(html, { waitUntil: "networkidle" });
-  
-  // Wait for Mermaid diagrams to fully render
-  await page.waitForTimeout(5000);
-  
-  // Force all SVGs to fill their container
-  await page.evaluate(() => {
-    document.querySelectorAll('.mermaid svg').forEach((svg: any) => {
-      svg.setAttribute('width', '100%');
-      svg.removeAttribute('height');
-      svg.style.width = '100%';
-      svg.style.height = 'auto';
-      svg.style.maxHeight = '190mm';
+  try {
+    // Use landscape A4 viewport: 297mm x 210mm at 150dpi = 1754 x 1240
+    const page = await browser.newPage({ viewport: { width: 1754, height: 1240 } });
+    await page.setContent(html, { waitUntil: "networkidle" });
+
+    // Only wait for Mermaid rendering when diagrams are actually present
+    if (hasMermaid) {
+      await page.waitForTimeout(5000);
+
+      // Force all SVGs to fill their container
+      await page.evaluate(() => {
+        document.querySelectorAll('.mermaid svg').forEach((svg: any) => {
+          svg.setAttribute('width', '100%');
+          svg.removeAttribute('height');
+          svg.style.width = '100%';
+          svg.style.height = 'auto';
+          svg.style.maxHeight = '190mm';
+        });
+      });
+    }
+
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      landscape: true,
+      margin: { top: "10mm", bottom: "10mm", left: "10mm", right: "10mm" },
+      printBackground: true,
     });
-  });
-  
-  const pdfBuffer = await page.pdf({
-    format: "A4",
-    landscape: true,
-    margin: { top: "10mm", bottom: "10mm", left: "10mm", right: "10mm" },
-    printBackground: true,
-  });
-  await browser.close();
-  return pdfBuffer;
+    return pdfBuffer;
+  } finally {
+    await browser.close();
+  }
 }
 
 export async function POST(req: Request) {
@@ -142,7 +151,8 @@ export async function POST(req: Request) {
     }
     
     const html = await markdownToHtml(markdown, title || "Documentation", metadata);
-    const pdfBuffer = await htmlToPdf(html);
+    const hasMermaid = typeof markdown === "string" && markdown.includes("```mermaid");
+    const pdfBuffer = await htmlToPdf(html, hasMermaid);
     const pdfBase64 = pdfBuffer.toString("base64");
     
     return NextResponse.json({

@@ -187,9 +187,8 @@ public class PacParserService
         }
         finally
         {
-            // Best-effort cleanup of container workspace.
-            try { RunProcess("docker", new[] { "exec", "pac-cli", "rm", "-rf", containerWorkDir }, timeoutSeconds: 20); }
-            catch { /* no-op */ }
+            try { RunProcess("docker", ["exec", "pac-cli", "rm", "-rf", containerWorkDir], timeoutSeconds: 20); }
+            catch { /* best effort cleanup */ }
         }
     }
 
@@ -391,16 +390,18 @@ public class PacParserService
                         try
                         {
                             var attrDoc = XDocument.Load(attrFile);
+                            var rootName = attrDoc.Root?.Name.LocalName ?? "null";
                             var attrType = attrDoc.Root?.Element("AttributeType")?.Value
                                         ?? attrDoc.Root?.Attribute("Type")?.Value
                                         ?? string.Empty;
+                            _logger.LogInformation("[PAC]   Attr {File}: root=<{Root}> type='{Type}'", attrName, rootName, attrType);
                             if (attrType.Equals("Lookup", StringComparison.OrdinalIgnoreCase)
                                 || attrType.Equals("LookupType", StringComparison.OrdinalIgnoreCase))
                             {
                                 var targets = attrDoc.Root?.Element("Targets")?.Value?.Trim();
+                                _logger.LogInformation("[PAC]   Lookup found: {Field} -> {Targets}", attrName, targets);
                                 if (!string.IsNullOrWhiteSpace(targets))
                                 {
-                                    // Targets can be comma-separated for polymorphic lookups
                                     foreach (var target in targets.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                                     {
                                         if (!string.IsNullOrWhiteSpace(target))
@@ -409,7 +410,7 @@ public class PacParserService
                                 }
                             }
                         }
-                        catch { /* skip malformed attribute files */ }
+                        catch (Exception ex) { _logger.LogWarning("[PAC]   Failed to parse attr {File}: {Err}", attrName, ex.Message); }
                     }
                 }
                 else
@@ -549,31 +550,35 @@ public class PacParserService
         var canvasAppsDir = Path.Combine(dir, "CanvasApps");
         if (Directory.Exists(canvasAppsDir))
         {
-            var appDirs = Directory.GetDirectories(canvasAppsDir);
-            var appFiles = Directory.GetFiles(canvasAppsDir, "*.*", SearchOption.TopDirectoryOnly);
-            
-            _logger.LogInformation("[PAC] Found {DirCount} canvas app directories and {FileCount} files in CanvasApps/", 
-                appDirs.Length, appFiles.Length);
-            
-            foreach (var appDir in appDirs)
+            var appFiles = Directory.GetFiles(canvasAppsDir, "*.meta.xml", SearchOption.TopDirectoryOnly);
+            _logger.LogInformation("[PAC] Found {FileCount} canvas app meta files in CanvasApps/", appFiles.Length);
+
+            foreach (var metaFile in appFiles)
             {
+                var schemaName = Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(metaFile)); // strip .meta.xml
+                string displayName = schemaName;
+                try
+                {
+                    var metaDoc = XDocument.Load(metaFile);
+                    displayName = metaDoc.Root?.Element("DisplayName")?.Value ?? schemaName;
+                }
+                catch { /* use schemaName as fallback */ }
+
                 solution.Components.Add(new SolutionComponent
                 {
-                    Name = Path.GetFileName(appDir),
+                    Name = schemaName,
                     Type = "canvas_app",
-                    Description = $"Canvas App: {Path.GetFileName(appDir)}"
+                    Description = $"Canvas App: {displayName}",
+                    Metadata = new Dictionary<string, object> { ["display_name"] = displayName }
                 });
             }
-            
-            // Also check for .msapp files
-            foreach (var appFile in appFiles.Where(f => f.EndsWith(".msapp", StringComparison.OrdinalIgnoreCase)))
+
+            // Fallback: also pick up .msapp files not already added via meta.xml
+            foreach (var appFile in Directory.GetFiles(canvasAppsDir, "*.msapp", SearchOption.TopDirectoryOnly))
             {
-                solution.Components.Add(new SolutionComponent
-                {
-                    Name = Path.GetFileNameWithoutExtension(appFile),
-                    Type = "canvas_app",
-                    Description = $"Canvas App: {Path.GetFileName(appFile)}"
-                });
+                var msappName = Path.GetFileNameWithoutExtension(appFile);
+                if (!solution.Components.Any(c => c.Name.Equals(msappName, StringComparison.OrdinalIgnoreCase) && c.Type == "canvas_app"))
+                    solution.Components.Add(new SolutionComponent { Name = msappName, Type = "canvas_app", Description = $"Canvas App: {msappName}" });
             }
         }
 
@@ -721,7 +726,9 @@ public class PacParserService
             {
                 var logical = GetVal(se, "entity_logical_name", "name");
                 var name = GetVal(se, "name", "entity_logical_name");
-                if (AddComponentIfMissing(solution, existing, logical, "search_entity", $"Dataverse Search Entity: {name} ({logical})", se)) added++;
+                // Use human-readable name as component Name; fall back to logical name only if name looks like a GUID
+                var seComponentName = !string.IsNullOrWhiteSpace(name) && !System.Text.RegularExpressions.Regex.IsMatch(name.Trim(), @"^[0-9a-fA-F]{8}-") ? name : logical;
+                if (AddComponentIfMissing(solution, existing, seComponentName, "search_entity", $"Dataverse Search Entity: {name}", se)) added++;
             }
 
             foreach (var flow in result.Automation.CloudFlows)
@@ -1160,13 +1167,30 @@ print(json.dumps(result))
 
         _logger.LogInformation("[PAC] Found {Count} Copilot Bot in bots", botFiles.Count);
 
-        foreach (var file in botFiles)
+        // Group by directory (each bot dir has bot.xml + configuration.json)
+        var botDirs = Directory.GetDirectories(targetDir);
+        _logger.LogInformation("[PAC] Found {Count} Copilot Bot directories in bots", botDirs.Length);
+
+        foreach (var botDir in botDirs)
         {
+            var schemaName = Path.GetFileName(botDir);
+            string displayName = schemaName;
+            var botXml = Path.Combine(botDir, "bot.xml");
+            if (File.Exists(botXml))
+            {
+                try
+                {
+                    var botDoc = XDocument.Load(botXml);
+                    displayName = botDoc.Root?.Element("name")?.Value ?? schemaName;
+                }
+                catch { /* use schemaName */ }
+            }
             solution.Components.Add(new SolutionComponent
             {
-                Name = Path.GetFileNameWithoutExtension(file),
+                Name = schemaName,
                 Type = "bot",
-                Description = $"Copilot Bot: {Path.GetFileName(file)}"
+                Description = $"Copilot Studio Bot: {displayName}",
+                Metadata = new Dictionary<string, object> { ["display_name"] = displayName }
             });
         }
     }
@@ -1377,6 +1401,8 @@ print(json.dumps(result))
             var displayName = "";
             var type = "";
             var defaultValue = "";
+            var apiId = "";
+            var parameterKey = "";
 
             foreach (var file in Directory.GetFiles(envDir, "*.*", SearchOption.AllDirectories))
             {
@@ -1402,6 +1428,8 @@ print(json.dumps(result))
                         displayName = FindElementIgnoreCase(doc.Root, "displayname") ?? displayName;
                         type = FindElementIgnoreCase(doc.Root, "type") ?? type;
                         defaultValue = FindElementIgnoreCase(doc.Root, "defaultvalue") ?? defaultValue;
+                        apiId = FindElementIgnoreCase(doc.Root, "apiid") ?? apiId;
+                        parameterKey = FindElementIgnoreCase(doc.Root, "parameterkey") ?? parameterKey;
                     }
                     catch { }
                 }
@@ -1417,7 +1445,9 @@ print(json.dumps(result))
                     ["schema_name"] = name,
                     ["display_name"] = displayName,
                     ["type"] = type,
-                    ["default_value"] = defaultValue
+                    ["default_value"] = defaultValue,
+                    ["api_id"] = apiId,
+                    ["parameter_key"] = parameterKey
                 }
             });
         }
@@ -1566,17 +1596,18 @@ print(json.dumps(result))
                 var doc = XDocument.Load(xmlFile);
                 var root = doc.Root;
                 var logicalName = FindElementIgnoreCase(root, "entitylogicalname") ?? Path.GetFileName(entityDir);
-                var name = FindElementIgnoreCase(root, "name") ?? logicalName;
+                var displayName = FindElementIgnoreCase(root, "name") ?? logicalName;
                 var searchId = FindElementIgnoreCase(root, "dvtablesearchid");
 
+                // Use human-readable display name as the component Name (not the GUID logical name)
                 solution.Components.Add(new SolutionComponent
                 {
-                    Name = logicalName,
+                    Name = displayName,
                     Type = "search_entity",
-                    Description = $"Dataverse Search Entity: {name} ({logicalName})",
+                    Description = $"Dataverse Search Entity: {displayName}",
                     Metadata = new Dictionary<string, object>
                     {
-                        ["name"] = name,
+                        ["display_name"] = displayName,
                         ["entity_logical_name"] = logicalName,
                         ["dvtablesearch_id"] = searchId ?? ""
                     }
@@ -1840,6 +1871,80 @@ print(json.dumps(result))
                 Type = "bot",
                 Description = "Copilot Studio Bot"
             });
+        }
+
+        // Parse lookup relationships from customizations.xml (present in raw solution ZIPs)
+        var custEntry = zip.Entries.FirstOrDefault(e =>
+            e.Name.Equals("customizations.xml", StringComparison.OrdinalIgnoreCase));
+        if (custEntry != null)
+        {
+            try
+            {
+                using var stream = custEntry.Open();
+                var doc = XDocument.Load(stream);
+                // Build a lookup: entityName → list of "fieldName:targetEntity"
+                var relsByEntity = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var attrEl in doc.Descendants().Where(e => e.Name.LocalName == "attribute"))
+                {
+                    var attrType = attrEl.Element("Type")?.Value
+                                ?? attrEl.Element("AttributeType")?.Value
+                                ?? attrEl.Attribute("Type")?.Value
+                                ?? string.Empty;
+                    if (!attrType.Equals("Lookup", StringComparison.OrdinalIgnoreCase)
+                        && !attrType.Equals("LookupType", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var fieldName = attrEl.Element("LogicalName")?.Value
+                                 ?? attrEl.Descendants("LogicalName").FirstOrDefault()?.Value;
+                    var targets   = attrEl.Element("Targets")?.Value?.Trim();
+                    if (string.IsNullOrWhiteSpace(fieldName) || string.IsNullOrWhiteSpace(targets))
+                        continue;
+
+                    // Walk up to find the owning <Entity><Name>
+                    var entityName = attrEl.Ancestors()
+                        .Where(a => a.Name.LocalName == "Entity")
+                        .Select(a => a.Element("Name")?.Value ?? a.Descendants("Name").FirstOrDefault()?.Value)
+                        .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
+                    if (string.IsNullOrWhiteSpace(entityName)) continue;
+
+                    if (!relsByEntity.TryGetValue(entityName!, out var list))
+                        relsByEntity[entityName!] = list = new List<string>();
+
+                    foreach (var target in targets.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        if (!string.IsNullOrWhiteSpace(target))
+                            list.Add($"{fieldName}:{target}");
+                }
+
+                // Attach relationships to existing entity components, or create them
+                foreach (var (entityName, rels) in relsByEntity)
+                {
+                    _logger.LogInformation("[PAC] customizations.xml lookup rels for {Entity}: {Rels}", entityName, string.Join(", ", rels));
+                    var existing = solution.Components.FirstOrDefault(c =>
+                        c.Name.Equals(entityName, StringComparison.OrdinalIgnoreCase) &&
+                        (c.Type.Equals("entity", StringComparison.OrdinalIgnoreCase) ||
+                         c.Type.Equals("flow_dataverse_table", StringComparison.OrdinalIgnoreCase)));
+                    if (existing != null)
+                    {
+                        existing.Metadata ??= new Dictionary<string, object>();
+                        existing.Metadata["lookup_relationships"] = rels;
+                    }
+                    else
+                    {
+                        solution.Components.Add(new SolutionComponent
+                        {
+                            Name = entityName,
+                            Type = "entity",
+                            Description = $"Dataverse entity (from customizations.xml)",
+                            Metadata = new Dictionary<string, object> { ["lookup_relationships"] = rels }
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("[PAC] Failed to parse lookup rels from customizations.xml: {Err}", ex.Message);
+            }
         }
     }
 

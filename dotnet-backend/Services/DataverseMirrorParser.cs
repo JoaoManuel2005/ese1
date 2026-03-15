@@ -160,18 +160,27 @@ public sealed class DataverseMirrorParser
         if (!Directory.Exists(dir)) dir = Path.Combine(_extractDir, "canvasapps");
         if (!Directory.Exists(dir)) return;
 
-        foreach (var file in Directory.GetFiles(dir, "*.*", SearchOption.TopDirectoryOnly))
+        // Only use .meta.xml files — these are the real app manifests.
+        // Other files (.msapp, .json, _DocumentUri, _identity) are artifacts.
+        foreach (var file in Directory.GetFiles(dir, "*.meta.xml", SearchOption.TopDirectoryOnly))
         {
-            var ext = Path.GetExtension(file).ToLowerInvariant();
-            if (ext == ".msapp" || ext == ".xml" || ext == ".json")
+            // Double-strip: "wmreply_replybrary_b320d.meta.xml" → "wmreply_replybrary_b320d"
+            var schemaName = Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(file));
+            string displayName = schemaName;
+            try
             {
-                target.Add(new Dictionary<string, object>
-                {
-                    ["name"] = Path.GetFileName(file),
-                    ["app_name"] = Path.GetFileNameWithoutExtension(file),
-                    ["extension"] = ext
-                });
+                var doc = System.Xml.Linq.XDocument.Load(file);
+                displayName = doc.Root?.Element("DisplayName")?.Value?.Trim() ?? schemaName;
             }
+            catch { /* use schemaName */ }
+
+            target.Add(new Dictionary<string, object>
+            {
+                ["name"] = Path.GetFileName(file),
+                ["app_name"] = schemaName,
+                ["display_name"] = displayName,
+                ["extension"] = ".meta.xml"
+            });
         }
     }
 
@@ -180,10 +189,21 @@ public sealed class DataverseMirrorParser
         var botsDir = Path.Combine(_extractDir, "bots");
         if (Directory.Exists(botsDir))
         {
-            foreach (var item in Directory.GetFileSystemEntries(botsDir))
+            foreach (var item in Directory.GetDirectories(botsDir))
             {
-                var name = Path.GetFileName(item);
-                var bot = new Dictionary<string, object> { ["name"] = name, ["display_name"] = Path.GetFileNameWithoutExtension(name) };
+                var schemaName = Path.GetFileName(item);
+                string displayName = schemaName;
+                var botXml = Path.Combine(item, "bot.xml");
+                if (File.Exists(botXml))
+                {
+                    try
+                    {
+                        var doc = System.Xml.Linq.XDocument.Load(botXml);
+                        displayName = doc.Root?.Element("name")?.Value?.Trim() ?? schemaName;
+                    }
+                    catch { /* use schemaName */ }
+                }
+                var bot = new Dictionary<string, object> { ["name"] = schemaName, ["display_name"] = displayName };
                 bots.Add(bot);
             }
         }
@@ -401,10 +421,29 @@ public sealed class DataverseMirrorParser
         {
             foreach (var sub in Directory.GetDirectories(evDir))
             {
+                var schemaName = Path.GetFileName(sub);
+                var xmlPath = Path.Combine(sub, "environmentvariabledefinition.xml");
+                var apiId = "";
+                var parameterKey = "";
+                var displayName = schemaName;
+                if (File.Exists(xmlPath))
+                {
+                    try
+                    {
+                        var doc = System.Xml.Linq.XDocument.Load(xmlPath);
+                        apiId       = doc.Root?.Descendants().FirstOrDefault(e => e.Name.LocalName.Equals("apiid",       StringComparison.OrdinalIgnoreCase))?.Value?.Trim() ?? "";
+                        parameterKey = doc.Root?.Descendants().FirstOrDefault(e => e.Name.LocalName.Equals("parameterkey", StringComparison.OrdinalIgnoreCase))?.Value?.Trim() ?? "";
+                        displayName = doc.Root?.Descendants().FirstOrDefault(e => e.Name.LocalName.Equals("displayname",  StringComparison.OrdinalIgnoreCase))?.Value?.Trim()
+                                      ?? schemaName;
+                    }
+                    catch { /* use defaults */ }
+                }
                 automation.EnvironmentVariables.Add(new Dictionary<string, object>
                 {
-                    ["name"] = Path.GetFileName(sub),
-                    ["display_name"] = Path.GetFileName(sub)
+                    ["name"]          = schemaName,
+                    ["display_name"]  = displayName,
+                    ["api_id"]        = apiId,
+                    ["parameter_key"] = parameterKey
                 });
             }
         }

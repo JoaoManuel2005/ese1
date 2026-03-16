@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FC } from "react";
 import type { ChatMessage } from "../types";
+import { normalizeMarkdownWhitespace } from "../../lib/markdown/normalization";
 
 type Props = {
   chat: ChatMessage[];
@@ -45,7 +46,11 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
               {m.role === "assistant" ? (
                 <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
                   <div className="chat-message" style={{ minWidth: 0, overflow: "hidden" }}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                    <div className="rendered-markdown">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {normalizeMarkdownWhitespace(m.content, { context: "chat" })}
+                      </ReactMarkdown>
+                    </div>
                   </div>
                   {m.sources && m.sources.length > 0 && (
                     <div style={{ minWidth: 0 }}>

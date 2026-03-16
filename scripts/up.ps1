@@ -67,28 +67,42 @@ Write-Host ("AZURE_AD_CLIENT_SECRET=" + (Mask-Secret $azureClientSecret))
 Write-Host ("AZURE_AD_TENANT_ID=" + (Mask-Secret $azureTenantID))
 
 # Auto-detect GPU support and conditionally enable GPU acceleration
-# Only NVIDIA GPUs are supported in Docker (DirectML works natively on Windows but not in containers)
 $gpuCompose = ""
 $gpuDetected = $false
 
-# Check for NVIDIA GPU (Windows/Linux with CUDA)
+# Check for NVIDIA GPU with Docker support
 $nvidiaSmiExists = Get-Command nvidia-smi -ErrorAction SilentlyContinue
 if ($nvidiaSmiExists) {
   try {
     $null = nvidia-smi 2>&1
     if ($LASTEXITCODE -eq 0) {
-      Write-Host "[OK] NVIDIA GPU detected - enabling CUDA acceleration in Docker"
-      $gpuCompose = "-f docker-compose.gpu.yml"
-      $gpuDetected = $true
+      # Verify Docker can actually use NVIDIA GPU (requires NVIDIA Container Toolkit)
+      try {
+        $dockerGpuTest = docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi 2>&1
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host "[OK] NVIDIA GPU detected and Docker has NVIDIA Container Toolkit - enabling CUDA acceleration"
+          $gpuCompose = "-f docker-compose.gpu.yml"
+          $gpuDetected = $true
+        } else {
+          Write-Host "[WARN] NVIDIA GPU detected but Docker cannot access it"
+          Write-Host "  Install NVIDIA Container Toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
+          Write-Host "  Then restart Docker service"
+          Write-Host "  Falling back to optimized CPU mode for now"
+        }
+      } catch {
+        Write-Host "[WARN] NVIDIA GPU detected but Docker cannot access it: $_"
+        Write-Host "  Install NVIDIA Container Toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
+        Write-Host "  Falling back to optimized CPU mode for now"
+      }
     } else {
-      Write-Host "[WARN] nvidia-smi found but GPU not accessible (driver issue?)"
+      Write-Host "[WARN] nvidia-smi found but GPU not accessible (NVIDIA driver issue?)"
     }
   } catch {
     Write-Host "[WARN] nvidia-smi check failed: $_"
   }
 }
 
-# Check for AMD GPU (Windows DirectML works automatically, but not in Docker)
+# Check for AMD GPU (Windows with DirectML only works natively, not in Docker)
 if (-not $gpuDetected) {
   try {
     $amdGpu = Get-WmiObject -Class Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "AMD|Radeon" }
@@ -101,11 +115,9 @@ if (-not $gpuDetected) {
   }
 }
 
-# In Docker, other GPUs (DirectML on Windows) don't work
-# The C# code will still try to use them if running natively outside Docker
+# Fallback message
 if (-not $gpuDetected) {
-  Write-Host "[INFO] No Docker-compatible GPU detected - using optimized CPU mode"
-  Write-Host "  (CUDA/NVIDIA is the only GPU supported in Docker containers)"
+  Write-Host "[INFO] Using optimized CPU mode"
 }
 
 # Run stack

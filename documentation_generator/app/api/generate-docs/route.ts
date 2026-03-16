@@ -102,6 +102,10 @@ function htmlDocumentTemplate(title: string, timestamp: string, bodyHtml: string
     pre { background: #f6f8fa; padding: 10px; border-radius: 6px; overflow: auto; }
     .meta { font-size: 12px; color: #666; margin-bottom: 12px; }
     .mermaid { margin: 16px 0; text-align: center; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12px; table-layout: fixed; word-wrap: break-word; }
+    th { background: #f0f0f5; font-weight: 600; text-align: left; padding: 7px 10px; border: 1px solid #d0d0d8; }
+    td { padding: 6px 10px; border: 1px solid #d0d0d8; vertical-align: top; word-break: break-word; }
+    tr:nth-child(even) td { background: #f9f9fb; }
   </style>
 </head>
 <body>
@@ -112,21 +116,23 @@ function htmlDocumentTemplate(title: string, timestamp: string, bodyHtml: string
 </html>`;
 }
 
-async function htmlToPdf(html: string) {
-  const browser = await chromium.launch({ headless: true });
+async function htmlToPdf(html: string, browser: import("playwright").Browser) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-  await page.setContent(html, { waitUntil: "networkidle" });
-  
-  // Wait for Mermaid diagrams to render
-  await page.waitForTimeout(2000); // Give Mermaid time to initialize and render
-  
-  const pdfBuffer = await page.pdf({
-    format: "A4",
-    margin: { top: "20mm", bottom: "20mm", left: "16mm", right: "16mm" },
-    printBackground: true,
-  });
-  await browser.close();
-  return pdfBuffer;
+  try {
+    await page.setContent(html, { waitUntil: "networkidle" });
+
+    if (html.includes('class="mermaid"')) {
+      await page.waitForTimeout(2000);
+    }
+
+    return await page.pdf({
+      format: "A4",
+      margin: { top: "20mm", bottom: "20mm", left: "16mm", right: "16mm" },
+      printBackground: true,
+    });
+  } finally {
+    await page.close();
+  }
 }
 
 function buildFilePrompt(file: IncomingFile) {
@@ -179,65 +185,71 @@ export async function POST(req: Request) {
     const outputs = [];
     const errors = [];
 
-    for (const file of fileArray) {
-      const prompt = [
-        "Generate documentation for THIS file only.",
-        "Use only the provided content/metadata.",
-        "Output markdown with clear headings: Title, Overview, Key Entities, Assumptions, Summary.",
-        buildFilePrompt(file),
-        "Include overview, key entities, assumptions, and a concise summary.",
-      ].join("\n\n");
+    // Launch a single browser for all files instead of one per file
+    const browser = await chromium.launch({ headless: true });
+    try {
+      for (const file of fileArray) {
+        const prompt = [
+          "Generate documentation for THIS file only.",
+          "Use only the provided content/metadata.",
+          "Output markdown with clear headings: Title, Overview, Key Entities, Assumptions, Summary.",
+          buildFilePrompt(file),
+          "Include overview, key entities, assumptions, and a concise summary.",
+        ].join("\n\n");
 
-      const baseUrl = endpoint ? endpoint.replace(/\/$/, "") : "https://api.openai.com/v1";
-      const completionsUrl = baseUrl.endsWith("/chat/completions")
-        ? baseUrl
-        : `${baseUrl}/chat/completions`;
-      const openaiRes = await fetch(completionsUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: modelToUse,
-          messages: [
-            { role: "system", content: systemMessage },
-            { role: "user", content: prompt },
-          ],
-          temperature: tempValue,
-        }),
-      });
+        const baseUrl = endpoint ? endpoint.replace(/\/$/, "") : "https://api.openai.com/v1";
+        const completionsUrl = baseUrl.endsWith("/chat/completions")
+          ? baseUrl
+          : `${baseUrl}/chat/completions`;
+        const openaiRes = await fetch(completionsUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: modelToUse,
+            messages: [
+              { role: "system", content: systemMessage },
+              { role: "user", content: prompt },
+            ],
+            temperature: tempValue,
+          }),
+        });
 
-      if (!openaiRes.ok) {
-        const text = await openaiRes.text();
-        errors.push({ file: file?.name, message: text || "OpenAI API request failed" });
-        continue;
+        if (!openaiRes.ok) {
+          const text = await openaiRes.text();
+          errors.push({ file: file?.name, message: text || "OpenAI API request failed" });
+          continue;
+        }
+
+        const data = await openaiRes.json();
+        const markdown = data?.choices?.[0]?.message?.content;
+        if (!markdown) {
+          errors.push({ file: file?.name, message: "Empty response from model" });
+          continue;
+        }
+
+        const createdAt = new Date().toISOString();
+        const title = `Documentation for ${file?.name || "file"}`;
+        const bodyHtml = await markdownToHtml(markdown);
+        const html = htmlDocumentTemplate(title, createdAt, bodyHtml);
+        const pdfBuffer = await htmlToPdf(html, browser);
+        const pdfBase64 = pdfBuffer.toString("base64");
+        const filename = baseNameForDoc(file?.name || "file");
+
+        outputs.push({
+          id: `${filename}-${createdAt}`,
+          filename,
+          mime: "application/pdf",
+          bytesBase64: pdfBase64,
+          createdAt,
+          htmlPreview: html,
+          markdownContent: markdown,
+        });
       }
-
-      const data = await openaiRes.json();
-      const markdown = data?.choices?.[0]?.message?.content;
-      if (!markdown) {
-        errors.push({ file: file?.name, message: "Empty response from model" });
-        continue;
-      }
-
-      const createdAt = new Date().toISOString();
-      const title = `Documentation for ${file?.name || "file"}`;
-      const bodyHtml = await markdownToHtml(markdown);
-      const html = htmlDocumentTemplate(title, createdAt, bodyHtml);
-      const pdfBuffer = await htmlToPdf(html);
-      const pdfBase64 = pdfBuffer.toString("base64");
-      const filename = baseNameForDoc(file?.name || "file");
-
-      outputs.push({
-        id: `${filename}-${createdAt}`,
-        filename,
-        mime: "application/pdf",
-        bytesBase64: pdfBase64,
-        createdAt,
-        htmlPreview: html,
-        markdownContent: markdown, // Store original markdown for Mermaid rendering
-      });
+    } finally {
+      await browser.close();
     }
 
     if (outputs.length === 0 && errors.length > 0) {

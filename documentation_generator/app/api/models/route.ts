@@ -16,10 +16,10 @@ export async function GET(req: Request) {
     if (!apiKey || endpoint) {
       // Return default models if no API key
       return NextResponse.json({ 
-        models: ["gpt-4.1", "gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"],
+        models: ["gpt-4.1"],
         message: endpoint
           ? "Using default models. Azure endpoints do not support model listing."
-          : "Using default models. Add API key for full list."
+          : "Using default models. Configure a valid server-side API key for full list."
       });
     }
 
@@ -49,7 +49,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ models });
   } catch (e: any) {
     return NextResponse.json(
-      { models: ["gpt-4.1", "gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"], error: e?.message ?? "Failed to fetch models" },
+      { models: ["gpt-4.1"], error: e?.message ?? "Failed to fetch models" },
       { status: 200 }
     );
   }

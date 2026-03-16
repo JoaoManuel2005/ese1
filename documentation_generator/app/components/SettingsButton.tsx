@@ -567,7 +567,7 @@ const SettingsButton: FC<Props> = ({
                 />
                 <button
                   type="button"
-                  onClick={() => saveSettings(systemPromptDefault)}
+                  onClick={() => setSystemPrompt(systemPromptDefault)}
                   disabled={saveState === "saving"}
                   style={{
                     alignSelf: "flex-start",

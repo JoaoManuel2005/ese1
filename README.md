@@ -122,9 +122,9 @@ You should be able to see to see `port 3000:3000` or similar next to the documen
 
 ---
 
-## 8. Using the app
+## 8. User Guide
 
-- When setting up the Azure Key Vault your api keys and endpoints should already be set for you, if not you can navigate to settings and input the details in there
+- When setting up the Azure Key Vault your api keys and endpoints should already be set for you. If not then please make sure that your vault is set-up the same as shown above under 'Azure key vault set up'
 - Upload solution files by drag and drop or clicking 'Browse' in the input files section
 - Generate documentation by clicking 'Parse & Generate Docs'
 - Sign in to use the chat history feature and to remember changes made to your system prompt

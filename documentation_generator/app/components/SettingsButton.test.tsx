@@ -109,7 +109,7 @@ describe("SettingsButton", () => {
 
     expect(screen.getByText("Settings")).toBeInTheDocument();
     expect(screen.getByLabelText("Provider")).toBeInTheDocument();
-    expect(screen.getByLabelText("Cloud model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Model")).toBeInTheDocument();
     expect(screen.getByLabelText("System Prompt (Solution Docs)")).toBeInTheDocument();
     expect(screen.getByText("SharePoint Integration")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();

@@ -1,5 +1,8 @@
 using Azure.AI.OpenAI;
 using OpenAI.Embeddings;
+using Qdrant.Client;
+using Qdrant.Client.Grpc;
+using QdrantMatch = Qdrant.Client.Grpc.Match;
 using RagBackend.Models;
 using System.IO.Compression;
 using System.Text.RegularExpressions;
@@ -29,11 +32,13 @@ public class RagPipelineService
     private readonly OnnxEmbeddingService _onnxEmbedding;
     private readonly PacParserService _pacParser;
 
-    // ── In-memory stores (keyed by datasetId) ───────────────────────────────────
-    private readonly Dictionary<string, List<ChunkRecord>>      _vectorStore = new();
-    private readonly Dictionary<string, Bm25Index>              _bm25Store   = new();
+    // ── Qdrant vector store (persistent, keyed by datasetId = collection name) ──
+    private readonly QdrantClient _qdrant;
+
+    // ── BM25 in-memory index (rebuilt from Qdrant on demand) ─────────────────────
+    private readonly Dictionary<string, (Bm25Index Index, List<ChunkRecord> Records)> _bm25Store = new();
     private readonly object _lock = new();
-    
+
     // ── Query embedding cache (LRU) for 50-100x speedup on repeated queries ─────
     private readonly LruCache<string, float[]> _queryEmbeddingCache = new(capacity: 1000);
 
@@ -43,15 +48,17 @@ public class RagPipelineService
         ILogger<RagPipelineService> logger,
         IHttpClientFactory httpClientFactory,
         OnnxEmbeddingService onnxEmbedding,
-        PacParserService pacParser)
+        PacParserService pacParser,
+        QdrantClient qdrant)
     {
         _config = config;
         _llm    = llm;
         _logger = logger;
         _httpClient = httpClientFactory.CreateClient();
-        _httpClient.Timeout = TimeSpan.FromMinutes(10); // Increase timeout for large documents
+        _httpClient.Timeout = TimeSpan.FromMinutes(10);
         _onnxEmbedding = onnxEmbedding;
         _pacParser = pacParser;
+        _qdrant    = qdrant;
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -257,8 +264,18 @@ public class RagPipelineService
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // VECTOR STORAGE
+    // VECTOR STORAGE (Qdrant)
     // ──────────────────────────────────────────────────────────────────────────
+    private async Task EnsureCollectionExistsAsync(string datasetId, int dimension)
+    {
+        if (!await _qdrant.CollectionExistsAsync(datasetId))
+        {
+            await _qdrant.CreateCollectionAsync(datasetId,
+                new VectorParams { Size = (ulong)dimension, Distance = Distance.Cosine });
+            _logger.LogInformation("[Qdrant] Created collection '{DatasetId}' ({Dim} dims).", datasetId, dimension);
+        }
+    }
+
     public async Task<int> StoreChunksAsync(
         List<(string Content, Dictionary<string, string> Metadata)> chunks,
         string datasetId)
@@ -268,93 +285,108 @@ public class RagPipelineService
         _logger.LogInformation("    → Preparing to generate embeddings for {Count} chunks...", chunks.Count);
         var texts      = chunks.Select(c => c.Content).ToList();
         var embeddings = await GenerateEmbeddingsBatchAsync(texts);
-        _logger.LogInformation("    ✓ Generated all embeddings, now storing in vector database...");
+        _logger.LogInformation("    ✓ Generated all embeddings, now storing in Qdrant...");
 
-        var records = chunks.Select((c, i) => new ChunkRecord(
-            Id       : $"{datasetId}_{Guid.NewGuid():N}",
-            Content  : c.Content,
-            Metadata : c.Metadata,
-            Embedding: embeddings[i]
-        )).ToList();
+        await EnsureCollectionExistsAsync(datasetId, embeddings[0].Length);
 
-        lock (_lock)
+        var points = chunks.Select((c, i) =>
         {
-            if (!_vectorStore.ContainsKey(datasetId))
-                _vectorStore[datasetId] = new List<ChunkRecord>();
+            var point = new PointStruct
+            {
+                Id      = Guid.NewGuid(),
+                Vectors = embeddings[i],
+            };
+            point.Payload["content"] = c.Content;
+            foreach (var (k, v) in c.Metadata)
+                point.Payload[k] = v;
+            return point;
+        }).ToList();
 
-            _vectorStore[datasetId].AddRange(records);
-            RebuildBm25Index(datasetId);
-        }
-
-        return records.Count;
+        await _qdrant.UpsertAsync(datasetId, points);
+        await RebuildBm25IndexAsync(datasetId);
+        return points.Count;
     }
 
-    public int GetCollectionCount(string datasetId)
+    public async Task<int> GetCollectionCountAsync(string datasetId)
     {
-        lock (_lock)
-            return _vectorStore.TryGetValue(datasetId, out var v) ? v.Count : 0;
+        if (!await _qdrant.CollectionExistsAsync(datasetId)) return 0;
+        var info = await _qdrant.GetCollectionInfoAsync(datasetId);
+        return (int)info.PointsCount;
     }
 
-    public void ClearCollection(string datasetId)
+    public async Task ClearCollectionAsync(string datasetId)
     {
-        lock (_lock)
-        {
-            _vectorStore.Remove(datasetId);
-            _bm25Store.Remove(datasetId);
-        }
+        if (await _qdrant.CollectionExistsAsync(datasetId))
+            await _qdrant.DeleteCollectionAsync(datasetId);
+        lock (_lock) _bm25Store.Remove(datasetId);
     }
 
-    public void ClearAll()
+    public async Task ClearAllAsync()
     {
-        lock (_lock)
-        {
-            _vectorStore.Clear();
-            _bm25Store.Clear();
-        }
+        var collections = await _qdrant.ListCollectionsAsync();
+        foreach (var col in collections)
+            await _qdrant.DeleteCollectionAsync(col);
+        lock (_lock) _bm25Store.Clear();
     }
 
-    public void DeleteFiles(string datasetId, List<string> fileNames)
+    public async Task DeleteFilesAsync(string datasetId, List<string> fileNames)
     {
         if (fileNames.Count == 0) return;
-        var lower = fileNames.Select(f => f.ToLower()).ToHashSet();
-        lock (_lock)
-        {
-            if (!_vectorStore.TryGetValue(datasetId, out var records)) return;
-            _vectorStore[datasetId] = records
-                .Where(r => !r.Metadata.TryGetValue("file_name", out var fn) || !lower.Contains(fn.ToLower()))
-                .ToList();
-            RebuildBm25Index(datasetId);
-        }
+        if (!await _qdrant.CollectionExistsAsync(datasetId)) return;
+
+        var filter = new Filter();
+        foreach (var fn in fileNames.Select(f => f.ToLower()))
+            filter.Should.Add(new Condition
+            {
+                Field = new FieldCondition { Key = "file_name", Match = new QdrantMatch { Keyword = fn } }
+            });
+        await _qdrant.DeleteAsync(datasetId, filter);
+        await RebuildBm25IndexAsync(datasetId);
     }
 
-    public List<string> ListFiles(string datasetId)
+    public async Task<List<string>> ListFilesAsync(string datasetId)
     {
-        lock (_lock)
-        {
-            if (!_vectorStore.TryGetValue(datasetId, out var records))
-                return new List<string>();
-
-            return records
-                .Where(r => r.Metadata.ContainsKey("file_name"))
-                .Select(r => r.Metadata["file_name"])
-                .Distinct()
-                .OrderBy(f => f)
-                .ToList();
-        }
+        if (!await _qdrant.CollectionExistsAsync(datasetId)) return new List<string>();
+        var scrollResult = await _qdrant.ScrollAsync(datasetId, null, 10000u, null, true, false);
+        return scrollResult.Result
+            .Where(p => p.Payload.ContainsKey("file_name"))
+            .Select(p => p.Payload["file_name"].StringValue)
+            .Distinct()
+            .OrderBy(f => f)
+            .ToList();
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // BM25 INDEX
+    // BM25 INDEX (rebuilt from Qdrant, kept in-memory for fast keyword search)
     // ──────────────────────────────────────────────────────────────────────────
-    private void RebuildBm25Index(string datasetId)
+    private async Task RebuildBm25IndexAsync(string datasetId)
     {
-        if (!_vectorStore.TryGetValue(datasetId, out var records) || records.Count == 0)
+        if (!await _qdrant.CollectionExistsAsync(datasetId))
         {
-            _bm25Store.Remove(datasetId);
+            lock (_lock) _bm25Store.Remove(datasetId);
             return;
         }
 
-        _bm25Store[datasetId] = new Bm25Index(records.Select(r => r.Content).ToList());
+        var scrollResult = await _qdrant.ScrollAsync(datasetId, null, 10000u, null, true, false);
+        var scrollPoints = scrollResult.Result;
+
+        if (scrollPoints.Count == 0)
+        {
+            lock (_lock) _bm25Store.Remove(datasetId);
+            return;
+        }
+
+        var records = scrollPoints.Select(p => new ChunkRecord(
+            Id      : p.Id.Uuid,
+            Content : p.Payload.TryGetValue("content", out var c) ? c.StringValue : "",
+            Metadata: p.Payload
+                .Where(kv => kv.Key != "content")
+                .ToDictionary(kv => kv.Key, kv => kv.Value.StringValue ?? ""),
+            Embedding: Array.Empty<float>()
+        )).ToList();
+
+        var index = new Bm25Index(records.Select(r => r.Content));
+        lock (_lock) _bm25Store[datasetId] = (index, records);
         _logger.LogInformation("[BM25] Index rebuilt for '{DatasetId}' with {Count} docs.", datasetId, records.Count);
     }
 
@@ -364,24 +396,28 @@ public class RagPipelineService
     public async Task<List<RetrievedChunkInternal>> RetrieveAsync(
         string query,
         string datasetId,
-        int nResults   = 5,
+        int nResults        = 5,
         double hybridWeight = 0.5,
         List<string>? focusFiles = null)
     {
-        if (!_vectorStore.ContainsKey(datasetId) || _vectorStore[datasetId].Count == 0)
+        if (!await _qdrant.CollectionExistsAsync(datasetId))
             return new List<RetrievedChunkInternal>();
 
         int nEach = nResults * 2;
-        
+
+        // Lazy-load BM25 index from Qdrant if not in memory (e.g. after restart)
+        bool hasBm25;
+        lock (_lock) hasBm25 = _bm25Store.ContainsKey(datasetId);
+        if (!hasBm25) await RebuildBm25IndexAsync(datasetId);
+
         // Run BM25 and embedding generation in parallel for 1.5-2x speedup
-        var bm25Task = Task.Run(() => RetrieveBm25(query, datasetId, nEach, focusFiles));
+        var bm25Task      = Task.Run(() => RetrieveBm25(query, datasetId, nEach, focusFiles));
         var embeddingTask = GenerateEmbeddingAsync(query);
-        
         await Task.WhenAll(bm25Task, embeddingTask);
-        
-        var bm25Results = bm25Task.Result;
-        var queryEmb = embeddingTask.Result;
-        var vectorResults = RetrieveVector(queryEmb, datasetId, nEach, focusFiles);
+
+        var bm25Results   = bm25Task.Result;
+        var queryEmb      = embeddingTask.Result;
+        var vectorResults = await RetrieveVectorAsync(queryEmb, datasetId, nEach, focusFiles);
 
         // Reciprocal Rank Fusion
         var scores  = new Dictionary<string, double>();
@@ -391,20 +427,18 @@ public class RagPipelineService
         double bm25Weight = 1 - hybridWeight;
         for (int i = 0; i < bm25Results.Count; i++)
         {
-            var r    = bm25Results[i];
-            var id   = r.Id;
-            scores[id]  = scores.GetValueOrDefault(id) + bm25Weight * (1.0 / (i + 60));
-            content[id] = r.Content;
-            meta[id]    = r.Metadata;
+            var r = bm25Results[i];
+            scores[r.Id]  = scores.GetValueOrDefault(r.Id) + bm25Weight * (1.0 / (i + 60));
+            content[r.Id] = r.Content;
+            meta[r.Id]    = r.Metadata;
         }
 
         for (int i = 0; i < vectorResults.Count; i++)
         {
-            var r    = vectorResults[i];
-            var id   = r.Id;
-            scores[id]  = scores.GetValueOrDefault(id) + hybridWeight * (1.0 / (i + 60));
-            content[id] = r.Content;
-            meta[id]    = r.Metadata;
+            var r = vectorResults[i];
+            scores[r.Id]  = scores.GetValueOrDefault(r.Id) + hybridWeight * (1.0 / (i + 60));
+            content[r.Id] = r.Content;
+            meta[r.Id]    = r.Metadata;
         }
 
         var sorted   = scores.OrderByDescending(kv => kv.Value).Take(nResults).ToList();
@@ -412,10 +446,10 @@ public class RagPipelineService
         if (maxSc == 0) maxSc = 1;
 
         return sorted.Select(kv => new RetrievedChunkInternal(
-            Id           : kv.Key,
-            Content      : content[kv.Key],
-            Metadata     : meta[kv.Key],
-            RelevanceScore: Math.Round(kv.Value / maxSc * 100, 1),
+            Id             : kv.Key,
+            Content        : content[kv.Key],
+            Metadata       : meta[kv.Key],
+            RelevanceScore : Math.Round(kv.Value / maxSc * 100, 1),
             RetrievalMethod: "hybrid"
         )).ToList();
     }
@@ -425,11 +459,12 @@ public class RagPipelineService
     {
         lock (_lock)
         {
-            if (!_bm25Store.TryGetValue(datasetId, out var idx) || !_vectorStore.TryGetValue(datasetId, out var records))
+            if (!_bm25Store.TryGetValue(datasetId, out var stored))
                 return new List<ChunkRecord>();
 
-            var scores   = idx.GetScores(Tokenise(query));
-            var indices  = Enumerable.Range(0, records.Count).ToList();
+            var (idx, records) = stored;
+            var scores  = idx.GetScores(Tokenise(query));
+            var indices = Enumerable.Range(0, records.Count).ToList();
 
             if (focusFiles?.Count > 0)
             {
@@ -448,27 +483,35 @@ public class RagPipelineService
         }
     }
 
-    private List<ChunkRecord> RetrieveVector(
+    private async Task<List<ChunkRecord>> RetrieveVectorAsync(
         float[] queryEmb, string datasetId, int n, List<string>? focusFiles)
     {
-        lock (_lock)
+        if (!await _qdrant.CollectionExistsAsync(datasetId))
+            return new List<ChunkRecord>();
+
+        Filter? filter = null;
+        if (focusFiles?.Count > 0)
         {
-            if (!_vectorStore.TryGetValue(datasetId, out var records))
-                return new List<ChunkRecord>();
-
-            var candidates = focusFiles?.Count > 0
-                ? records.Where(r => r.Metadata.TryGetValue("file_name", out var fn)
-                    && focusFiles.Any(f => f.ToLower() == fn.ToLower()))
-                : records;
-
-            return candidates
-                .Select(r => (Record: r, Score: CosineSimilarity(queryEmb, r.Embedding)))
-                .OrderByDescending(x => x.Score)
-                .Take(n)
-                .Select(x => x.Record)
-                .ToList();
+            filter = new Filter();
+            foreach (var f in focusFiles.Select(f => f.ToLower()))
+                filter.Should.Add(new Condition
+                {
+                    Field = new FieldCondition { Key = "file_name", Match = new QdrantMatch { Keyword = f } }
+                });
         }
+
+        var hits = await _qdrant.SearchAsync(datasetId, queryEmb, filter, null, (ulong)n, 0UL, true, null);
+
+        return hits.Select(h => new ChunkRecord(
+            Id      : h.Id.Uuid,
+            Content : h.Payload.TryGetValue("content", out var c) ? c.StringValue : "",
+            Metadata: h.Payload
+                .Where(kv => kv.Key != "content")
+                .ToDictionary(kv => kv.Key, kv => kv.Value.StringValue ?? ""),
+            Embedding: Array.Empty<float>()
+        )).ToList();
     }
+
 
     // ──────────────────────────────────────────────────────────────────────────
     // LLM ANSWER GENERATION
@@ -583,7 +626,7 @@ public class RagPipelineService
             {
                 ["solution_name"]     = solutionName,
                 ["chunks_stored"]     = storedCount,
-                ["collection_total"]  = GetCollectionCount(datasetId)
+                ["collection_total"]  = await GetCollectionCountAsync(datasetId)
             },
             CorpusType   = "solution_zip",
             CorpusReason = "Power Platform solution ZIP"

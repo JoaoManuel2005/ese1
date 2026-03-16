@@ -79,10 +79,6 @@ type Props = {
   useCustomLocalModel: boolean;
   setUseCustomLocalModel: (b: boolean) => void;
   fetchLocalModels: () => void;
-  apiKey: string;
-  setApiKey: (k: string) => void;
-  endpoint: string;
-  setEndpoint: (e: string) => void;
   sharePointToken: string | null;
   setSharePointToken: (token: string | null) => void;
   systemPrompt: string;
@@ -107,10 +103,6 @@ const SettingsButton: FC<Props> = ({
   useCustomLocalModel,
   setUseCustomLocalModel,
   fetchLocalModels,
-  apiKey,
-  setApiKey,
-  endpoint,
-  setEndpoint,
   sharePointToken,
   setSharePointToken,
   systemPrompt,
@@ -131,8 +123,6 @@ const SettingsButton: FC<Props> = ({
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
-  const [maskedApiKey, setMaskedApiKey] = useState<string | null>(null);
   const [connectingSharePoint, setConnectingSharePoint] = useState(false);
   const [sharePointError, setSharePointError] = useState<string | null>(null);
   const [sharePointUserEmail, setSharePointUserEmail] = useState<string | null>(null);
@@ -178,15 +168,6 @@ const SettingsButton: FC<Props> = ({
         if (typeof data?.model === "string" && data.model.trim()) {
           setSelectedModel(data.model);
         }
-        if (typeof data?.azureOpenAiEndpoint === "string") {
-          setEndpoint(data.azureOpenAiEndpoint);
-        } else {
-          setEndpoint("");
-        }
-
-        setApiKey("");
-        setApiKeyConfigured(!!data?.openaiApiKeyConfigured);
-        setMaskedApiKey(typeof data?.openaiApiKeyMasked === "string" ? data.openaiApiKeyMasked : null);
         setSharePointAuthClientId(
           typeof data?.azureAdClientId === "string" && data.azureAdClientId.trim()
             ? data.azureAdClientId
@@ -221,7 +202,7 @@ const SettingsButton: FC<Props> = ({
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated, open, setApiKey, setEndpoint, setProvider, setSelectedModel, setSystemPrompt]);
+  }, [isAuthenticated, open, setProvider, setSelectedModel, setSystemPrompt]);
 
   async function saveSettings(systemPromptOverride?: string) {
     setSaveState("saving");
@@ -238,13 +219,8 @@ const SettingsButton: FC<Props> = ({
     const payload: Record<string, unknown> = {
       provider,
       model: selectedModel || null,
-      azureOpenAiEndpoint: endpoint || null,
       systemPrompt: promptToSave ?? "",
     };
-
-    if (apiKey.trim()) {
-      payload.openaiApiKey = apiKey.trim();
-    }
 
     try {
       const res = await fetch("/api/settings", {
@@ -260,12 +236,6 @@ const SettingsButton: FC<Props> = ({
 
       setSaveState("saved");
       setSaveMessage("Saved");
-      setApiKey("");
-      setApiKeyConfigured(!!data?.openaiApiKeyConfigured);
-      setMaskedApiKey(typeof data?.openaiApiKeyMasked === "string" ? data.openaiApiKeyMasked : null);
-      if (typeof data?.azureOpenAiEndpoint === "string") {
-        setEndpoint(data.azureOpenAiEndpoint);
-      }
       if (data && "systemPrompt" in data) {
         setSystemPrompt(typeof data.systemPrompt === "string" ? data.systemPrompt : "");
       }

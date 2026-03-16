@@ -29,6 +29,9 @@
 
     <!-- Env vars (.env file loading) -->
     <PackageReference Include="DotNetEnv" Version="3.1.1" />
+
+    <!-- Qdrant vector database client -->
+    <PackageReference Include="Qdrant.Client" Version="1.10.0" />
   </ItemGroup>
 
   <ItemGroup>

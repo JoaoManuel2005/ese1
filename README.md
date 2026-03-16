@@ -64,7 +64,7 @@ Verify installation:
 
 ## 4. Azure Key Vault Setup
 
-Head to [Azure](https://portal.azure.com/#home) and make sure that you setup (or are apart of) a Key Vault with the following naming scheme:
+Head to [Azure](https://portal.azure.com/#home) and make sure that you setup (or are apart of) the `docgenvault` Key Vault used by the release scripts, with the following secret names:
 
 
 | Name | Value |
@@ -92,7 +92,7 @@ Download the latest release of the app from [here](https://github.com/JoaoManuel
 
 ## 6. Running the Full Application
 
-Extract the docker-images.zip folder that you just downloaded into your desired directory, and make sure you have docker desktop running
+Extract the docker-images.zip folder that you just downloaded into a single directory, and make sure you have docker desktop running. Keep the extracted files together so the folder contains `docker-compose.images.yml`, the `scripts` folder, and the three image tar files.
 
 
 
@@ -100,7 +100,7 @@ Open the docker-images folder in your terminal:
 
 `C:\Users\...\docker-images>`
 
-To fetch secrets from Azure Key Vault and start all services use the following commands for your operating system:
+To fetch secrets from Azure Key Vault, generate `.env.generated`, and start all services use the following commands for your operating system:
 
 ### Windows:
 
@@ -118,7 +118,9 @@ After running the script you should see the containers up and running on docker 
 - pac-cli
 - documentation-generator
 
-You should be able to see to see `port 3000:3000` or similar next to the documentation-generator container, you can simply click that to start the app in your browser
+The release scripts set the required authentication secrets and default to `FEATURE_SHAREPOINT_ENRICHMENT=false` for the released stack.
+
+You should be able to see `port 3000:3000` or similar next to the documentation-generator container, you can simply click that to start the app in your browser
 
 ---
 

@@ -1173,7 +1173,7 @@ export default function Page() {
     const currentSignature = `${activeDatasetId}:${solutionFile.name}:${solutionFile.size}`;
     const alreadyIngested = solutionIngestSignature === currentSignature;
 
-    // Step 1: FIRST - Ingest the ZIP file into ChromaDB (parses ALL files, FREE with Sentence-BERT)
+    // Step 1: FIRST - Ingest the ZIP file into Qdrant (parses ALL files, FREE with Sentence-BERT)
     // This happens BEFORE doc generation so RAG chat can use the full solution content
     if (!alreadyIngested) {
       onProgress?.("Ingesting solution into RAG...", 15);
@@ -1199,11 +1199,11 @@ export default function Page() {
         setCorpusType(type);
         setCorpusReason(reason);
         setSolutionIngestSignature(currentSignature);
-        console.log("Solution ingested into ChromaDB:", ingestData);
+        console.log("Solution ingested into Qdrant:", ingestData);
       } else if (ingestRes.status === 409) {
         console.warn("Ingest already in progress for this dataset. Continuing.");
       } else {
-        throw new Error("Failed to ingest solution into ChromaDB.");
+        throw new Error("Failed to ingest solution into Qdrant.");
       }
     }
 
@@ -1610,7 +1610,7 @@ export default function Page() {
         activeConversationIdForSave = await createConversationSession();
       }
 
-      // Always use RAG retrieval and query ChromaDB for context
+      // Always use FREE RAG mode - queries Qdrant for context
       const modelForProvider = llmSelection.model;
       const focusFiles = getFocusFiles(text, files);
 
@@ -1897,7 +1897,7 @@ export default function Page() {
             {ragStatus ? (
               <>
                 <span style={{ color: ragStatus.status === "ready" ? "#2e7d32" : "#e65100" }}>
-                  {ragStatus.status === "ready" ? "Online" : "Degraded"} • ChromaDB: {ragStatus.chunks_indexed} chunks • Provider: {statusProvider} ({statusModel})
+                  {ragStatus.status === "ready" ? "Online" : "Degraded"} • Qdrant: {ragStatus.chunks_indexed} chunks • Provider: {statusProvider} ({statusModel})
                 </span>
               </>
             ) : (

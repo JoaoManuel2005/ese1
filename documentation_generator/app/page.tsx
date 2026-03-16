@@ -148,8 +148,6 @@ export default function Page() {
   const [useCustomLocalModel, setUseCustomLocalModel] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState(false);
-  const [apiKey, setApiKey] = useState("");
-  const [endpoint, setEndpoint] = useState("");
   const [sharePointToken, setSharePointToken] = useState<string | null>(null);
   const [parsedSolution, setParsedSolution] = useState<ParsedSolutionResult | null>(null);
   const [sharePointUrls, setSharePointUrls] = useState<string[]>([]);
@@ -1880,10 +1878,6 @@ export default function Page() {
             useCustomLocalModel={useCustomLocalModel}
             setUseCustomLocalModel={setUseCustomLocalModel}
             fetchLocalModels={fetchLocalModels}
-            apiKey={apiKey}
-            setApiKey={setApiKey}
-            endpoint={endpoint}
-            setEndpoint={setEndpoint}
             sharePointToken={sharePointToken}
             setSharePointToken={setSharePointToken}
             systemPrompt={systemPrompt}

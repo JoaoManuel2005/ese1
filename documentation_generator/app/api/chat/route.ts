@@ -69,7 +69,7 @@ export async function POST(req: Request) {
     process.env.AZURE_OPENAI_ENDPOINT;
 
   if (!apiKey) {
-    return new Response("OpenAI API key is required. Please add it in Settings.", { status: 401 });
+    return new Response("OpenAI API key is required. Configure a valid server-side key.", { status: 401 });
   }
 
   const fileContext = buildFileContext(files);

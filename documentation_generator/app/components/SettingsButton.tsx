@@ -614,65 +614,6 @@ const SettingsButton: FC<Props> = ({
                 </button>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
-                <div style={{ fontWeight: 600, color: "var(--success)" }}>API Key (Secure)</div>
-                <div style={{ fontSize: 12, color: smallText }}>
-                  Stored server-side for runtime use. Not stored in browser storage.
-                </div>
-                <div style={{ fontSize: 12, color: smallText }}>
-                  {loadingSettings
-                    ? "Loading settings..."
-                    : apiKeyConfigured
-                    ? `Configured (${maskedApiKey || "****"})`
-                    : "Not configured"}
-                </div>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
-                <div style={{ fontWeight: 600, color: "var(--success)" }}>RAG Mode (FREE)</div>
-                <div style={{ fontSize: 12, color: smallText }}>Chat uses FREE hybrid search (Sentence-BERT + BM25). No API key needed for chat!</div>
-              </div>
-
-              {provider === "cloud" && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
-                  <div>
-                    <label htmlFor="cloud-api-key" style={{ fontWeight: 600 }}>Cloud API Key</label>
-                    <input
-                      id="cloud-api-key"
-                      type="password"
-                      value={apiKey}
-                      onChange={(e) => {
-                        setSaveState("idle");
-                        setApiKey(e.target.value);
-                      }}
-                      placeholder="Enter API key (optional)"
-                      style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, width: "100%", background: inputBg, color: textColor, marginTop: 6 }}
-                    />
-                  </div>
-                  
-                  <div>
-                    <label htmlFor="cloud-endpoint" style={{ fontWeight: 600 }}>Azure OpenAI Endpoint</label>
-                    <input
-                      id="cloud-endpoint"
-                      type="text"
-                      value={endpoint}
-                      onChange={(e) => {
-                        setSaveState("idle");
-                        setEndpoint(e.target.value);
-                      }}
-                      placeholder="https://...openai.azure.com/openai/v1/ (optional)"
-                      style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, width: "100%", background: inputBg, color: textColor, marginTop: 6 }}
-                    />
-                  </div>
-
-                  <div style={{ fontSize: 12, color: smallText, background: "var(--panel-bg-selected)", padding: 10, borderRadius: 6, border: `1px solid ${borderColor}` }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠️ Rate Limits</div>
-                    <div>• <strong>50,000 tokens</strong> per minute</div>
-                    <div>• <strong>50 requests</strong> per minute</div>
-                  </div>
-                </div>
-              )}
-
               {/* SharePoint Authentication Section */}
               <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
                 <div style={{ fontWeight: 600, color: "#0078d4" }}>SharePoint Integration</div>

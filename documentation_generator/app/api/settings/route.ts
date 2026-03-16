@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../auth/[...nextauth]/route";
-import { getRuntimeConfig, maskApiKey, setRuntimeConfig } from "../../../lib/runtimeConfig";
+import { getRuntimeConfig, setRuntimeConfig } from "../../../lib/runtimeConfig";
 import { getUserSystemPrompt, upsertUserSystemPrompt } from "../../../lib/userSettings";
 
 function getAzureAdAuthority(): string {
@@ -18,9 +18,6 @@ function buildPublicConfig(
   return {
     provider: config.provider ?? null,
     model: config.model ?? null,
-    azureOpenAiEndpoint: config.azureOpenAiEndpoint ?? null,
-    openaiApiKeyConfigured: !!config.openaiApiKey,
-    openaiApiKeyMasked: maskApiKey(config.openaiApiKey),
     azureAdClientId: process.env.AZURE_AD_CLIENT_ID?.trim() || null,
     azureAdAuthority: getAzureAdAuthority(),
     systemPrompt,
@@ -54,30 +51,14 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    const endpoint = body?.azureOpenAiEndpoint;
-
-    if (typeof endpoint === "string" && endpoint.trim().length > 0) {
-      try {
-        new URL(endpoint);
-      } catch {
-        return NextResponse.json(
-          { error: "Invalid Azure OpenAI endpoint. Provide a valid URL." },
-          { status: 400 }
-        );
-      }
-    }
 
     const updates: {
       provider?: "cloud" | "local" | null;
       model?: string | null;
-      openaiApiKey?: string | null;
-      azureOpenAiEndpoint?: string | null;
     } = {};
 
     if ("provider" in body) updates.provider = body.provider;
     if ("model" in body) updates.model = body.model;
-    if ("openaiApiKey" in body) updates.openaiApiKey = body.openaiApiKey;
-    if ("azureOpenAiEndpoint" in body) updates.azureOpenAiEndpoint = body.azureOpenAiEndpoint;
 
     const config = await setRuntimeConfig(updates);
 

@@ -169,7 +169,7 @@ export async function POST(req: Request) {
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "OpenAI API key is required. Please add it in Settings." },
+        { error: "OpenAI API key is required. Configure a valid server-side key." },
         { status: 401 }
       );
     }

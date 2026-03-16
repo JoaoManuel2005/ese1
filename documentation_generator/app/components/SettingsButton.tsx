@@ -79,10 +79,6 @@ type Props = {
   useCustomLocalModel: boolean;
   setUseCustomLocalModel: (b: boolean) => void;
   fetchLocalModels: () => void;
-  apiKey: string;
-  setApiKey: (k: string) => void;
-  endpoint: string;
-  setEndpoint: (e: string) => void;
   sharePointToken: string | null;
   setSharePointToken: (token: string | null) => void;
   systemPrompt: string;
@@ -107,10 +103,6 @@ const SettingsButton: FC<Props> = ({
   useCustomLocalModel,
   setUseCustomLocalModel,
   fetchLocalModels,
-  apiKey,
-  setApiKey,
-  endpoint,
-  setEndpoint,
   sharePointToken,
   setSharePointToken,
   systemPrompt,
@@ -131,8 +123,6 @@ const SettingsButton: FC<Props> = ({
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
-  const [maskedApiKey, setMaskedApiKey] = useState<string | null>(null);
   const [connectingSharePoint, setConnectingSharePoint] = useState(false);
   const [sharePointError, setSharePointError] = useState<string | null>(null);
   const [sharePointUserEmail, setSharePointUserEmail] = useState<string | null>(null);
@@ -178,15 +168,6 @@ const SettingsButton: FC<Props> = ({
         if (typeof data?.model === "string" && data.model.trim()) {
           setSelectedModel(data.model);
         }
-        if (typeof data?.azureOpenAiEndpoint === "string") {
-          setEndpoint(data.azureOpenAiEndpoint);
-        } else {
-          setEndpoint("");
-        }
-
-        setApiKey("");
-        setApiKeyConfigured(!!data?.openaiApiKeyConfigured);
-        setMaskedApiKey(typeof data?.openaiApiKeyMasked === "string" ? data.openaiApiKeyMasked : null);
         setSharePointAuthClientId(
           typeof data?.azureAdClientId === "string" && data.azureAdClientId.trim()
             ? data.azureAdClientId
@@ -221,7 +202,7 @@ const SettingsButton: FC<Props> = ({
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated, open, setApiKey, setEndpoint, setProvider, setSelectedModel, setSystemPrompt]);
+  }, [isAuthenticated, open, setProvider, setSelectedModel, setSystemPrompt]);
 
   async function saveSettings(systemPromptOverride?: string) {
     setSaveState("saving");
@@ -238,13 +219,8 @@ const SettingsButton: FC<Props> = ({
     const payload: Record<string, unknown> = {
       provider,
       model: selectedModel || null,
-      azureOpenAiEndpoint: endpoint || null,
       systemPrompt: promptToSave ?? "",
     };
-
-    if (apiKey.trim()) {
-      payload.openaiApiKey = apiKey.trim();
-    }
 
     try {
       const res = await fetch("/api/settings", {
@@ -260,12 +236,6 @@ const SettingsButton: FC<Props> = ({
 
       setSaveState("saved");
       setSaveMessage("Saved");
-      setApiKey("");
-      setApiKeyConfigured(!!data?.openaiApiKeyConfigured);
-      setMaskedApiKey(typeof data?.openaiApiKeyMasked === "string" ? data.openaiApiKeyMasked : null);
-      if (typeof data?.azureOpenAiEndpoint === "string") {
-        setEndpoint(data.azureOpenAiEndpoint);
-      }
       if (data && "systemPrompt" in data) {
         setSystemPrompt(typeof data.systemPrompt === "string" ? data.systemPrompt : "");
       }
@@ -613,65 +583,6 @@ const SettingsButton: FC<Props> = ({
                   Restore to default
                 </button>
               </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
-                <div style={{ fontWeight: 600, color: "var(--success)" }}>API Key (Secure)</div>
-                <div style={{ fontSize: 12, color: smallText }}>
-                  Stored server-side for runtime use. Not stored in browser storage.
-                </div>
-                <div style={{ fontSize: 12, color: smallText }}>
-                  {loadingSettings
-                    ? "Loading settings..."
-                    : apiKeyConfigured
-                    ? `Configured (${maskedApiKey || "****"})`
-                    : "Not configured"}
-                </div>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
-                <div style={{ fontWeight: 600, color: "var(--success)" }}>RAG Mode (FREE)</div>
-                <div style={{ fontSize: 12, color: smallText }}>Chat uses FREE hybrid search (Sentence-BERT + BM25). No API key needed for chat!</div>
-              </div>
-
-              {provider === "cloud" && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
-                  <div>
-                    <label htmlFor="cloud-api-key" style={{ fontWeight: 600 }}>Cloud API Key</label>
-                    <input
-                      id="cloud-api-key"
-                      type="password"
-                      value={apiKey}
-                      onChange={(e) => {
-                        setSaveState("idle");
-                        setApiKey(e.target.value);
-                      }}
-                      placeholder="Enter API key (optional)"
-                      style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, width: "100%", background: inputBg, color: textColor, marginTop: 6 }}
-                    />
-                  </div>
-                  
-                  <div>
-                    <label htmlFor="cloud-endpoint" style={{ fontWeight: 600 }}>Azure OpenAI Endpoint</label>
-                    <input
-                      id="cloud-endpoint"
-                      type="text"
-                      value={endpoint}
-                      onChange={(e) => {
-                        setSaveState("idle");
-                        setEndpoint(e.target.value);
-                      }}
-                      placeholder="https://...openai.azure.com/openai/v1/ (optional)"
-                      style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${borderColor}`, width: "100%", background: inputBg, color: textColor, marginTop: 6 }}
-                    />
-                  </div>
-
-                  <div style={{ fontSize: 12, color: smallText, background: "var(--panel-bg-selected)", padding: 10, borderRadius: 6, border: `1px solid ${borderColor}` }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠️ Rate Limits</div>
-                    <div>• <strong>50,000 tokens</strong> per minute</div>
-                    <div>• <strong>50 requests</strong> per minute</div>
-                  </div>
-                </div>
-              )}
 
               {/* SharePoint Authentication Section */}
               <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>

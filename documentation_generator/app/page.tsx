@@ -148,8 +148,6 @@ export default function Page() {
   const [useCustomLocalModel, setUseCustomLocalModel] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState(false);
-  const [apiKey, setApiKey] = useState("");
-  const [endpoint, setEndpoint] = useState("");
   const [sharePointToken, setSharePointToken] = useState<string | null>(null);
   const [parsedSolution, setParsedSolution] = useState<ParsedSolutionResult | null>(null);
   const [sharePointUrls, setSharePointUrls] = useState<string[]>([]);
@@ -211,7 +209,7 @@ export default function Page() {
       lower.includes("invalid api key") ||
       (lower.includes("api key") && (lower.includes("missing") || lower.includes("invalid")))
     ) {
-      return "Cloud unavailable (invalid API key/billing). Switch to Local or update Settings.";
+      return "Cloud unavailable (invalid API key/billing). Switch to Local or configure a valid server-side key.";
     }
     if (status === 429 || lower.includes("insufficient_quota") || lower.includes("quota") || lower.includes("billing")) {
       return "Cloud quota/billing required. Switch to Local or enable billing.";
@@ -619,8 +617,6 @@ export default function Page() {
       setProvider(storedProvider);
     }
     if (storedLocalModel) setLocalModel(storedLocalModel);
-    // Clear any old API key from localStorage for security
-    localStorage.removeItem("openaiApiKey");
     if (storedDatasetId) {
       setDatasetId(storedDatasetId);
     } else {
@@ -1614,7 +1610,7 @@ export default function Page() {
         activeConversationIdForSave = await createConversationSession();
       }
 
-      // Always use FREE RAG mode - queries ChromaDB for context
+      // Always use RAG retrieval and query ChromaDB for context
       const modelForProvider = llmSelection.model;
       const focusFiles = getFocusFiles(text, files);
 
@@ -1880,10 +1876,6 @@ export default function Page() {
             useCustomLocalModel={useCustomLocalModel}
             setUseCustomLocalModel={setUseCustomLocalModel}
             fetchLocalModels={fetchLocalModels}
-            apiKey={apiKey}
-            setApiKey={setApiKey}
-            endpoint={endpoint}
-            setEndpoint={setEndpoint}
             sharePointToken={sharePointToken}
             setSharePointToken={setSharePointToken}
             systemPrompt={systemPrompt}

@@ -16,7 +16,7 @@ export function mapProviderError(msg: string, status?: number) {
     lower.includes("invalid api key") ||
     (lower.includes("api key") && (lower.includes("missing") || lower.includes("invalid")))
   ) {
-    return "Cloud unavailable (invalid API key/billing). Switch to Local or update Settings.";
+    return "Cloud unavailable (invalid API key/billing). Switch to Local or configure a valid server-side key.";
   }
   if (status === 429 || lower.includes("insufficient_quota") || lower.includes("quota") || lower.includes("billing")) {
     return "Cloud quota/billing required. Switch to Local or enable billing.";

@@ -92,7 +92,7 @@ Download the latest release of the app from [here](https://github.com/JoaoManuel
 
 ## 6. Running the Full Application
 
-Extract the docker-images.zip folder that you just downloaded into a single directory, and make sure you have docker desktop running. Keep the extracted files together so the folder contains `docker-compose.images.yml`, the `scripts` folder, and the three image tar files.
+Extract the docker-images.zip folder that you just downloaded into a single directory, and make sure you have docker desktop running. Keep the extracted files together so the folder contains `docker-compose.images.yml`, the `scripts` folder, and the four image tar files.
 
 
 
@@ -114,6 +114,7 @@ To fetch secrets from Azure Key Vault, generate `.env.generated`, and start all 
 
 
 After running the script you should see the containers up and running on docker desktop, you can expand docker-images to see:
+- qdrant
 - rag-backend-dotnet
 - pac-cli
 - documentation-generator

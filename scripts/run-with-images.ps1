@@ -6,7 +6,8 @@
 .DESCRIPTION
   Run from repo root or from extracted CI artifact root. The script expects to find
   docker-compose.images.yml in that directory. Image tars (dotnet-backend.tar,
-  documentation_generator.tar, pac_cli.tar) are loaded from the SAME directory when present.
+  documentation_generator.tar, pac_cli.tar, qdrant.tar) are loaded from the SAME
+  directory when the full release image set is present.
   Secrets are fetched from Azure Key Vault "docgenvault".
 #>
 
@@ -22,13 +23,18 @@ if (-not (Test-Path -LiteralPath $COMPOSE_FILE -PathType Leaf)) {
 }
 
 # Load image tars if present in ROOT (same directory as docker-compose.images.yml)
-$tars = @('dotnet-backend.tar', 'documentation_generator.tar', 'pac_cli.tar')
-$allTarsPresent = ($tars | ForEach-Object { Test-Path -LiteralPath $_ -PathType Leaf }) -notcontains $false
-if ($allTarsPresent) {
+$tars = @('dotnet-backend.tar', 'documentation_generator.tar', 'pac_cli.tar', 'qdrant.tar')
+$presentTars = @($tars | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+$missingTars = @($tars | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+if ($presentTars.Count -gt 0 -and $missingTars.Count -gt 0) {
+  throw "Incomplete Docker image set in $ROOT. Missing image archives: $($missingTars -join ', '). Expected release artifacts to include: $($tars -join ', ')."
+}
+if ($missingTars.Count -eq 0) {
   Write-Host "Loading Docker images from $ROOT ..."
   docker load -i dotnet-backend.tar
   docker load -i documentation_generator.tar
   docker load -i pac_cli.tar
+  docker load -i qdrant.tar
   New-Item -ItemType Directory -Force -Path pac-workspace, documentation_generator/runtime-data | Out-Null
 }
 
@@ -97,6 +103,16 @@ Write-Host "AZURE_AD_TENANT_ID=$(Get-MaskedSecret $azure_tenant_id)"
 docker compose --env-file .env.generated -f $COMPOSE_FILE up -d --force-recreate
 if ($LASTEXITCODE -ne 0) { throw 'docker compose up failed.' }
 
+$requiredContainers = @('qdrant', 'rag-backend-dotnet', 'documentation-generator', 'pac-cli')
+Write-Host 'Verifying release containers are running:'
+foreach ($container in $requiredContainers) {
+  $running = docker inspect -f '{{.State.Running}}' $container 2>$null
+  if ($LASTEXITCODE -ne 0 -or $running.Trim() -ne 'true') {
+    throw "Expected container '$container' to be running."
+  }
+  Write-Host "${container}=RUNNING"
+}
+
 $requiredVars = @('NEXTAUTH_SECRET', 'AZURE_AD_CLIENT_ID', 'AZURE_AD_CLIENT_SECRET', 'AZURE_AD_TENANT_ID')
 $envOutput = docker exec documentation-generator printenv 2>&1 | Out-String
 if ($LASTEXITCODE -ne 0) {
@@ -121,4 +137,4 @@ if ($emptyVars.Count -gt 0) {
   Write-Error "One or more required secrets are empty inside documentation-generator. This is usually caused by blank environment entries in docker-compose.dev.yml or another compose override file."
 }
 
-Write-Host 'Done. App is running (backend: port 8001, docs UI: port 3000).'
+Write-Host 'Done. App is running (backend: port 8001, docs UI: port 3000, qdrant: ports 6333/6334).'

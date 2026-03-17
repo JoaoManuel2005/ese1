@@ -1,3 +1,0 @@
-# Minimal dependencies for GitLab CI checks.
-# Keep this lightweight to avoid installing heavy ML/GPU packages.
-pytest==8.4.2

@@ -1,9 +1,13 @@
 using Azure.AI.OpenAI;
 using OpenAI.Embeddings;
+using Qdrant.Client;
+using Qdrant.Client.Grpc;
+using QdrantMatch = Qdrant.Client.Grpc.Match;
 using RagBackend.Models;
 using System.IO.Compression;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -29,10 +33,20 @@ public class RagPipelineService
     private readonly OnnxEmbeddingService _onnxEmbedding;
     private readonly PacParserService _pacParser;
 
-    // ── In-memory stores (keyed by datasetId) ───────────────────────────────────
-    private readonly Dictionary<string, List<ChunkRecord>>      _vectorStore = new();
-    private readonly Dictionary<string, Bm25Index>              _bm25Store   = new();
+    // ── Qdrant vector store (persistent, keyed by datasetId = collection name) ──
+    private readonly QdrantClient _qdrant;
+
+    // ── BM25 in-memory index (rebuilt from Qdrant on demand) ─────────────────────
+    private readonly Dictionary<string, (Bm25Index Index, List<ChunkRecord> Records)> _bm25Store = new();
     private readonly object _lock = new();
+    // Per-dataset semaphores to prevent concurrent BM25 rebuilds corrupting the index
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _bm25Locks = new();
+
+    // ── Query embedding cache (LRU) for 50-100x speedup on repeated queries ─────
+    private readonly LruCache<string, float[]> _queryEmbeddingCache = new(capacity: 1000);
+
+    // ── Retrieval result cache — keyed by (datasetId + query + params), 5-min TTL ─
+    private readonly ConcurrentDictionary<string, (List<RetrievedChunkInternal> Chunks, DateTime ExpiresAt)> _retrievalCache = new();
 
     public RagPipelineService(
         IConfiguration config,
@@ -40,41 +54,67 @@ public class RagPipelineService
         ILogger<RagPipelineService> logger,
         IHttpClientFactory httpClientFactory,
         OnnxEmbeddingService onnxEmbedding,
-        PacParserService pacParser)
+        PacParserService pacParser,
+        QdrantClient qdrant)
     {
         _config = config;
         _llm    = llm;
         _logger = logger;
         _httpClient = httpClientFactory.CreateClient();
-        _httpClient.Timeout = TimeSpan.FromMinutes(10); // Increase timeout for large documents
+        _httpClient.Timeout = TimeSpan.FromMinutes(10);
         _onnxEmbedding = onnxEmbedding;
         _pacParser = pacParser;
+        _qdrant    = qdrant;
+
+        // Pre-warm BM25 indexes in the background so the first query doesn't pay the cold-start cost
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var collections = await _qdrant.ListCollectionsAsync();
+                foreach (var name in collections)
+                    await RebuildBm25IndexAsync(name);
+                _logger.LogInformation("[BM25] Pre-warmed {Count} collection(s) on startup.", collections.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[BM25] Pre-warm failed — indexes will be built lazily on first query.");
+            }
+        });
     }
 
     // ──────────────────────────────────────────────────────────────────────────
     // CHUNKING
     // ──────────────────────────────────────────────────────────────────────────
-    public List<string> ChunkText(string text, int chunkSize = 1000, int overlap = 200)
+    // bge-base-en-v1.5 hard limit is 512 tokens. Average English word ≈ 1.3 tokens,
+    // so 380 words ≈ 494 tokens — safe headroom for [CLS]/[SEP] special tokens.
+    public List<string> ChunkText(string text, int chunkSize = 380, int overlap = 60)
     {
-        if (text.Length <= chunkSize) return new List<string> { text };
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length <= chunkSize) return new List<string> { text };
 
         var chunks = new List<string>();
         int start = 0;
 
-        while (start < text.Length)
+        while (start < words.Length)
         {
-            int end   = Math.Min(start + chunkSize, text.Length);
-            var chunk = text[start..end];
+            int end   = Math.Min(start + chunkSize, words.Length);
+            var chunk = string.Join(' ', words[start..end]);
 
-            if (end < text.Length)
+            // Prefer breaking at sentence boundary in the second half of the chunk
+            if (end < words.Length)
             {
-                int lastPeriod  = chunk.LastIndexOf('.');
-                int lastNewline = chunk.LastIndexOf('\n');
-                int bp          = Math.Max(lastPeriod, lastNewline);
-                if (bp > chunkSize / 2)
+                int midpoint = start + chunkSize / 2;
+                int bp = -1;
+                for (int i = end - 1; i >= midpoint; i--)
                 {
-                    chunk = text[start..(start + bp + 1)];
-                    end   = start + bp + 1;
+                    if (words[i].EndsWith('.') || words[i].EndsWith('\n'))
+                    { bp = i; break; }
+                }
+                if (bp >= 0)
+                {
+                    chunk = string.Join(' ', words[start..(bp + 1)]);
+                    end   = bp + 1;
                 }
             }
 
@@ -133,28 +173,41 @@ public class RagPipelineService
 
     public async Task<float[]> GenerateEmbeddingAsync(string text)
     {
+        // Check cache first for 50-100x speedup on repeated queries
+        if (_queryEmbeddingCache.TryGet(text, out var cachedEmbedding))
+        {
+            _logger.LogDebug("[Cache Hit] Using cached embedding for query");
+            return cachedEmbedding;
+        }
+
+        float[] embedding;
         if (UseOnnxEmbeddings())
         {
-            return await _onnxEmbedding.GenerateEmbeddingAsync(text);
+            embedding = await _onnxEmbedding.GenerateEmbeddingAsync(text);
         }
-        
-        if (UseBgeEmbeddings())
+        else if (UseBgeEmbeddings())
         {
             var embeddings = await GenerateBgeEmbeddingsAsync(new[] { text });
-            return embeddings[0];
+            embedding = embeddings[0];
+        }
+        else
+        {
+            var client   = GetEmbeddingClient();
+            var trimmed  = text.Length > 8000 ? text[..8000] : text;
+            var response = await client.GenerateEmbeddingAsync(trimmed);
+            embedding = response.Value.ToFloats().ToArray();
         }
         
-        var client   = GetEmbeddingClient();
-        var trimmed  = text.Length > 8000 ? text[..8000] : text;
-        var response = await client.GenerateEmbeddingAsync(trimmed);
-        return response.Value.ToFloats().ToArray();
+        // Cache the result
+        _queryEmbeddingCache.Add(text, embedding);
+        return embedding;
     }
 
     public async Task<List<float[]>> GenerateEmbeddingsBatchAsync(IEnumerable<string> texts)
     {
         if (UseOnnxEmbeddings())
         {
-            _logger.LogInformation("      Using ONNX embeddings (free local, all-MiniLM-L6-v2)");
+            _logger.LogInformation("      Using ONNX embeddings (free local)");
             return await _onnxEmbedding.GenerateBatchEmbeddingsAsync(texts);
         }
         
@@ -241,8 +294,18 @@ public class RagPipelineService
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // VECTOR STORAGE
+    // VECTOR STORAGE (Qdrant)
     // ──────────────────────────────────────────────────────────────────────────
+    private async Task EnsureCollectionExistsAsync(string datasetId, int dimension)
+    {
+        if (!await _qdrant.CollectionExistsAsync(datasetId))
+        {
+            await _qdrant.CreateCollectionAsync(datasetId,
+                new VectorParams { Size = (ulong)dimension, Distance = Distance.Cosine });
+            _logger.LogInformation("[Qdrant] Created collection '{DatasetId}' ({Dim} dims).", datasetId, dimension);
+        }
+    }
+
     public async Task<int> StoreChunksAsync(
         List<(string Content, Dictionary<string, string> Metadata)> chunks,
         string datasetId)
@@ -252,94 +315,117 @@ public class RagPipelineService
         _logger.LogInformation("    → Preparing to generate embeddings for {Count} chunks...", chunks.Count);
         var texts      = chunks.Select(c => c.Content).ToList();
         var embeddings = await GenerateEmbeddingsBatchAsync(texts);
-        _logger.LogInformation("    ✓ Generated all embeddings, now storing in vector database...");
+        _logger.LogInformation("    ✓ Generated all embeddings, now storing in Qdrant...");
 
-        var records = chunks.Select((c, i) => new ChunkRecord(
-            Id       : $"{datasetId}_{Guid.NewGuid():N}",
-            Content  : c.Content,
-            Metadata : c.Metadata,
-            Embedding: embeddings[i]
-        )).ToList();
+        await EnsureCollectionExistsAsync(datasetId, embeddings[0].Length);
 
-        lock (_lock)
+        var points = chunks.Select((c, i) =>
         {
-            if (!_vectorStore.ContainsKey(datasetId))
-                _vectorStore[datasetId] = new List<ChunkRecord>();
+            var point = new PointStruct { Id = Guid.NewGuid(), Vectors = embeddings[i] };
+            point.Payload["content"] = c.Content;
+            foreach (var kv in c.Metadata)
+                point.Payload[kv.Key] = kv.Value;
+            return point;
+        }).ToList();
 
-            _vectorStore[datasetId].AddRange(records);
-            RebuildBm25Index(datasetId);
-        }
-
-        return records.Count;
+        await _qdrant.UpsertAsync(datasetId, points);
+        await RebuildBm25IndexAsync(datasetId);
+        InvalidateRetrievalCache(datasetId);
+        return points.Count;
     }
 
-    public int GetCollectionCount(string datasetId)
+    public async Task<int> GetCollectionCountAsync(string datasetId)
     {
-        lock (_lock)
-            return _vectorStore.TryGetValue(datasetId, out var v) ? v.Count : 0;
+        if (!await _qdrant.CollectionExistsAsync(datasetId)) return 0;
+        var result = await _qdrant.CountAsync(datasetId);
+        return (int)result;
     }
 
-    public void ClearCollection(string datasetId)
+    public async Task ClearCollectionAsync(string datasetId)
     {
-        lock (_lock)
-        {
-            _vectorStore.Remove(datasetId);
-            _bm25Store.Remove(datasetId);
-        }
+        if (await _qdrant.CollectionExistsAsync(datasetId))
+            await _qdrant.DeleteCollectionAsync(datasetId);
+        lock (_lock) _bm25Store.Remove(datasetId);
+        InvalidateRetrievalCache(datasetId);
     }
 
-    public void ClearAll()
-    {
-        lock (_lock)
-        {
-            _vectorStore.Clear();
-            _bm25Store.Clear();
-        }
-    }
-
-    public void DeleteFiles(string datasetId, List<string> fileNames)
+    public async Task DeleteFilesAsync(string datasetId, List<string> fileNames)
     {
         if (fileNames.Count == 0) return;
-        var lower = fileNames.Select(f => f.ToLower()).ToHashSet();
-        lock (_lock)
-        {
-            if (!_vectorStore.TryGetValue(datasetId, out var records)) return;
-            _vectorStore[datasetId] = records
-                .Where(r => !r.Metadata.TryGetValue("file_name", out var fn) || !lower.Contains(fn.ToLower()))
-                .ToList();
-            RebuildBm25Index(datasetId);
-        }
+        if (!await _qdrant.CollectionExistsAsync(datasetId)) return;
+
+        var filter = new Filter();
+        foreach (var fn in fileNames.Select(f => f.ToLower()))
+            filter.Should.Add(new Condition
+            {
+                Field = new FieldCondition { Key = "file_name", Match = new QdrantMatch { Keyword = fn } }
+            });
+        await _qdrant.DeleteAsync(datasetId, filter);
+        await RebuildBm25IndexAsync(datasetId);
+        InvalidateRetrievalCache(datasetId);
     }
 
-    public List<string> ListFiles(string datasetId)
+    public async Task<List<string>> ListFilesAsync(string datasetId)
     {
-        lock (_lock)
-        {
-            if (!_vectorStore.TryGetValue(datasetId, out var records))
-                return new List<string>();
+        if (!await _qdrant.CollectionExistsAsync(datasetId)) return new List<string>();
 
-            return records
-                .Where(r => r.Metadata.ContainsKey("file_name"))
-                .Select(r => r.Metadata["file_name"])
-                .Distinct()
-                .OrderBy(f => f)
-                .ToList();
-        }
+        var scrollResult = await _qdrant.ScrollAsync(datasetId, null, 10000u, null, true, false);
+        return scrollResult.Result
+            .Where(p => p.Payload.ContainsKey("file_name"))
+            .Select(p => p.Payload["file_name"].StringValue)
+            .Where(f => !string.IsNullOrEmpty(f))
+            .Distinct()
+            .OrderBy(f => f)
+            .ToList();
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // BM25 INDEX
-    // ──────────────────────────────────────────────────────────────────────────
-    private void RebuildBm25Index(string datasetId)
+    // BM25 INDEX (rebuilt from Qdrant, kept in-memory for fast keyword search)
+    private void InvalidateRetrievalCache(string datasetId)
     {
-        if (!_vectorStore.TryGetValue(datasetId, out var records) || records.Count == 0)
-        {
-            _bm25Store.Remove(datasetId);
-            return;
-        }
+        foreach (var key in _retrievalCache.Keys.Where(k => k.StartsWith(datasetId + "::")))
+            _retrievalCache.TryRemove(key, out _);
+    }
 
-        _bm25Store[datasetId] = new Bm25Index(records.Select(r => r.Content).ToList());
-        _logger.LogInformation("[BM25] Index rebuilt for '{DatasetId}' with {Count} docs.", datasetId, records.Count);
+    // ──────────────────────────────────────────────────────────────────────────
+    private async Task RebuildBm25IndexAsync(string datasetId)
+    {
+        var sem = _bm25Locks.GetOrAdd(datasetId, _ => new SemaphoreSlim(1, 1));
+        await sem.WaitAsync();
+        try
+        {
+            if (!await _qdrant.CollectionExistsAsync(datasetId))
+            {
+                lock (_lock) _bm25Store.Remove(datasetId);
+                return;
+            }
+
+            var scrollResult = await _qdrant.ScrollAsync(datasetId, null, 10000u, null, true, false);
+            var scrollPoints = scrollResult.Result;
+
+            if (scrollPoints.Count == 0)
+            {
+                lock (_lock) _bm25Store.Remove(datasetId);
+                return;
+            }
+
+            var records = scrollPoints.Select(p => new ChunkRecord(
+                Id      : p.Id.Uuid,
+                Content : p.Payload.TryGetValue("content", out var c) ? c.StringValue : "",
+                Metadata: p.Payload
+                    .Where(kv => kv.Key != "content")
+                    .ToDictionary(kv => kv.Key, kv => kv.Value.StringValue ?? ""),
+                Embedding: Array.Empty<float>()
+            )).ToList();
+
+            var index = new Bm25Index(records.Select(r => r.Content));
+            lock (_lock) _bm25Store[datasetId] = (index, records);
+            _logger.LogInformation("[BM25] Index rebuilt for '{DatasetId}' with {Count} docs.", datasetId, records.Count);
+        }
+        finally
+        {
+            sem.Release();
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -348,17 +434,36 @@ public class RagPipelineService
     public async Task<List<RetrievedChunkInternal>> RetrieveAsync(
         string query,
         string datasetId,
-        int nResults   = 5,
+        int nResults        = 5,
         double hybridWeight = 0.5,
         List<string>? focusFiles = null)
     {
-        if (!_vectorStore.ContainsKey(datasetId) || _vectorStore[datasetId].Count == 0)
+        if (!await _qdrant.CollectionExistsAsync(datasetId))
             return new List<RetrievedChunkInternal>();
 
-        int nEach        = nResults * 2;
-        var bm25Results  = RetrieveBm25(query, datasetId, nEach, focusFiles);
-        var queryEmb     = await GenerateEmbeddingAsync(query);
-        var vectorResults= RetrieveVector(queryEmb, datasetId, nEach, focusFiles);
+        // Return cached result if still fresh (5-min TTL)
+        var cacheKey = $"{datasetId}::{query}::{nResults}::{hybridWeight}::{string.Join(",", focusFiles ?? [])}";
+        if (_retrievalCache.TryGetValue(cacheKey, out var cached) && cached.ExpiresAt > DateTime.UtcNow)
+        {
+            _logger.LogDebug("[Cache Hit] Retrieval result for query '{Query}'", query);
+            return cached.Chunks;
+        }
+
+        int nEach = nResults * 2;
+
+        // Lazy-load BM25 index from Qdrant if not in memory (e.g. after restart)
+        bool hasBm25;
+        lock (_lock) hasBm25 = _bm25Store.ContainsKey(datasetId);
+        if (!hasBm25) await RebuildBm25IndexAsync(datasetId);
+
+        // Run BM25 and embedding generation in parallel for 1.5-2x speedup
+        var bm25Task      = Task.Run(() => RetrieveBm25(query, datasetId, nEach, focusFiles));
+        var embeddingTask = GenerateEmbeddingAsync(query);
+        await Task.WhenAll(bm25Task, embeddingTask);
+
+        var bm25Results = bm25Task.Result;
+        var queryEmb = embeddingTask.Result;
+        var vectorResults = await RetrieveVectorAsync(queryEmb, datasetId, nEach, focusFiles);
 
         // Reciprocal Rank Fusion
         var scores  = new Dictionary<string, double>();
@@ -368,33 +473,34 @@ public class RagPipelineService
         double bm25Weight = 1 - hybridWeight;
         for (int i = 0; i < bm25Results.Count; i++)
         {
-            var r    = bm25Results[i];
-            var id   = r.Id;
-            scores[id]  = scores.GetValueOrDefault(id) + bm25Weight * (1.0 / (i + 60));
-            content[id] = r.Content;
-            meta[id]    = r.Metadata;
+            var r = bm25Results[i];
+            scores[r.Id]  = scores.GetValueOrDefault(r.Id) + bm25Weight * (1.0 / (i + 60));
+            content[r.Id] = r.Content;
+            meta[r.Id]    = r.Metadata;
         }
 
         for (int i = 0; i < vectorResults.Count; i++)
         {
-            var r    = vectorResults[i];
-            var id   = r.Id;
-            scores[id]  = scores.GetValueOrDefault(id) + hybridWeight * (1.0 / (i + 60));
-            content[id] = r.Content;
-            meta[id]    = r.Metadata;
+            var r = vectorResults[i];
+            scores[r.Id]  = scores.GetValueOrDefault(r.Id) + hybridWeight * (1.0 / (i + 60));
+            content[r.Id] = r.Content;
+            meta[r.Id]    = r.Metadata;
         }
 
         var sorted   = scores.OrderByDescending(kv => kv.Value).Take(nResults).ToList();
         double maxSc = sorted.FirstOrDefault().Value;
         if (maxSc == 0) maxSc = 1;
 
-        return sorted.Select(kv => new RetrievedChunkInternal(
-            Id           : kv.Key,
-            Content      : content[kv.Key],
-            Metadata     : meta[kv.Key],
-            RelevanceScore: Math.Round(kv.Value / maxSc * 100, 1),
+        var results = sorted.Select(kv => new RetrievedChunkInternal(
+            Id             : kv.Key,
+            Content        : content[kv.Key],
+            Metadata       : meta[kv.Key],
+            RelevanceScore : Math.Round(kv.Value / maxSc * 100, 1),
             RetrievalMethod: "hybrid"
         )).ToList();
+
+        _retrievalCache[cacheKey] = (results, DateTime.UtcNow.AddMinutes(5));
+        return results;
     }
 
     private List<ChunkRecord> RetrieveBm25(
@@ -402,9 +508,10 @@ public class RagPipelineService
     {
         lock (_lock)
         {
-            if (!_bm25Store.TryGetValue(datasetId, out var idx) || !_vectorStore.TryGetValue(datasetId, out var records))
+            if (!_bm25Store.TryGetValue(datasetId, out var stored))
                 return new List<ChunkRecord>();
 
+            var (idx, records) = stored;
             var scores   = idx.GetScores(Tokenise(query));
             var indices  = Enumerable.Range(0, records.Count).ToList();
 
@@ -425,27 +532,33 @@ public class RagPipelineService
         }
     }
 
-    private List<ChunkRecord> RetrieveVector(
+    private async Task<List<ChunkRecord>> RetrieveVectorAsync(
         float[] queryEmb, string datasetId, int n, List<string>? focusFiles)
     {
-        lock (_lock)
+        // Collection existence already checked by the caller (RetrieveAsync)
+        Filter? filter = null;
+        if (focusFiles?.Count > 0)
         {
-            if (!_vectorStore.TryGetValue(datasetId, out var records))
-                return new List<ChunkRecord>();
-
-            var candidates = focusFiles?.Count > 0
-                ? records.Where(r => r.Metadata.TryGetValue("file_name", out var fn)
-                    && focusFiles.Any(f => f.ToLower() == fn.ToLower()))
-                : records;
-
-            return candidates
-                .Select(r => (Record: r, Score: CosineSimilarity(queryEmb, r.Embedding)))
-                .OrderByDescending(x => x.Score)
-                .Take(n)
-                .Select(x => x.Record)
-                .ToList();
+            filter = new Filter();
+            foreach (var f in focusFiles.Select(f => f.ToLower()))
+                filter.Should.Add(new Condition
+                {
+                    Field = new FieldCondition { Key = "file_name", Match = new QdrantMatch { Keyword = f } }
+                });
         }
+
+        var hits = await _qdrant.SearchAsync(datasetId, queryEmb, filter, null, (ulong)n, 0UL, true, null);
+
+        return hits.Select(h => new ChunkRecord(
+            Id      : h.Id.Uuid,
+            Content : h.Payload.TryGetValue("content", out var c) ? c.StringValue : "",
+            Metadata: h.Payload
+                .Where(kv => kv.Key != "content")
+                .ToDictionary(kv => kv.Key, kv => kv.Value.StringValue ?? ""),
+            Embedding: Array.Empty<float>()
+        )).ToList();
     }
+
 
     // ──────────────────────────────────────────────────────────────────────────
     // LLM ANSWER GENERATION
@@ -560,7 +673,7 @@ public class RagPipelineService
             {
                 ["solution_name"]     = solutionName,
                 ["chunks_stored"]     = storedCount,
-                ["collection_total"]  = GetCollectionCount(datasetId)
+                ["collection_total"]  = await GetCollectionCountAsync(datasetId)
             },
             CorpusType   = "solution_zip",
             CorpusReason = "Power Platform solution ZIP"
@@ -670,6 +783,7 @@ public class RagPipelineService
             // Use PAC CLI to parse the solution
             var tempDir = Path.Combine(Path.GetTempPath(), $"pac_parse_{Guid.NewGuid()}");
             Directory.CreateDirectory(tempDir);
+            _logger.LogInformation("    [PAC] Temp dir: {TempDir}", tempDir);
 
             try
             {
@@ -726,7 +840,6 @@ public class RagPipelineService
             }
             finally
             {
-                // Cleanup temp directory
                 if (Directory.Exists(tempDir))
                 {
                     try { Directory.Delete(tempDir, true); }
@@ -780,25 +893,52 @@ public class RagPipelineService
 
         // Replace any LLM-generated ER diagram with a deterministic one to avoid syntax errors
         var erDiagram = BuildErDiagramCode(solution);
-        if (!string.IsNullOrEmpty(erDiagram))
-            llmOutput = InjectErDiagram(llmOutput, erDiagram);
+        llmOutput = InjectErDiagram(llmOutput, erDiagram); // always call — handles empty case by keeping LLM output
 
-        // Replace any LLM-generated component map with a deterministic one to avoid syntax errors
+        // Always inject the deterministic component map — never let LLM-written one stand
         var componentMap = BuildComponentMapCode(solution);
         if (!string.IsNullOrEmpty(componentMap))
             llmOutput = InjectComponentMap(llmOutput, componentMap);
+        else
+            Console.WriteLine("[GenerateDocumentation] WARNING: BuildComponentMapCode returned empty — no components to map");
 
         // Replace any LLM-generated flow diagram
         var flowDiagram = BuildFlowDiagramCode(solution);
         if (!string.IsNullOrEmpty(flowDiagram))
             llmOutput = InjectFlowDiagram(llmOutput, flowDiagram);
 
-        // Inject Architecture diagram
+        // Inject Architecture diagram — strip any LLM-written flowchart LR block first,
+        // then inject at placeholder or after the Solution Architecture heading
         var archDiagram = BuildArchitectureDiagramCode(solution);
-        if (!string.IsNullOrEmpty(archDiagram) && llmOutput.Contains("<<ARCHITECTURE_DIAGRAM>>"))
-            llmOutput = llmOutput.Replace("<<ARCHITECTURE_DIAGRAM>>", archDiagram);
+        if (!string.IsNullOrEmpty(archDiagram))
+            llmOutput = InjectArchitectureDiagram(llmOutput, archDiagram);
+
+        // Replace LLM-written data sources table with a deterministic one to avoid formatting issues
+        llmOutput = InjectDataSourcesTable(llmOutput, solution);
 
         return llmOutput;
+    }
+
+    /// Strips GUID suffixes and publisher prefixes from a raw component name
+    /// so it can be used as a readable Mermaid label.
+    private static string CleanComponentLabel(Models.SolutionComponent c)
+    {
+        // Prefer explicit display_name from metadata (handles both string and post-JSON JsonElement)
+        if (c.Metadata != null && c.Metadata.TryGetValue("display_name", out var dn))
+        {
+            string? ds = dn is string s ? s
+                : dn is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.String ? je.GetString()
+                : null;
+            if (!string.IsNullOrWhiteSpace(ds)) return ds!.Length > 35 ? ds[..35] + "..." : ds!;
+        }
+        var name = c.Name.Split(':').Last().Trim();
+        // Strip trailing GUID (e.g. "EndFormFlow-82921763-2342-F011-8779-...")
+        var g = Regex.Match(name, @"-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}");
+        if (g.Success) name = name[..g.Index].Trim('-').Trim();
+        // Strip trailing hash suffix that contains a digit (e.g. "_b320d", "_c933c")
+        name = Regex.Replace(name, @"_(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{4,15}$", "").Trim('_').Trim();
+        if (string.IsNullOrWhiteSpace(name)) name = c.Name;
+        return name.Length > 35 ? name[..35] + "..." : name;
     }
 
     /// <summary>
@@ -836,6 +976,76 @@ public class RagPipelineService
             .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
+
+        // If SharePoint metadata is available (fetched via Graph API), build ER from real list schemas
+        if (solution.SharePointMetadata != null && solution.SharePointMetadata.Count > 0)
+        {
+            var spSb = new System.Text.StringBuilder();
+            spSb.AppendLine("```mermaid");
+            spSb.AppendLine("erDiagram");
+            spSb.AppendLine();
+
+            static string ErId(string name) =>
+                Regex.Replace(name, @"[^A-Za-z0-9_]", "_").Trim('_') is var s && s.Length == 0 ? "Entity" : s;
+
+            foreach (var site in solution.SharePointMetadata)
+            {
+                foreach (var list in site.Lists)
+                {
+                    var entityId = ErId(list.DisplayName ?? list.Name);
+                    spSb.AppendLine($"    {entityId} {{");
+                    // Always emit an ID field
+                    spSb.AppendLine($"        int ID PK");
+                    foreach (var col in list.Columns.Where(c => !c.ReadOnly && !c.Name.Equals("ID", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var fieldType = col.Type switch
+                        {
+                            "text" or "note" => "string",
+                            "number" or "currency" or "calculated" => "number",
+                            "boolean" => "boolean",
+                            "dateTime" => "datetime",
+                            "lookup" or "lookupMulti" => "int",
+                            "person" or "personOrGroup" => "string",
+                            "choice" or "multichoice" => "string",
+                            "url" or "hyperOrPicture" => "string",
+                            _ => "string"
+                        };
+                        var fk = col.Type is "lookup" or "lookupMulti" ? " FK" : "";
+                        var req = col.Required ? " \"required\"" : "";
+                        var colId = ErId(col.DisplayName ?? col.Name);
+                        spSb.AppendLine($"        {fieldType} {colId}{fk}{req}");
+                    }
+                    spSb.AppendLine("    }");
+                    spSb.AppendLine();
+                }
+            }
+
+            // Relationships from Lookup columns
+            foreach (var site in solution.SharePointMetadata)
+            {
+                foreach (var list in site.Lists)
+                {
+                    var sourceId = ErId(list.DisplayName ?? list.Name);
+                    foreach (var col in list.Columns.Where(c => c.Type is "lookup" or "lookupMulti"))
+                    {
+                        // Column name often encodes the target (e.g. "ProjectId" → "Project")
+                        var colName = col.DisplayName ?? col.Name;
+                        var targetHint = Regex.Replace(colName, @"(Id|ID|_id|LookupId)$", "").Trim('_').Trim();
+                        var targetList = site.Lists.FirstOrDefault(l =>
+                            (l.DisplayName ?? l.Name).Contains(targetHint, StringComparison.OrdinalIgnoreCase));
+                        if (targetList != null)
+                        {
+                            var targetId = ErId(targetList.DisplayName ?? targetList.Name);
+                            var label = ErId(colName);
+                            spSb.AppendLine($"    {targetId} ||--o{{ {sourceId} : {label}");
+                        }
+                    }
+                }
+            }
+
+            spSb.AppendLine("```");
+            return spSb.ToString();
+        }
 
         var tables = rawTables;
         if (!tables.Any()) return string.Empty;
@@ -898,51 +1108,113 @@ public class RagPipelineService
         sb.AppendLine("erDiagram");
         sb.AppendLine();
 
+        // Build entity blocks using real field names from lookup_relationships metadata where available
         foreach (var (table, idx) in tables.Select((t, i) => (t, i)))
         {
-            // Use the entity ID WITHOUT "TABLE_" prefix — underscores in ER entity names
-            // cause silent parse failures in Mermaid 11.x erDiagram rendering.
             var entity = entityMap[table.Name];
             var pkName = entity.Length > 12 ? entity[..12] : entity;
 
             sb.AppendLine($"    {entity} {{");
             sb.AppendLine($"        string {pkName}ID PK");
-            sb.AppendLine($"        string Name");
-            sb.AppendLine($"        string Status");
+
+            // Add real lookup field names as FK fields if available
+            if (table.Metadata != null && table.Metadata.TryGetValue("lookup_relationships", out var lrObj)
+                && lrObj is List<string> lookups && lookups.Count > 0)
+            {
+                foreach (var lr in lookups.Take(4)) // cap at 4 FK fields for readability
+                {
+                    var fieldName = lr.Split(':')[0];
+                    // Sanitize field name for mermaid: strip non-alphanumeric except underscore
+                    var safeName = Regex.Replace(fieldName, @"[^A-Za-z0-9_]", "");
+                    if (!string.IsNullOrWhiteSpace(safeName))
+                        sb.AppendLine($"        string {safeName} FK");
+                }
+            }
+            else
+            {
+                sb.AppendLine($"        string Name");
+                sb.AppendLine($"        string Status");
+            }
+
             sb.AppendLine($"    }}");
             sb.AppendLine();
         }
 
-        // Instead of a linear chain, create a Star/Hub-and-spoke model 
-        // anchored around the first table and a SystemUser.
-        // erDiagram labels MUST be unquoted plain words — quoted strings are invalid syntax.
-        var entityList = entityMap.Values.ToList();
-        
-        // Always include SystemUser to anchor the data model
-        sb.AppendLine("    SystemUser {");
-        sb.AppendLine("        string UserID PK");
-        sb.AppendLine("        string Email");
-        sb.AppendLine("        string Role");
-        sb.AppendLine("    }");
-        sb.AppendLine();
+        // Build relationships from real lookup data
+        // Structure: sourceEntity ||--o{ targetEntity : fieldName
+        var relationshipsWritten = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        if (entityList.Count > 0)
+        foreach (var table in tables)
         {
-            var primary = entityList[0];
-            sb.AppendLine($"    SystemUser ||--o{{ {primary} : owns");
+            if (table.Metadata == null) continue;
+            if (!table.Metadata.TryGetValue("lookup_relationships", out var lrObj)) continue;
+            if (lrObj is not List<string> lookups) continue;
 
-            string[] relations = { "contains", "references", "linked_to", "categorized_by" };
-            
-            for (int i = 1; i < entityList.Count; i++)
+            if (!entityMap.TryGetValue(table.Name, out var sourceEntity)) continue;
+
+            foreach (var lr in lookups)
             {
-                var rel = relations[i % relations.Length];
-                // Connect 1-to-many from the primary entity to the child entity
-                sb.AppendLine($"    {primary} ||--o{{ {entityList[i]} : {rel}");
-                
-                // Occasional connection back to SystemUser for variety
-                if (i % 3 == 0)
+                var parts = lr.Split(':', 2);
+                if (parts.Length != 2) continue;
+                var fieldName = parts[0];
+                var targetEntityName = parts[1];
+
+                // Only draw the edge if the target entity is also in our diagram
+                if (!entityMap.TryGetValue(targetEntityName, out var targetEntity)) continue;
+
+                var edgeKey = $"{sourceEntity}_{targetEntity}_{fieldName}";
+                if (relationshipsWritten.Contains(edgeKey)) continue;
+                relationshipsWritten.Add(edgeKey);
+
+                var safeLabel = Regex.Replace(fieldName, @"[^A-Za-z0-9_]", "");
+                sb.AppendLine($"    {targetEntity} ||--o{{ {sourceEntity} : {safeLabel}");
+            }
+        }
+
+        // Fallback 1: knowledge_source ||--o{ knowledge_source_item (always a real parent-child)
+        if (relationshipsWritten.Count == 0)
+        {
+            var knowledgeSources = solution.Components
+                .Where(c => c.Type.Equals("knowledge_source", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var knowledgeItems = solution.Components
+                .Where(c => c.Type.Equals("knowledge_source_item", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var ks in knowledgeSources)
+            {
+                if (!entityMap.TryGetValue(ks.Name, out var ksEntity)) continue;
+                foreach (var ki in knowledgeItems)
                 {
-                    sb.AppendLine($"    SystemUser ||--o{{ {entityList[i]} : assigned_to");
+                    if (!entityMap.TryGetValue(ki.Name, out var kiEntity)) continue;
+                    var edgeKey = $"{ksEntity}_{kiEntity}";
+                    if (relationshipsWritten.Contains(edgeKey)) continue;
+                    relationshipsWritten.Add(edgeKey);
+                    sb.AppendLine($"    {ksEntity} ||--o{{ {kiEntity} : contains");
+                }
+            }
+        }
+
+        // Fallback 2: flow_dataverse_table co-occurrence
+        if (relationshipsWritten.Count == 0)
+        {
+            var flowTableMap = solution.Components
+                .Where(c => c.Type.Equals("flow_dataverse_table", StringComparison.OrdinalIgnoreCase) && c.Name.Contains(':'))
+                .GroupBy(c => c.Name.Split(':')[0].Trim())
+                .Select(g => g.Select(c => c.Name.Split(':').Last().Trim()).Distinct().ToList())
+                .Where(t => t.Count >= 2)
+                .ToList();
+
+            foreach (var flowTables in flowTableMap)
+            {
+                for (int i = 1; i < flowTables.Count; i++)
+                {
+                    if (!entityMap.TryGetValue(flowTables[0], out var a)) continue;
+                    if (!entityMap.TryGetValue(flowTables[i], out var b)) continue;
+                    var edgeKey = $"{a}_{b}";
+                    if (relationshipsWritten.Contains(edgeKey)) continue;
+                    relationshipsWritten.Add(edgeKey);
+                    sb.AppendLine($"    {a} ||--o{{ {b} : uses");
                 }
             }
         }
@@ -956,32 +1228,146 @@ public class RagPipelineService
     /// Generates a valid Mermaid flowchart architecture diagram directly from solution components.
     /// Never has syntax errors. 
     /// </summary>
+    private static string InjectArchitectureDiagram(string llmOutput, string deterministicDiagram)
+    {
+        // Strip any LLM-written flowchart LR block (the architecture diagram format)
+        var stripped = Regex.Replace(
+            llmOutput,
+            @"```mermaid\s*(?:%%\{[\s\S]*?\}%%\s*)?flowchart\s+LR[\s\S]*?```",
+            string.Empty,
+            RegexOptions.IgnoreCase
+        );
+
+        // Replace <<ARCHITECTURE_DIAGRAM>> placeholder if present
+        if (stripped.Contains("<<ARCHITECTURE_DIAGRAM>>"))
+            return stripped.Replace("<<ARCHITECTURE_DIAGRAM>>", deterministicDiagram);
+
+        // Inject after "### Solution Architecture" heading
+        var match = Regex.Match(stripped, @"(###\s*Solution Architecture[^\n]*\n)", RegexOptions.IgnoreCase);
+        if (match.Success)
+        {
+            var idx = match.Index + match.Length;
+            return stripped[..idx] + "\n" + deterministicDiagram + "\n" + stripped[idx..];
+        }
+
+        return stripped;
+    }
+
+    private static readonly Regex GuidPattern = new(
+        @"^[0-9a-fA-F]{8}[-_][0-9a-fA-F]{4}[-_][0-9a-fA-F]{4}[-_][0-9a-fA-F]{4}[-_][0-9a-fA-F]{12}$");
+
+    // Substrings in canvas app names that indicate internal file assets, not real app names
+    private static readonly string[] CanvasAppArtifactKeywords =
+        { "DocumentUri", "AdditionalUris", ".meta", "_identity", "Properties" };
+
+    // Flow name keywords that indicate an external system dependency
+    private static readonly (string keyword, string label)[] ExternalSystemHints =
+    {
+        ("pipedrive",     "Pipedrive CRM"),
+        ("exchangerate",  "Exchange Rate API"),
+        ("exchange_rate", "Exchange Rate API"),
+        ("getexchange",   "Exchange Rate API"),
+        ("salesforce",    "Salesforce"),
+        ("dynamics",      "Dynamics 365"),
+        ("servicenow",    "ServiceNow"),
+        ("jira",          "Jira"),
+        ("hubspot",       "HubSpot"),
+        ("sendgrid",      "SendGrid"),
+        ("twilio",        "Twilio"),
+        ("http",          "External HTTP API"),
+    };
+
     private static string BuildArchitectureDiagramCode(Models.ParsedSolution solution)
     {
-        var apps = solution.Components.Where(c => c.Type.Contains("app", StringComparison.OrdinalIgnoreCase) || c.Type.Contains("canvas", StringComparison.OrdinalIgnoreCase)).ToList();
-        var flows = solution.Components.Where(c => c.Type.Contains("flow", StringComparison.OrdinalIgnoreCase)).ToList();
-        var tables = solution.Components.Where(c => 
-            c.Type.Contains("table", StringComparison.OrdinalIgnoreCase) || 
-            c.Type.Contains("entity", StringComparison.OrdinalIgnoreCase) || 
-            c.Type.Contains("knowledge_source", StringComparison.OrdinalIgnoreCase) || 
-            c.Type.Contains("data_source", StringComparison.OrdinalIgnoreCase)).ToList();
+        // Canvas apps only — exclude internal file artifacts
+        var apps = solution.Components
+            .Where(c => c.Type.Equals("canvas_app", StringComparison.OrdinalIgnoreCase))
+            .Where(c => !CanvasAppArtifactKeywords.Any(kw =>
+                c.Name.Contains(kw, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
 
-        // Helpers
+        // Only real cloud flows, deduplicated by display name
+        var flows = solution.Components
+            .Where(c => c.Type.Equals("cloud_flow", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+
+        // Bots (Copilot Studio)
+        var bots = solution.Components
+            .Where(c => c.Type.Equals("bot", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+
+        // Data sources only — exclude internal Power Platform infra types and pure-GUID names
+        var tables = solution.Components
+            .Where(c =>
+                c.Type.Equals("data_source", StringComparison.OrdinalIgnoreCase) ||
+                c.Type.Equals("entity", StringComparison.OrdinalIgnoreCase))
+            .Where(c => !GuidPattern.IsMatch(c.Name.Trim()))
+            .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+
+        // Infer external systems only from the capped flows that will appear in the diagram
+        // (avoids showing floating nodes for flows that are beyond the cap)
+        var externalSystems = flows.Take(5)
+            .SelectMany(f => ExternalSystemHints
+                .Where(h => f.Name.Contains(h.keyword, StringComparison.OrdinalIgnoreCase))
+                .Select(h => h.label))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         string NodeId(string prefix, string name, int idx)
         {
             var safe = Regex.Replace(name.Split(':').Last(), @"[^A-Za-z0-9]", "_");
             safe = Regex.Replace(safe, @"_+", "_").Trim('_');
             if (safe.Length == 0 || char.IsDigit(safe[0])) safe = "N" + safe;
-            if (safe.Length > 25) safe = safe[..25].TrimEnd('_');
+            if (safe.Length > 20) safe = safe[..20].TrimEnd('_');
             return $"{prefix}{idx}_{safe}";
+        }
+
+        // Prefer display name from metadata; fall back to cleaned-up name
+        string DisplayName(Models.SolutionComponent c)
+        {
+            // 1. Use metadata display_name if available
+            // Metadata values may be string (in-process) or JsonElement (after JSON deserialization)
+            if (c.Metadata != null && c.Metadata.TryGetValue("display_name", out var dn))
+            {
+                string? ds = dn is string s ? s
+                    : dn is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.String ? je.GetString()
+                    : null;
+                if (!string.IsNullOrWhiteSpace(ds))
+                    return ds!.Length > 35 ? ds[..35] + "..." : ds!;
+            }
+
+            // 2. Clean up the component name — strip GUID suffix and known prefixes
+            var name = c.Name.Split(':').Last().Trim();
+
+            // Strip trailing GUID (e.g. "EndFormFlow-82921763-2342-F011-8779-000D3A0CEB69")
+            var guidMatch = Regex.Match(name, @"-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}");
+            if (guidMatch.Success) name = name[..guidMatch.Index].Trim('-').Trim();
+
+            // Strip publisher prefix (e.g. "wmreply_replybrary_b320d_" → look for 3+ segments before real name)
+            var segments = name.Split('_');
+            if (segments.Length >= 4 && segments[0].Length <= 10)
+                name = string.Join("_", segments.Skip(3));
+
+            // Strip "Cloud " prefix added by description fallback
+            name = Regex.Replace(name, @"^(Cloud\s+flow\s*:\s*|Cloud\s+)", "", RegexOptions.IgnoreCase).Trim();
+
+            // Strip trailing hash-like suffix (e.g. "_Esnblz79KI97s", "_c933c") — must contain at least one digit
+            name = Regex.Replace(name, @"_(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{4,15}$", "").Trim('_').Trim();
+
+            if (string.IsNullOrWhiteSpace(name)) name = c.Name;
+            return name.Length > 35 ? name[..35] + "..." : name;
         }
 
         string SafeLabel(string name)
         {
-            var s = name.Length > 40 ? name[..40] + "..." : name;
-            s = Regex.Replace(s, @"[<>&\[\]{}()#;]", " ");
-            s = Regex.Replace(s, @"\s+", " ").Trim();
-            return s.Replace("\"", "'");
+            var s = Regex.Replace(name, @"[<>&\[\]{}()#;""]", " ");
+            return Regex.Replace(s, @"\s+", " ").Trim().Replace("'", "");
         }
 
         var sb = new System.Text.StringBuilder();
@@ -991,53 +1377,91 @@ public class RagPipelineService
         sb.AppendLine("    USER[End User]");
         sb.AppendLine();
 
-        if (apps.Any() || flows.Any())
+        var cappedApps  = apps.Take(5).ToList();
+        var cappedFlows = flows.Take(5).ToList();
+        var cappedBots  = bots.Take(2).ToList();
+        var cappedDbs   = tables.Take(4).ToList();
+        var cappedExt   = externalSystems.Take(3).ToList();
+
+        if (cappedApps.Any() || cappedFlows.Any() || cappedBots.Any())
         {
             sb.AppendLine("    subgraph PowerPlatform[\"Power Platform\"]");
-            for (int i = 0; i < Math.Min(5, apps.Count); i++)
-                sb.AppendLine($"        {NodeId("APP_", apps[i].Name, i)}[\"{SafeLabel(apps[i].Name)}\"]");
-
-            for (int i = 0; i < Math.Min(5, flows.Count); i++)
-                sb.AppendLine($"        {NodeId("FLOW_", flows[i].Name, i)}[\"{SafeLabel(flows[i].Name)}\"]");
+            for (int i = 0; i < cappedApps.Count; i++)
+                sb.AppendLine($"        {NodeId("APP", cappedApps[i].Name, i)}[\"{SafeLabel(DisplayName(cappedApps[i]))}\"]");
+            for (int i = 0; i < cappedFlows.Count; i++)
+                sb.AppendLine($"        {NodeId("FLOW", cappedFlows[i].Name, i)}[\"{SafeLabel(DisplayName(cappedFlows[i]))}\"]");
+            for (int i = 0; i < cappedBots.Count; i++)
+                sb.AppendLine($"        {NodeId("BOT", cappedBots[i].Name, i)}(\"{SafeLabel(DisplayName(cappedBots[i]))}\")");
             sb.AppendLine("    end");
+            sb.AppendLine();
         }
 
-        if (tables.Any())
+        if (cappedDbs.Any())
         {
             sb.AppendLine("    subgraph DataSources[\"Data Sources\"]");
-            for (int i = 0; i < Math.Min(5, tables.Count); i++)
-                sb.AppendLine($"        {NodeId("DB_", tables[i].Name, i)}[(\"{SafeLabel(tables[i].Name.Split(':').Last())}\")]");
+            for (int i = 0; i < cappedDbs.Count; i++)
+            {
+                var db = cappedDbs[i];
+                var dbLabel = DisplayName(db);
+                sb.AppendLine($"        {NodeId("DB", db.Name, i)}[(\"{SafeLabel(dbLabel)}\")]");
+            }
             sb.AppendLine("    end");
+            sb.AppendLine();
         }
 
-        sb.AppendLine();
-        // Draw representative lines
-        if (apps.Any())
+        if (cappedExt.Any())
         {
-            var appNode = NodeId("APP_", apps.First().Name, 0);
-            sb.AppendLine($"    USER --> {appNode}");
-            
-            if (tables.Any())
+            sb.AppendLine("    subgraph ExternalSystems[\"External Systems\"]");
+            for (int i = 0; i < cappedExt.Count; i++)
             {
-                var dbNode = NodeId("DB_", tables.First().Name, 0);
-                sb.AppendLine($"    {appNode} --> {dbNode}");
+                var safe = Regex.Replace(cappedExt[i], @"[^A-Za-z0-9]", "_").Trim('_');
+                sb.AppendLine($"        EXT{i}_{safe}[\"{SafeLabel(cappedExt[i])}\"]");
             }
+            sb.AppendLine("    end");
+            sb.AppendLine();
         }
-        else if (flows.Any())
+
+        // Edges
+        var appIds  = cappedApps .Select((a, i) => NodeId("APP",  a.Name, i)).ToList();
+        var flowIds = cappedFlows.Select((f, i) => NodeId("FLOW", f.Name, i)).ToList();
+        var botIds  = cappedBots .Select((b, i) => NodeId("BOT",  b.Name, i)).ToList();
+        var dbIds   = cappedDbs  .Select((d, i) => NodeId("DB",   d.Name, i)).ToList();
+        var extIds  = cappedExt  .Select((e, i) => $"EXT{i}_{Regex.Replace(e, @"[^A-Za-z0-9]", "_").Trim('_')}").ToList();
+
+        // USER → all apps, all bots (direct interaction)
+        foreach (var a in appIds)  sb.AppendLine($"    USER --> {a}");
+        foreach (var b in botIds)  sb.AppendLine($"    USER --> {b}");
+        if (!appIds.Any() && !botIds.Any())
+            foreach (var f in flowIds) sb.AppendLine($"    USER --> {f}");
+
+        // First app triggers all flows (representative)
+        if (appIds.Any() && flowIds.Any())
+            foreach (var f in flowIds) sb.AppendLine($"    {appIds[0]} --> {f}");
+
+        // Bot → all flows (bots can trigger any flow)
+        if (botIds.Any() && flowIds.Any())
+            foreach (var f in flowIds) sb.AppendLine($"    {botIds[0]} --> {f}");
+
+        // Only first flow → all data sources (representative)
+        if (flowIds.Any())
+            foreach (var d in dbIds) sb.AppendLine($"    {flowIds[0]} --> {d}");
+
+        // Each app → each data source (direct read/write)
+        foreach (var a in appIds.Take(3))
+            foreach (var d in dbIds) sb.AppendLine($"    {a} --> {d}");
+
+        // Flows with external system keywords → those external systems
+        for (int i = 0; i < cappedExt.Count; i++)
         {
-            var flowNode = NodeId("FLOW_", flows.First().Name, 0);
-            sb.AppendLine($"    USER --> {flowNode}");
-            
-            if (tables.Any())
-            {
-                var dbNode = NodeId("DB_", tables.First().Name, 0);
-                sb.AppendLine($"    {flowNode} --> {dbNode}");
-            }
-        }
-        else if (tables.Any())
-        {
-            var dbNode = NodeId("DB_", tables.First().Name, 0);
-            sb.AppendLine($"    USER --> {dbNode}");
+            var matchingFlows = cappedFlows
+                .Select((f, fi) => (f, fi))
+                .Where(x => ExternalSystemHints.Any(h =>
+                    h.label == cappedExt[i] &&
+                    x.f.Name.Contains(h.keyword, StringComparison.OrdinalIgnoreCase)))
+                .Select(x => NodeId("FLOW", x.f.Name, x.fi))
+                .ToList();
+            foreach (var fid in matchingFlows)
+                sb.AppendLine($"    {fid} --> {extIds[i]}");
         }
 
         sb.AppendLine("```");
@@ -1047,72 +1471,58 @@ public class RagPipelineService
     {
         if (!solution.Components.Any()) return string.Empty;
 
-        // Safe node ID: schema prefixes — APP_, FLOW_, TABLE_, BOT_, ENVVAR_, CONN_
-        static string NodeId(string prefix, string name, int idx)
+        // Schema.md: flowchart TB, SOLUTION at top, components grouped by category with naming prefixes.
+        // Use subgraphs per category so 40+ nodes don't collapse into one unreadable horizontal row.
+        var typeMap = new[]
         {
-            var safe = Regex.Replace(name, @"[^A-Za-z0-9]", "_");
-            safe = Regex.Replace(safe, @"_+", "_").Trim('_');
-            if (safe.Length == 0 || char.IsDigit(safe[0])) safe = "N" + safe;
-            if (safe.Length > 25) safe = safe[..25].TrimEnd('_');
-            return $"{prefix}{idx}_{safe}";
-        }
+            (new[]{"canvas_app","model_driven_app"},                               "APP",    "Applications"),
+            (new[]{"bot"},                                                         "BOT",    "Bots"),
+            (new[]{"cloud_flow","instant_flow"},                                   "FLOW",   "Cloud Flows"),
+            (new[]{"entity","flow_dataverse_table","search_entity","data_source"}, "TABLE",  "Data Tables"),
+            (new[]{"environment_variable"},                                        "ENVVAR", "Environment Variables"),
+            (new[]{"connection_reference","connection"},                           "CONN",   "Connection References"),
+        };
+
+        static string SafeId(string prefix, int idx)
+            => $"{prefix}_{idx}";
 
         static string SafeLabel(string name)
         {
-            var s = name.Length > 40 ? name[..40] + "..." : name;
+            var s = name.Length > 30 ? name[..30] + "..." : name;
             s = Regex.Replace(s, @"[<>&\[\]{}()#;]", " ");
-            s = Regex.Replace(s, @"\s+", " ").Trim();
-            return s.Replace("\"", "'");
+            return Regex.Replace(s, @"\s+", " ").Trim().Replace("\"", "'");
         }
-
-        // Schema.md defines these prefixes and groups, with custom titles for hierarchy
-        var groups = new[]
-        {
-            (new[]{"app","canvas","model_driven"},            "APP_", "Applications"),
-            (new[]{"cloud_flow","flow","instant_flow"},       "FLOW_", "Cloud Flows"),
-            (new[]{"entity","table","search_entity","knowledge_source","knowledge_source_item","data_source"}, "TABLE_", "Data & Tables"),
-            (new[]{"bot","bot_topic"},                        "BOT_", "Bots & Copilots"),
-            (new[]{"environment_variable","env_var"},         "ENVVAR_", "Variables"),
-            (new[]{"connection_reference","connector","connection"}, "CONN_", "Connections")
-        };
 
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("```mermaid");
-        // Using "flowchart LR" with a hierarchical structure prevents the diagram from expanding
-        // horizontally to infinity. It scales vertically which is infinitely better for PDFs.
-        sb.AppendLine("flowchart LR");
+        sb.AppendLine("flowchart TB");
         sb.AppendLine();
 
-        var solutionNode = "SOLUTION";
         var solutionLabel = SafeLabel(solution.SolutionName ?? "Solution");
-        sb.AppendLine($"    {solutionNode}[\"{solutionLabel}\"]");
-        sb.AppendLine($"    style {solutionNode} fill:#4CAF50,stroke:#2E7D32,stroke-width:4px,color:#fff");
+        sb.AppendLine($"    SOLUTION[\"{solutionLabel}\"]");
+        sb.AppendLine($"    style SOLUTION fill:#4CAF50,stroke:#2E7D32,stroke-width:3px,color:#fff");
         sb.AppendLine();
 
-        foreach (var (typeKeywords, prefix, groupName) in groups)
+        foreach (var (typeKeywords, prefix, groupTitle) in typeMap)
         {
             var members = solution.Components
-                .Where(c => typeKeywords.Any(kw => c.Type.Contains(kw, StringComparison.OrdinalIgnoreCase)))
-                .DistinctBy(c => c.Name)
+                .Where(c => typeKeywords.Any(kw => c.Type.Equals(kw, StringComparison.OrdinalIgnoreCase)))
+                .Where(c => !CanvasAppArtifactKeywords.Any(kw => c.Name.Contains(kw, StringComparison.OrdinalIgnoreCase)))
+                .DistinctBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             if (members.Count == 0) continue;
 
-            var groupNode = "GRP_" + prefix.TrimEnd('_');
-            sb.AppendLine($"    {groupNode}{{\"{groupName}\"}}");
-            sb.AppendLine($"    style {groupNode} fill:#2196F3,stroke:#1565C0,stroke-width:2px,color:#fff");
-            
-            // Connect Solution to Group
-            sb.AppendLine($"    {solutionNode} --- {groupNode}");
-            
-            // Connect Group to Items
+            var grpId = $"GRP_{prefix}";
+            sb.AppendLine($"    subgraph {grpId}[\"{groupTitle}\"]");
             for (int i = 0; i < members.Count; i++)
             {
-                var id = NodeId(prefix.TrimEnd('_'), members[i].Name, i);
-                var label = SafeLabel(members[i].Name);
-                sb.AppendLine($"    {id}([\"{label}\"])"); // pill-shaped node for items
-                sb.AppendLine($"    {groupNode} --- {id}");
+                var label = SafeLabel(CleanComponentLabel(members[i]));
+                var nodeId = SafeId(prefix, i);
+                sb.AppendLine($"        {nodeId}[\"{prefix}_{label}\"]");
             }
+            sb.AppendLine("    end");
+            sb.AppendLine($"    SOLUTION --> {grpId}");
             sb.AppendLine();
         }
 
@@ -1213,7 +1623,7 @@ public class RagPipelineService
         {
             var aid = SafeId("APP", apps[i].Name, i);
             appIds.Add(aid);
-            sb.AppendLine($"    {aid}[\"{SafeLabel(apps[i].Name)}\"]");
+            sb.AppendLine($"    {aid}[\"{SafeLabel(CleanComponentLabel(apps[i]))}\"]");
             sb.AppendLine($"    style {aid} fill:#E3F2FD,stroke:#1976D2,stroke-width:3px");
         }
         sb.AppendLine();
@@ -1253,7 +1663,7 @@ public class RagPipelineService
             flowStepIds.Add(storeId);   // last step connects to connectors
 
             sb.AppendLine();
-            sb.AppendLine($"    subgraph {fid}[\"{SafeLabel(flow.Name)}\"]");
+            sb.AppendLine($"    subgraph {fid}[\"{SafeLabel(CleanComponentLabel(flow))}\"]");
             sb.AppendLine($"        {trigId}[\"Trigger: {trigger}\"]");
             sb.AppendLine($"        {getId}[\"Retrieve Data\"]");
             sb.AppendLine($"        {procId}[\"Process Logic\"]");
@@ -1309,21 +1719,23 @@ public class RagPipelineService
             return result.Replace("<<FLOW_DIAGRAM>>", string.Empty);
         }
 
-        // Strip first flowchart mermaid block that appears after the Flow Execution heading
-        var headingMatch = Regex.Match(llmOutput, @"(##[^\n]*Flow Execution[^\n]*\n)", RegexOptions.IgnoreCase);
+        // Find Flow Execution heading and replace or insert diagram
+        var headingMatch = Regex.Match(llmOutput,
+            @"(#{1,6}[^\n]*(?:Flow Execution|Connector Dependency)[^\n]*\n)",
+            RegexOptions.IgnoreCase);
         if (headingMatch.Success)
         {
             var afterStart = headingMatch.Index + headingMatch.Length;
-            var rest = llmOutput[afterStart..];
-            // Replace first ```mermaid...``` block in that section
-            var stripped = Regex.Replace(rest,
-                @"```mermaid[\s\S]*?```",
-                deterministicDiagram,
-                RegexOptions.IgnoreCase,
-                TimeSpan.FromSeconds(5));
-            // Only apply if exactly one replacement was made
-            if (stripped != rest)
-                return llmOutput[..afterStart] + stripped;
+            var section = llmOutput[afterStart..Math.Min(afterStart + 4000, llmOutput.Length)];
+            var blockMatch = Regex.Match(section, @"```mermaid[\s\S]*?```", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(3));
+            if (blockMatch.Success)
+            {
+                var blockStart = afterStart + blockMatch.Index;
+                var blockEnd   = afterStart + blockMatch.Index + blockMatch.Length;
+                return llmOutput[..blockStart] + deterministicDiagram + llmOutput[blockEnd..];
+            }
+            // No mermaid block found — insert right after heading
+            return llmOutput[..afterStart] + "\n" + deterministicDiagram + "\n" + llmOutput[afterStart..];
         }
 
         return llmOutput;
@@ -1334,31 +1746,51 @@ public class RagPipelineService
     /// </summary>
     private static string InjectComponentMap(string llmOutput, string deterministicMap)
     {
-        // Replace <<COMPONENT_MAP>> placeholder if LLM used it
+        // 1. Replace <<COMPONENT_MAP>> placeholder if LLM used it
         if (llmOutput.Contains("<<COMPONENT_MAP>>"))
+        {
+            Console.WriteLine("[InjectComponentMap] Strategy 1: <<COMPONENT_MAP>> placeholder found");
             return llmOutput.Replace("<<COMPONENT_MAP>>", deterministicMap);
+        }
 
-        // Replace first flowchart block that contains "SOLUTION" node
+        // 2. Replace any LLM-written flowchart block that contains a SOLUTION node
         var replaced = Regex.Replace(
             llmOutput,
-            @"```mermaid\s*%%\{[^`]*?fontSize[^`]*?\}%%\s*flowchart TB[\s\S]*?```",
+            @"```mermaid[\s\S]*?SOLUTION[\s\S]*?```",
             deterministicMap,
             RegexOptions.IgnoreCase,
             TimeSpan.FromSeconds(5)
         );
-
-        // Only apply if exactly one replacement happened
-        if (replaced != llmOutput) return replaced;
-
-        // Fallback: inject after "### Solution Component Map" heading
-        var match = Regex.Match(llmOutput, @"(### Solution Component Map[^\n]*\n)", RegexOptions.IgnoreCase);
-        if (match.Success)
+        if (replaced != llmOutput)
         {
-            var idx = match.Index + match.Length;
-            return llmOutput[..idx] + "\n" + deterministicMap + "\n" + llmOutput[idx..];
+            Console.WriteLine("[InjectComponentMap] Strategy 2: replaced SOLUTION flowchart block");
+            return replaced;
         }
 
-        return llmOutput;
+        // 3. Find any heading containing "Component Map" or "Solution Component" and inject after it
+        var headingMatch = Regex.Match(llmOutput,
+            @"(#{1,6}[^\n]*(?:Component Map|Solution Component)[^\n]*\n)",
+            RegexOptions.IgnoreCase);
+        Console.WriteLine($"[InjectComponentMap] Strategy 3: heading match={headingMatch.Success}, value='{(headingMatch.Success ? headingMatch.Value.Trim() : "N/A")}'");
+        if (headingMatch.Success)
+        {
+            var afterHeading = headingMatch.Index + headingMatch.Length;
+            var section = llmOutput[afterHeading..Math.Min(afterHeading + 3000, llmOutput.Length)];
+            var blockMatch = Regex.Match(section, @"```mermaid[\s\S]*?```", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(3));
+            if (blockMatch.Success)
+            {
+                Console.WriteLine("[InjectComponentMap] Strategy 3a: replacing existing mermaid block after heading");
+                var blockStart = afterHeading + blockMatch.Index;
+                var blockEnd   = afterHeading + blockMatch.Index + blockMatch.Length;
+                return llmOutput[..blockStart] + deterministicMap + llmOutput[blockEnd..];
+            }
+            Console.WriteLine("[InjectComponentMap] Strategy 3b: no mermaid block found, inserting after heading");
+            return llmOutput[..afterHeading] + "\n" + deterministicMap + "\n" + llmOutput[afterHeading..];
+        }
+
+        // 4. Last resort: append at end
+        Console.WriteLine("[InjectComponentMap] Strategy 4: last resort append at end");
+        return llmOutput + "\n\n## Solution Component Map\n\n" + deterministicMap;
     }
 
     /// <summary>
@@ -1367,6 +1799,13 @@ public class RagPipelineService
     /// </summary>
     private static string InjectErDiagram(string llmOutput, string deterministicDiagram)
     {
+        // If no real relationship data was found, keep the LLM's ER diagram as-is
+        // (just remove the placeholder so it doesn't appear in output)
+        if (string.IsNullOrWhiteSpace(deterministicDiagram))
+        {
+            return llmOutput.Replace("<<ER_DIAGRAM>>", string.Empty);
+        }
+
         // Step 1: Strip ALL erDiagram mermaid blocks the LLM may have written anywhere
         var stripped = Regex.Replace(
             llmOutput,
@@ -1394,6 +1833,98 @@ public class RagPipelineService
 
         // Fallback: append at the end
         return stripped + "\n\n## Data Model - ER Diagram\n\n" + deterministicDiagram;
+    }
+
+    /// Builds a clean, deterministic markdown table for the Data Sources section.
+    private static string BuildDataSourcesTable(Models.ParsedSolution solution)
+    {
+        var guidPat = new Regex(@"^[0-9a-fA-F]{8}-");
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("| Data Source Name | Type | Description | Key Fields |");
+        sb.AppendLine("|-----------------|------|-------------|-----------|");
+
+        // SharePoint lists from environment variables
+        var spLists = solution.Components
+            .Where(c => c.Type.Equals("environment_variable", StringComparison.OrdinalIgnoreCase)
+                     && c.Metadata != null)
+            .Where(c =>
+            {
+                c.Metadata!.TryGetValue("api_id", out var apiObj);
+                c.Metadata!.TryGetValue("parameter_key", out var pkObj);
+                var apiId = apiObj is string s1 ? s1 : apiObj is System.Text.Json.JsonElement j1 && j1.ValueKind == System.Text.Json.JsonValueKind.String ? j1.GetString() ?? "" : "";
+                var pk    = pkObj  is string s2 ? s2 : pkObj  is System.Text.Json.JsonElement j2 && j2.ValueKind == System.Text.Json.JsonValueKind.String ? j2.GetString() ?? "" : "";
+                return apiId.Contains("sharepointonline", StringComparison.OrdinalIgnoreCase)
+                    && pk.Equals("table", StringComparison.OrdinalIgnoreCase);
+            })
+            .Select(c =>
+            {
+                var dn = CleanComponentLabel(c);
+                var segs = dn.Split('_');
+                return (segs.Length >= 3 ? string.Join(" ", segs.Skip(2)) : dn.Replace("_", " ")).Trim();
+            })
+            .Where(n => !string.IsNullOrWhiteSpace(n) && !guidPat.IsMatch(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n)
+            .ToList();
+
+        foreach (var name in spLists)
+            sb.AppendLine($"| {name} | SharePoint List | | |");
+
+        // Dataverse tables
+        var dvTables = solution.Components
+            .Where(c => c.Type.Equals("entity", StringComparison.OrdinalIgnoreCase)
+                     || c.Type.Equals("flow_dataverse_table", StringComparison.OrdinalIgnoreCase))
+            .Select(c => CleanComponentLabel(c))
+            .Where(n => !string.IsNullOrWhiteSpace(n) && !guidPat.IsMatch(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(10)
+            .ToList();
+
+        foreach (var name in dvTables)
+            sb.AppendLine($"| {name} | Dataverse Table | | |");
+
+        if (!spLists.Any() && !dvTables.Any())
+            sb.AppendLine("| — | — | No data sources detected | — |");
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// Replaces the LLM-written data sources table with a deterministic one.
+    private static string InjectDataSourcesTable(string llmOutput, Models.ParsedSolution solution)
+    {
+        var table = BuildDataSourcesTable(solution);
+
+        // Find "Data Sources" heading
+        var headingMatch = Regex.Match(llmOutput,
+            @"(#{1,6}[^\n]*Data Source[^\n]*\n)",
+            RegexOptions.IgnoreCase);
+        if (!headingMatch.Success) return llmOutput;
+
+        // Find the NEXT section heading after the data sources section
+        var afterHeading = headingMatch.Index + headingMatch.Length;
+        var nextHeadingMatch = Regex.Match(llmOutput[afterHeading..], @"^#{1,6}\s", RegexOptions.Multiline);
+        var sectionEnd = nextHeadingMatch.Success
+            ? afterHeading + nextHeadingMatch.Index
+            : llmOutput.Length;
+
+        // Replace the ENTIRE data sources section body with our deterministic table
+        // (keeps any text the LLM wrote before the first | char, then replaces from there)
+        var sectionBody = llmOutput[afterHeading..sectionEnd];
+        var firstTableLine = Regex.Match(sectionBody, @"^\|", RegexOptions.Multiline);
+
+        string newBody;
+        if (firstTableLine.Success)
+        {
+            // Keep text before the table, replace from first | onward
+            newBody = sectionBody[..firstTableLine.Index] + table + "\n\n";
+        }
+        else
+        {
+            // No existing table — append deterministic table after any descriptive text
+            newBody = sectionBody.TrimEnd() + "\n\n" + table + "\n\n";
+        }
+
+        return llmOutput[..afterHeading] + newBody + llmOutput[sectionEnd..];
     }
 
     private static string BuildDeterministicDocumentation(
@@ -1424,6 +1955,7 @@ public class RagPipelineService
             })
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var hasSharePointRefsWithoutMetadata = sharePointUrls.Count > 0 && (solution.SharePointMetadata == null || solution.SharePointMetadata.Count == 0);
 
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"# {solution.SolutionName} - Solution Documentation");
@@ -1478,6 +2010,79 @@ public class RagPipelineService
             dependencies.ForEach(d => sb.AppendLine($"- {d}"));
         sb.AppendLine();
 
+        // SharePoint Metadata (if available from Microsoft Graph)
+        if (solution.SharePointMetadata != null && solution.SharePointMetadata.Count > 0)
+        {
+            sb.AppendLine("## SharePoint Integration Details");
+            sb.AppendLine("The following SharePoint sites and data structures were automatically detected:");
+            sb.AppendLine();
+
+            foreach (var site in solution.SharePointMetadata)
+            {
+                if (!string.IsNullOrEmpty(site.ErrorMessage))
+                {
+                    sb.AppendLine($"### ⚠️ {site.SiteUrl}");
+                    sb.AppendLine($"**Error:** {site.ErrorMessage}");
+                    sb.AppendLine();
+                    continue;
+                }
+
+                sb.AppendLine($"### {site.SiteName}");
+                sb.AppendLine($"**Site URL:** {site.SiteUrl}");
+                sb.AppendLine();
+
+                if (site.Lists.Count > 0)
+                {
+                    sb.AppendLine("#### SharePoint Lists");
+                    foreach (var list in site.Lists)
+                    {
+                        sb.AppendLine($"- **{list.DisplayName ?? list.Name}**");
+                        if (!string.IsNullOrEmpty(list.Description))
+                            sb.AppendLine($"  - Description: {list.Description}");
+                        sb.AppendLine($"  - URL: {list.WebUrl}");
+                        
+                        if (list.Columns.Count > 0)
+                        {
+                            sb.AppendLine("  - Columns:");
+                            foreach (var col in list.Columns)
+                            {
+                                var required = col.Required ? " (Required)" : "";
+                                sb.AppendLine($"    - `{col.DisplayName ?? col.Name}` ({col.Type}){required}");
+                            }
+                        }
+                        sb.AppendLine();
+                    }
+                }
+
+                if (site.Libraries.Count > 0)
+                {
+                    sb.AppendLine("#### Document Libraries");
+                    foreach (var lib in site.Libraries)
+                    {
+                        sb.AppendLine($"- **{lib.DisplayName ?? lib.Name}**");
+                        if (!string.IsNullOrEmpty(lib.Description))
+                            sb.AppendLine($"  - Description: {lib.Description}");
+                        sb.AppendLine($"  - URL: {lib.WebUrl}");
+                        sb.AppendLine();
+                    }
+                }
+
+                sb.AppendLine("---");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("*This data was automatically fetched from SharePoint using Microsoft Graph API*");
+            sb.AppendLine();
+        }
+        else if (hasSharePointRefsWithoutMetadata)
+        {
+            sb.AppendLine("## SharePoint Integration Details");
+            sb.AppendLine("SharePoint references were detected in the solution export.");
+            sb.AppendLine("Additional SharePoint metadata was not available during documentation generation.");
+            sb.AppendLine("Use the SharePoint URLs and references listed above as the available evidence.");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## Deployment Guide");
         sb.AppendLine("1. Import the solution ZIP into the target Power Platform environment.");
         sb.AppendLine("2. Configure environment variables from exported definitions.");
@@ -1507,8 +2112,38 @@ public class RagPipelineService
         var byType = solution.Components
             .GroupBy(c => c.Type)
             .ToDictionary(g => g.Key, g => g.ToList());
+        var sharePointUrls = solution.Components
+            .Where(c => c.Type.Equals("knowledge_source_item", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(c =>
+            {
+                var urls = new List<string>();
+                if (c.Metadata == null) return urls;
+                if (c.Metadata.TryGetValue("web_url", out var web) && web is string wu && !string.IsNullOrWhiteSpace(wu)) urls.Add(wu);
+                if (c.Metadata.TryGetValue("site_url", out var site) && site is string su && !string.IsNullOrWhiteSpace(su)) urls.Add(su);
+                return urls;
+            })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var hasSharePointMetadata = solution.SharePointMetadata != null && solution.SharePointMetadata.Count > 0;
 
         var sb = new System.Text.StringBuilder();
+        if (sharePointUrls.Count > 0)
+        {
+            sb.AppendLine("## SHAREPOINT EVIDENCE");
+            sb.AppendLine($"- SharePoint references detected in solution export: {string.Join(", ", sharePointUrls)}");
+            if (hasSharePointMetadata)
+            {
+                sb.AppendLine("- Additional SharePoint metadata is available and may be used when present.");
+            }
+            else
+            {
+                sb.AppendLine("- Additional SharePoint metadata was not available during this run.");
+                sb.AppendLine("- Treat SharePoint URLs and explicit component references as valid export evidence.");
+                sb.AppendLine("- Do not describe missing SharePoint list/library/column details as 'Not found in solution export' unless the export itself lacks the reference.");
+            }
+            sb.AppendLine();
+        }
+
         foreach (var (type, comps) in byType)
         {
             sb.AppendLine($"\n## {type.ToUpper()}S ({comps.Count})");
@@ -1585,9 +2220,10 @@ public class RagPipelineService
         sb.AppendLine("2. List every component under its exact type with proper prefix.");
         sb.AppendLine("3. Apply naming convention prefixes to component names in ALL diagrams and text.");
         sb.AppendLine("4. Prefer concrete values from metadata (URLs, IDs, table names, connectors) when available.");
-        sb.AppendLine("5. If a detail is unavailable, write: 'Not found in solution export'.");
+        sb.AppendLine("5. If a detail is genuinely absent from the solution export, write: 'Not found in solution export'.");
         sb.AppendLine("6. Do not invent new systems, APIs, or architecture layers not present in the component data.");
         sb.AppendLine("7. For Dataverse/SharePoint, surface every explicit reference found in components and metadata.");
+        sb.AppendLine("8. If SharePoint references are present but additional SharePoint metadata is unavailable, omit those extra details or write: 'Additional SharePoint metadata was not available'.");
         sb.AppendLine();
         
         sb.AppendLine("DOCUMENT STRUCTURE (follow this exact structure):");
@@ -1622,14 +2258,68 @@ public class RagPipelineService
         sb.AppendLine("## 3. Data Sources");
         sb.AppendLine("   - Describe where data is stored (e.g., 'All data is stored within SharePoint' or 'Uses Dataverse tables')");
         sb.AppendLine("   - List environment-specific sites/databases if applicable (Dev, Test, Production)");
-        sb.AppendLine("   - ⚠️ Create a table listing ALL tables/lists found in the components data above:");
-        sb.AppendLine("     | Data Source Name (TABLE_ prefix) | Type | Description | Key Fields |");
-        sb.AppendLine("     |----------------------------------|------|-------------|-----------|");
-        sb.AppendLine("     | TABLE_Contracts | SharePoint List | Stores contract data | Title, StartDate, EndDate |");
-        sb.AppendLine("     | TABLE_Approvals | Dataverse Table | Approval workflow data | Status, Approver, RequestDate |");
-        sb.AppendLine("   - !!CRITICAL RULE for Markdown Tables!!: Each row MUST be on exactly ONE single line. Never insert newline characters or carriage returns inside table cells. Strip any line breaks from descriptions.");
-        sb.AppendLine("   - Include table purposes and key columns/fields");
-        sb.AppendLine("   - CRITICAL: Count and list EVERY table/entity from the component data - do not omit any");
+        sb.AppendLine("   - ⚠️ ONLY use the exact rows pre-populated below. Do NOT add any extra rows. Do NOT include knowledge sources, search entities, GUIDs, or internal components.");
+        sb.AppendLine("   - !!CRITICAL TABLE RULES!!: (1) Each row on ONE line only. (2) No newlines inside cells. (3) Strip all line breaks from descriptions. (4) Use clean readable names — no GUIDs, no hash suffixes.");
+        sb.AppendLine();
+
+        // Pre-populate with real data sources:
+        // 1. SharePoint lists from environment variables (strip publisher prefix, keep readable list name)
+        // 2. Dataverse tables from entity/flow_dataverse_table components (skip pure GUIDs)
+        // knowledge_source and search_entity are internal infrastructure — excluded from client docs
+        sb.AppendLine("| Data Source Name | Type | Description | Key Fields |");
+        sb.AppendLine("|-----------------|------|-------------|-----------|");
+
+        var guidPat = new Regex(@"^[0-9a-fA-F\-]{32,}$");
+
+        // SharePoint lists from environment variables
+        var spLists = solution.Components
+            .Where(c => c.Type.Equals("environment_variable", StringComparison.OrdinalIgnoreCase)
+                     && c.Metadata != null
+                     && c.Metadata.TryGetValue("api_id", out var apiObj)
+                     && apiObj?.ToString()?.Contains("sharepointonline", StringComparison.OrdinalIgnoreCase) == true
+                     && c.Metadata.TryGetValue("parameter_key", out var pkObj)
+                     && pkObj?.ToString()?.Equals("table", StringComparison.OrdinalIgnoreCase) == true)
+            .Select(c =>
+            {
+                // Display name: strip publisher prefix (e.g. "wmreply_Replybrary_Project_List" → "Project List")
+                var dn = (c.Metadata!.TryGetValue("display_name", out var d) && d is string ds && !string.IsNullOrWhiteSpace(ds)) ? ds : c.Name;
+                var segments = dn.Split('_');
+                var cleanName = segments.Length >= 3 ? string.Join(" ", segments.Skip(2)) : dn.Replace("_", " ");
+                return cleanName.Trim();
+            })
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n)
+            .ToList();
+
+        foreach (var listName in spLists)
+            sb.AppendLine($"| {listName} | SharePoint List | [Describe purpose] | [Key fields] |");
+
+        // Dataverse tables (entity / flow_dataverse_table) — skip pure GUIDs
+        var dvTables = solution.Components
+            .Where(c =>
+                c.Type.Equals("entity", StringComparison.OrdinalIgnoreCase) ||
+                c.Type.Equals("flow_dataverse_table", StringComparison.OrdinalIgnoreCase))
+            .Select(c =>
+            {
+                var n = c.Type.Equals("flow_dataverse_table", StringComparison.OrdinalIgnoreCase) && c.Name.Contains(':')
+                    ? c.Name.Split(':').Last().Trim() : c.Name;
+                if (c.Metadata != null && c.Metadata.TryGetValue("display_name", out var dn) && dn is string dns && !string.IsNullOrWhiteSpace(dns))
+                    n = dns;
+                return n.Trim();
+            })
+            .Where(n => !string.IsNullOrWhiteSpace(n) && !guidPat.IsMatch(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(10)
+            .ToList();
+
+        foreach (var tbl in dvTables)
+            sb.AppendLine($"| {tbl} | Dataverse Table | [Describe purpose] | [Key fields] |");
+
+        if (!spLists.Any() && !dvTables.Any())
+            sb.AppendLine("| [TableName] | SharePoint List / Dataverse Table | [Purpose] | [Column1, Column2] |");
+
+        sb.AppendLine("   - Fill in Description and Key Fields for each row. Do NOT modify the Data Source Name column.");
         sb.AppendLine();
         sb.AppendLine("## 4. Solution Components");
         sb.AppendLine("   ### Power Apps Applications");
@@ -1665,6 +2355,7 @@ public class RagPipelineService
         sb.AppendLine("# MANDATORY MERMAID DIAGRAM FORMATS:");
         sb.AppendLine();
         sb.AppendLine("## 1. Architecture Diagram Format (REQUIRED in Solution Architecture section):");
+        sb.AppendLine("⚠️ FORMAT TEMPLATE ONLY — Replace ALL placeholder names (APP_MainApplication, FLOW_PrimaryAutomation, etc.) with REAL names from the solution component data above. Only include subgraphs/nodes for systems that actually exist in the solution.");
         sb.AppendLine("```mermaid");
         sb.AppendLine("flowchart LR");
         sb.AppendLine();
@@ -1712,7 +2403,7 @@ public class RagPipelineService
         
         sb.AppendLine("DIAGRAM REQUIREMENTS:");
         sb.AppendLine("1. Include fenced ```mermaid blocks (not images) for ALL required diagrams.");
-        sb.AppendLine("2. Use ONLY the exact formats shown above - match the structure precisely.");
+        sb.AppendLine("2. Follow the structure of the format templates — but ALWAYS substitute real component names. NEVER copy placeholder names like APP_MainApplication, FLOW_PrimaryAutomation, EXT1, EXT2 into your output.");
         sb.AppendLine("3. Apply naming convention prefixes (APP_, FLOW_, TABLE_, CONN_, EXT_, ENVVAR_) to ALL component names.");
         sb.AppendLine("4. Use actual component names from the solution with appropriate prefixes.");
         sb.AppendLine("5. Use ONLY component names/types present in the provided data - do not invent.");
@@ -1829,7 +2520,7 @@ public class RagPipelineService
                   + "3. ER Diagrams MUST follow Schema.md format: organize entities into sections (CORE ENTITY, CHILD ENTITY, LOOKUP, BRIDGE, USER/OWNER MODEL), include all relationships at the end. "
                   + "4. Place diagrams in their designated sections (Architecture in Solution Architecture, Component Map in Component Catalog, etc.). "
                   + "5. Every component provided must appear in the output under the correct type with proper prefix. "
-                  + "6. For component metadata: When trigger/connector metadata is available, use it. When not available for flows, infer reasonable values from flow names and descriptions. For other missing details, write 'Not found in solution export'. "
+                  + "6. For component metadata: When trigger/connector metadata is available, use it. When not available for flows, infer reasonable values from flow names and descriptions. Use 'Not found in solution export' only when the solution export itself lacks the detail. If SharePoint references exist but richer SharePoint metadata is unavailable, omit that extra detail or state 'Additional SharePoint metadata was not available'. "
                   + "7. Never omit component types, and preserve exact component names with appropriate prefixes. "
                   + "8. Mermaid diagrams are mandatory and must match the provided formats exactly with valid syntax.";
 
@@ -1837,23 +2528,6 @@ public class RagPipelineService
             base_ += $"\n\nUSER INSTRUCTIONS:\n{userPrefs}\n\nFollow them precisely while maintaining all schema requirements above.";
 
         return base_;
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // MATH HELPERS
-    // ──────────────────────────────────────────────────────────────────────────
-    private static double CosineSimilarity(float[] a, float[] b)
-    {
-        if (a.Length != b.Length) return 0;
-        double dot = 0, magA = 0, magB = 0;
-        for (int i = 0; i < a.Length; i++)
-        {
-            dot  += a[i] * b[i];
-            magA += a[i] * a[i];
-            magB += b[i] * b[i];
-        }
-        double denom = Math.Sqrt(magA) * Math.Sqrt(magB);
-        return denom == 0 ? 0 : dot / denom;
     }
 
     private static List<string> Tokenise(string text) =>

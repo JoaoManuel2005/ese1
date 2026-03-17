@@ -2,6 +2,10 @@
 
 (Summary of issue)
 
+# Acceptance Criteria
+
+(List of acceptance criteria)
+
 # Blockers
 
 (Did you face any unexpected problems)

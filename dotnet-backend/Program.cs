@@ -1,4 +1,5 @@
 using DotNetEnv;
+using Qdrant.Client;
 using RagBackend.Services;
 
 // Load .env file (same as Python python-dotenv)
@@ -21,12 +22,18 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
 
+// Register Qdrant client
+var qdrantHost = builder.Configuration["QDRANT_HOST"] ?? "localhost";
+var qdrantPort = int.Parse(builder.Configuration["QDRANT_PORT"] ?? "6334");
+builder.Services.AddSingleton(new QdrantClient(qdrantHost, qdrantPort));
+
 // Register app services as singletons so state (vector store, memory) persists
 builder.Services.AddSingleton<LlmClientService>();
 builder.Services.AddSingleton<ConversationMemoryService>();
 builder.Services.AddSingleton<PacParserService>();
 builder.Services.AddSingleton<OnnxEmbeddingService>();
 builder.Services.AddSingleton<RagPipelineService>();
+builder.Services.AddSingleton<SharePointService>();
 
 // CORS — mirror Python CORSMiddleware settings
 builder.Services.AddCors(options =>

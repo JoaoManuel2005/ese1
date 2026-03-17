@@ -64,7 +64,7 @@ Verify installation:
 
 ## 4. Azure Key Vault Setup
 
-Head to [Azure](https://portal.azure.com/#home) and make sure that you setup (or are apart of) a Key Vault with the following naming scheme:
+Head to [Azure](https://portal.azure.com/#home) and make sure that you setup (or are apart of) the `docgenvault` Key Vault used by the release scripts, with the following secret names:
 
 
 | Name | Value |
@@ -74,7 +74,6 @@ Head to [Azure](https://portal.azure.com/#home) and make sure that you setup (or
 | AZURE-AD-CLIENT-SECRET | *your client secret* |
 | AZURE-AD-TENANT-ID | *your tenant ID* |
 | AZURE-OPENAI-ENDPOINT | *your OpenAI endpoint* |
-| MICROSOFT-CLIENT-SECRET | *your client secret* |
 | NEXTAUTH-SECRET | *your next auth secret* |
 
 Then login to Azure by opening your terminal and typing:
@@ -93,7 +92,7 @@ Download the latest release of the app from [here](https://github.com/JoaoManuel
 
 ## 6. Running the Full Application
 
-Extract the docker-images.zip folder that you just downloaded into your desired directory, and make sure you have docker desktop running
+Extract the docker-images.zip folder that you just downloaded into a single directory, and make sure you have docker desktop running. Keep the extracted files together so the folder contains `docker-compose.images.yml`, the `scripts` folder, and the four image tar files.
 
 
 
@@ -101,7 +100,7 @@ Open the docker-images folder in your terminal:
 
 `C:\Users\...\docker-images>`
 
-To fetch secrets from Azure Key Vault and start all services use the following commands for your operating system:
+To fetch secrets from Azure Key Vault, generate `.env.generated`, and start all services use the following commands for your operating system:
 
 ### Windows:
 
@@ -115,23 +114,22 @@ To fetch secrets from Azure Key Vault and start all services use the following c
 
 
 After running the script you should see the containers up and running on docker desktop, you can expand docker-images to see:
+- qdrant
 - rag-backend-dotnet
 - pac-cli
 - documentation-generator
 
-You should be able to see to see `port 3000:3000` or similar next to the documentation-generator container, you can simply click that to start the app in your browser
+The release scripts set the required authentication secrets and default to `FEATURE_SHAREPOINT_ENRICHMENT=false` for the released stack.
+
+You should be able to see `port 3000:3000` or similar next to the documentation-generator container, you can simply click that to start the app in your browser
 
 ---
 
-## 8. Using the app
+## 8. User Guide
 
-- When setting up the Azure Key Vault your api keys and endpoints should already be set for you, if not you can navigate to settings and input the details in there
-
+- When setting up the Azure Key Vault your api keys and endpoints should already be set for you. If not then please make sure that your vault is set-up the same as shown above under 'Azure key vault set up'
 - Upload solution files by drag and drop or clicking 'Browse' in the input files section
-
 - Generate documentation by clicking 'Parse & Generate Docs'
-
 - Sign in to use the chat history feature and to remember changes made to your system prompt
-
 - You can start/stop the app anytime by opening docker desktop and clicking the start/stop button under actions next to docker-images
 ---

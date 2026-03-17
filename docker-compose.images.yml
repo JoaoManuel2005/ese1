@@ -2,6 +2,16 @@
 # Run: ./scripts/run-with-images.sh   (or run.sh from artifact root)
 # Requires: .env.generated or .env.local (or Azure Key Vault) for secrets.
 services:
+  qdrant:
+    image: qdrant/qdrant:v1.9.0
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
   rag-backend-dotnet:
     image: dotnet-backend:latest
     container_name: rag-backend-dotnet
@@ -11,6 +21,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://0.0.0.0:8001
       - DOC_GENERATION_MODE=${DOC_GENERATION_MODE:-llm}
+      - FEATURE_SHAREPOINT_ENRICHMENT=${FEATURE_SHAREPOINT_ENRICHMENT:-false}
       - LLM_PROVIDER=${LLM_PROVIDER:-local}
       - LOCAL_LLM_BASE_URL=${LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434}
       - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-llama3.1:8b}
@@ -18,10 +29,17 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt4.1}
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
-      - ONNX_MODEL_PATH=/app/Models/all-MiniLM-L6-v2.onnx
+      - EMBEDDING_PROVIDER=onnx
+      - ONNX_MODEL_PATH=/app/Models/bge-base-en-v1.5.onnx
+      - ONNX_MAX_SEQUENCE_LENGTH=512
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6334
     volumes:
       - ./pac-workspace:/pac-workspace
       - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      qdrant:
+        condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -41,6 +59,7 @@ services:
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
       - RAG_BACKEND_URL=http://rag-backend-dotnet:8001
+      - FEATURE_SHAREPOINT_ENRICHMENT=${FEATURE_SHAREPOINT_ENRICHMENT:-false}
       - RUNTIME_CONFIG_PATH=/app/runtime-data/.runtime-config.json
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
@@ -50,6 +69,8 @@ services:
     volumes:
       - ./documentation_generator/runtime-data:/app/runtime-data
     depends_on:
+      qdrant:
+        condition: service_started
       rag-backend-dotnet:
         condition: service_healthy
     restart: unless-stopped
@@ -60,3 +81,6 @@ services:
     volumes:
       - ./pac-workspace:/pac-workspace
     restart: unless-stopped
+
+volumes:
+  qdrant_storage:

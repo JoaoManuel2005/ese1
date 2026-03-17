@@ -117,10 +117,3 @@ export async function setRuntimeConfig(input: RuntimeConfigInput): Promise<Runti
   return next;
 }
 
-export function maskApiKey(key?: string | null): string | null {
-  if (!key) return null;
-  const trimmed = key.trim();
-  if (!trimmed) return null;
-  const last4 = trimmed.slice(-4);
-  return `****${last4}`;
-}

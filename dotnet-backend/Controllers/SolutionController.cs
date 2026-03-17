@@ -11,17 +11,20 @@ public class SolutionController : ControllerBase
     private readonly RagPipelineService    _rag;
     private readonly ConversationMemoryService _memory;
     private readonly LlmClientService      _llm;
+    private readonly SharePointService     _sharePoint;
 
     public SolutionController(
         PacParserService pac,
         RagPipelineService rag,
         ConversationMemoryService memory,
-        LlmClientService llm)
+        LlmClientService llm,
+        SharePointService sharePoint)
     {
         _pac    = pac;
         _rag    = rag;
         _memory = memory;
         _llm    = llm;
+        _sharePoint = sharePoint;
     }
 
     // ── POST /parse-solution ─────────────────────────────────────────────────
@@ -29,7 +32,7 @@ public class SolutionController : ControllerBase
     public async Task<IActionResult> ParseSolution(IFormFile file)
     {
         if (!file.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            return BadRequest(Error("INVALID_SOLUTION_ZIP", "File must be a .zip Power Platform solution export."));
+            return BadRequest(Error("INVALID_SOLUTION_ZIP", "Only .zip solution files are supported."));
 
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
@@ -47,7 +50,70 @@ public class SolutionController : ControllerBase
                     "Ensure the zip contains solution.xml or [Content_Types].xml."));
 
             var solution = _pac.ParseSolution(zipPath, tempDir);
-            return Ok(solution);
+
+            // Detect SharePoint URLs from knowledge sources
+            var sharePointUrls = solution.Components
+                .Where(c => c.Type == "knowledge_source_item")
+                .SelectMany(c =>
+                {
+                    var urls = new List<string>();
+                    if (c.Metadata == null) return urls;
+                    if (c.Metadata.TryGetValue("web_url", out var web) && web is string wu && !string.IsNullOrWhiteSpace(wu)) 
+                        urls.Add(_sharePoint.ExtractSiteUrl(wu));
+                    if (c.Metadata.TryGetValue("site_url", out var site) && site is string su && !string.IsNullOrWhiteSpace(su)) 
+                        urls.Add(_sharePoint.ExtractSiteUrl(su));
+                    return urls;
+                })
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var parseResponse = new ParseSolutionResponse
+            {
+                Data = solution,
+                SharePointUrls = sharePointUrls,
+                SharePointEnrichmentStatus = SharePointEnrichmentStatuses.NotNeeded
+            };
+
+            if (sharePointUrls.Count == 0)
+            {
+                return Ok(parseResponse);
+            }
+
+            if (!_sharePoint.IsEnrichmentEnabled)
+            {
+                Console.WriteLine($"[ParseSolution] Detected {sharePointUrls.Count} SharePoint URL(s) but enrichment is disabled");
+                parseResponse.SharePointEnrichmentStatus = SharePointEnrichmentStatuses.Disabled;
+                parseResponse.Message = "SharePoint references detected. Enrichment is disabled.";
+                return Ok(parseResponse);
+            }
+
+            if (!_sharePoint.IsConfigured)
+            {
+                Console.WriteLine($"[ParseSolution] Detected {sharePointUrls.Count} SharePoint URL(s) but service not configured - optional enrichment requires user authentication");
+                parseResponse.SharePointEnrichmentStatus = SharePointEnrichmentStatuses.DetectedRequiresAuth;
+                parseResponse.AuthenticationRequired = true;
+                parseResponse.Message = "SharePoint authentication required for optional enrichment";
+                return Ok(parseResponse);
+            }
+
+            Console.WriteLine($"[ParseSolution] Detected {sharePointUrls.Count} SharePoint URL(s), fetching metadata...");
+            var spResponse = await _sharePoint.FetchMetadataAsync(sharePointUrls, includeColumns: true);
+            if (spResponse.Sites.Count > 0)
+            {
+                solution.SharePointMetadata = spResponse.Sites;
+            }
+
+            if (spResponse.Success)
+            {
+                Console.WriteLine($"[ParseSolution] ✓ Fetched SharePoint metadata for {spResponse.Sites.Count} site(s)");
+                parseResponse.SharePointEnrichmentStatus = SharePointEnrichmentStatuses.Available;
+                return Ok(parseResponse);
+            }
+
+            Console.WriteLine($"[ParseSolution] SharePoint enrichment failed for {sharePointUrls.Count} URL(s): {spResponse.ErrorMessage ?? "Unknown error"}");
+            parseResponse.SharePointEnrichmentStatus = SharePointEnrichmentStatuses.Failed;
+            parseResponse.Message = spResponse.ErrorMessage ?? "SharePoint enrichment failed.";
+            return Ok(parseResponse);
         }
         catch (Exception ex)
         {

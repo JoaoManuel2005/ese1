@@ -36,11 +36,11 @@ public class RagController : ControllerBase
 
     // ── GET /rag/status ───────────────────────────────────────────────────────
     [HttpGet("status")]
-    public IActionResult Status([FromQuery] string? dataset_id)
+    public async Task<IActionResult> Status([FromQuery] string? dataset_id)
     {
         try
         {
-            var count    = dataset_id != null ? _rag.GetCollectionCount(dataset_id) : 0;
+            var count    = dataset_id != null ? await _rag.GetCollectionCountAsync(dataset_id) : 0;
             var provider = _llm.ResolveProvider();
             var model    = _llm.ResolveModel(provider);
 
@@ -76,7 +76,7 @@ public class RagController : ControllerBase
         dataset_id ??= "default";
 
         if (!file.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            return BadRequest(JsonError("INVALID_SOLUTION_ZIP", "File must be a .zip export."));
+            return BadRequest(JsonError("INVALID_SOLUTION_ZIP", "Only .zip solution files are supported."));
 
         var ingestLock = IngestLocks.GetOrAdd(dataset_id, _ => new SemaphoreSlim(1, 1));
         if (!await ingestLock.WaitAsync(0))
@@ -104,7 +104,7 @@ public class RagController : ControllerBase
 
             _logger.LogInformation("Step 3: Clearing old collection...");
             SetDataset(dataset_id, "solution", reason, new List<string> { file.FileName });
-            _rag.ClearCollection(dataset_id);
+            await _rag.ClearCollectionAsync(dataset_id);
 
             _logger.LogInformation("Step 4: Starting ingestion (this may take several minutes)...");
             var result = await _rag.IngestSolutionZipAsync(zipPath, dataset_id);
@@ -158,7 +158,7 @@ public class RagController : ControllerBase
                 {
                     ["chunks_received"] = request.Chunks.Count,
                     ["chunks_stored"]   = stored,
-                    ["total_in_db"]     = _rag.GetCollectionCount(datasetId)
+                    ["total_in_db"]     = await _rag.GetCollectionCountAsync(datasetId)
                 }
             });
         }
@@ -183,7 +183,7 @@ public class RagController : ControllerBase
             return StatusCode(500, JsonError("NO_API_KEY",
                 "Cloud provider selected but no API key configured."));
 
-        if (_rag.GetCollectionCount(datasetId) == 0)
+        if (await _rag.GetCollectionCountAsync(datasetId) == 0)
             return Ok(new RagRetrieveResponse
             {
                 Chunks      = new List<RetrievedChunk>(),
@@ -307,19 +307,19 @@ public class RagController : ControllerBase
 
     // ── GET /rag/list-docs ────────────────────────────────────────────────────
     [HttpGet("list-docs")]
-    public IActionResult ListDocs([FromQuery] string? dataset_id)
+    public async Task<IActionResult> ListDocs([FromQuery] string? dataset_id)
     {
         var id    = dataset_id ?? "default";
-        var files = _rag.ListFiles(id);
+        var files = await _rag.ListFilesAsync(id);
         return Ok(new { dataset_id = id, files, count = files.Count });
     }
 
     // ── POST /rag/reset ───────────────────────────────────────────────────────
     [HttpPost("reset")]
-    public IActionResult Reset([FromBody] ResetRequest request)
+    public async Task<IActionResult> Reset([FromBody] ResetRequest request)
     {
         var id = request.DatasetId ?? "default";
-        _rag.ClearCollection(id);
+        await _rag.ClearCollectionAsync(id);
         _memory.ClearHistory(id);
         lock (DsLock) Datasets.Remove(id);
         return Ok(new { success = true, message = $"Dataset '{id}' reset." });
@@ -327,28 +327,28 @@ public class RagController : ControllerBase
 
     // ── POST /rag/delete-docs ─────────────────────────────────────────────────
     [HttpPost("delete-docs")]
-    public IActionResult DeleteDocs([FromBody] DeleteDocsRequest request)
+    public async Task<IActionResult> DeleteDocs([FromBody] DeleteDocsRequest request)
     {
         var id = request.DatasetId ?? "default";
-        _rag.DeleteFiles(id, request.FileNames ?? new List<string>());
+        await _rag.DeleteFilesAsync(id, request.FileNames ?? new List<string>());
         return Ok(new { success = true });
     }
 
     // ── GET /rag/files ────────────────────────────────────────────────────────
     [HttpGet("files")]
-    public IActionResult ListFiles([FromQuery] string? dataset_id)
+    public async Task<IActionResult> ListFiles([FromQuery] string? dataset_id)
     {
         var id    = dataset_id ?? "default";
-        var files = _rag.ListFiles(id);
+        var files = await _rag.ListFilesAsync(id);
         return Ok(new { dataset_id = id, files, count = files.Count });
     }
 
     // ── DELETE /rag/dataset ───────────────────────────────────────────────────
     [HttpDelete("dataset")]
-    public IActionResult ClearDataset([FromQuery] string? dataset_id)
+    public async Task<IActionResult> ClearDataset([FromQuery] string? dataset_id)
     {
         var id = dataset_id ?? "default";
-        _rag.ClearCollection(id);
+        await _rag.ClearCollectionAsync(id);
         _memory.ClearHistory(id);
         return Ok(new { success = true, message = $"Dataset '{id}' cleared." });
     }

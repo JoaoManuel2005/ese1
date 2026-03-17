@@ -12,6 +12,7 @@
     <!-- HTTP / API + Swagger UI -->
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.0" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.2" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.24.2" />
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
 
@@ -19,11 +20,18 @@
     <PackageReference Include="Azure.AI.OpenAI" Version="2.1.0" />
     <PackageReference Include="OpenAI" Version="2.1.0" />
 
+    <!-- Microsoft Graph for SharePoint -->
+    <PackageReference Include="Microsoft.Graph" Version="5.56.0" />
+    <PackageReference Include="Azure.Identity" Version="1.12.0" />
+
     <!-- PDF parsing -->
     <PackageReference Include="PdfPig" Version="0.1.9" />
 
     <!-- Env vars (.env file loading) -->
     <PackageReference Include="DotNetEnv" Version="3.1.1" />
+
+    <!-- Qdrant vector database client -->
+    <PackageReference Include="Qdrant.Client" Version="1.10.0" />
   </ItemGroup>
 
   <ItemGroup>

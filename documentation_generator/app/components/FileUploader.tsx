@@ -9,6 +9,8 @@ type Props = {
   clearFiles?: () => void;
   displayType?: string | null;
   displayReason?: string | null;
+  uploadDisabled?: boolean;
+  disabledMessage?: string | null;
 };
 
 export default function FileUploader({
@@ -18,13 +20,48 @@ export default function FileUploader({
   clearFiles,
   displayType,
   displayReason,
+  uploadDisabled = false,
+  disabledMessage = null,
 }: Props) {
   const [isDragging, setIsDragging] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   function addFiles(list: FileList | null) {
+    if (uploadDisabled) return;
     if (!list) return;
-    onAdd(Array.from(list));
+    const incoming = Array.from(list);
+    const validFiles = incoming.filter((file) => file.name.toLowerCase().endsWith(".zip"));
+    const invalidFiles = incoming.filter((file) => !file.name.toLowerCase().endsWith(".zip"));
+    const replacementFile = validFiles[0];
+    const skippedValidFiles = validFiles.slice(1);
+
+    if (invalidFiles.length > 0 || skippedValidFiles.length > 0) {
+      const invalidNames = invalidFiles
+        .slice(0, 2)
+        .map((file) => file.name)
+        .join(", ");
+      const skippedNames = skippedValidFiles
+        .slice(0, 2)
+        .map((file) => file.name)
+        .join(", ");
+      const rejectedParts = [
+        invalidFiles.length > 0
+          ? `Rejected: ${invalidNames}${invalidFiles.length - 2 > 0 ? ` and ${invalidFiles.length - 2} more` : ""}.`
+          : null,
+        skippedValidFiles.length > 0
+          ? `Only one .zip solution file can be uploaded at a time. Ignored: ${skippedNames}${skippedValidFiles.length - 2 > 0 ? ` and ${skippedValidFiles.length - 2} more` : ""}.`
+          : null,
+      ].filter(Boolean);
+      setUploadError(rejectedParts.join(" "));
+    } else {
+      setUploadError(null);
+    }
+
+    if (replacementFile) {
+      onAdd([replacementFile]);
+    }
+
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -41,9 +78,13 @@ export default function FileUploader({
           <div className="panel-header">Input Files</div>
           <div
             className={`dropzone${isDragging ? " dragging" : ""}`}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (uploadDisabled) return;
+              fileInputRef.current?.click();
+            }}
             onDragOver={(e) => {
               e.preventDefault();
+              if (uploadDisabled) return;
               setIsDragging(true);
             }}
             onDragLeave={(e) => {
@@ -53,32 +94,43 @@ export default function FileUploader({
             onDrop={(e) => {
               e.preventDefault();
               setIsDragging(false);
+              if (uploadDisabled) return;
               void addFiles(e.dataTransfer.files);
             }}
+            style={uploadDisabled ? { opacity: 0.7, cursor: "not-allowed" } : undefined}
           >
             <input
               ref={fileInputRef}
               type="file"
-              multiple
+              accept=".zip,application/zip,application/x-zip-compressed"
+              disabled={uploadDisabled}
               style={{ display: "none" }}
               onChange={(e) => void addFiles(e.target.files)}
             />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <div>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>Upload or drop files</div>
+                <div style={{ color: "var(--foreground)", fontWeight: 600, marginBottom: 4 }}>Upload a .zip solution file</div>
                 <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                  Docs (txt, md, json) or <strong>.zip solution files</strong>. {isDragging ? "Drop files here" : "Click to choose or drag & drop."}
+                  Only <strong>.zip solution files</strong> are supported. {isDragging ? "Drop the .zip file here" : "Click to choose or drag & drop."}
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (uploadDisabled) return;
+                  fileInputRef.current?.click();
+                }}
+                disabled={uploadDisabled}
                 style={{
                   border: "1px solid var(--border)",
-                  background: "var(--input-bg)",
+                  background: "var(--panel-bg)",
+                  color: "var(--foreground)",
                   padding: "8px 12px",
                   borderRadius: 8,
-                  cursor: "pointer",
+                  cursor: uploadDisabled ? "not-allowed" : "pointer",
+                  opacity: uploadDisabled ? 0.7 : 1,
                   boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
                 }}
               >
@@ -86,11 +138,33 @@ export default function FileUploader({
               </button>
             </div>
           </div>
+          {disabledMessage && (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: "var(--danger)",
+              }}
+            >
+              {disabledMessage}
+            </div>
+          )}
+          {uploadError && (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: "var(--danger)",
+              }}
+            >
+              {uploadError}
+            </div>
+          )}
 
           {files.length > 0 ? (
             <div style={{ marginTop: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <div style={{ fontWeight: 600 }}>Selected files</div>
+                <div style={{ color: "var(--foreground)", fontWeight: 600 }}>Selected files</div>
                 {clearFiles && (
                   <button
                     onClick={() => clearFiles()}
@@ -107,7 +181,7 @@ export default function FileUploader({
                 )}
               </div>
 
-              <div className="panel-scroll hide-scrollbar" style={{ maxHeight: "200px", overflowY: "auto", overflowX: "hidden" }}>
+              <div style={{ overflowX: "hidden" }}>
                 <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8, overflowX: "hidden" }}>
                   {files.map((file, index) => (
                     <li
@@ -117,6 +191,7 @@ export default function FileUploader({
                         borderRadius: 10,
                         padding: 10,
                         background: "var(--panel-bg)",
+                        color: "var(--foreground)",
                         display: "flex",
                         justifyContent: "space-between",
                         alignItems: "center",
@@ -135,11 +210,11 @@ export default function FileUploader({
                             <span style={{ color: "var(--primary)", fontWeight: 500 }}>📦 Power Platform Solution (PAC CLI + RAG)</span>
                           ) : file.isText ? (
                             <>
-                              <span style={{ color: "var(--success)" }}>Text loaded</span>
+                              <span style={{ color: "var(--warning)" }}>Only .zip solution files are supported</span>
                               {file.truncated && <span style={{ color: "var(--warning)" }}>(truncated)</span>}
                             </>
                           ) : (
-                            <span style={{ color: "var(--muted)" }}>Metadata only (preview not supported)</span>
+                            <span style={{ color: "var(--muted)" }}>Only .zip solution files are supported</span>
                           )}
                         </div>
                       </div>
@@ -147,8 +222,8 @@ export default function FileUploader({
                         onClick={() => onRemove(index)}
                         aria-label={`Remove ${file.name}`}
                         style={{
-                          border: "none",
-                          background: "var(--input-bg)",
+                          border: "1px solid var(--border)",
+                          background: "var(--panel-bg)",
                           color: "var(--danger)",
                           borderRadius: 8,
                           padding: "6px 10px",
@@ -171,7 +246,7 @@ export default function FileUploader({
                       {displayType === "solution_zip" || displayType === "power_platform_solution_zip"
                         ? "Detected: Power Platform solution"
                         : displayType === "docs" || displayType === "generic_docs"
-                        ? "Detected: Documents"
+                        ? "Detected: Unsupported file type"
                         : "Detected: Unknown"}
                     </span>
                     {displayReason && (
@@ -182,7 +257,7 @@ export default function FileUploader({
               </div>
             </div>
           ) : (
-            <div style={{ ...placeholderBox, marginTop: 12 }}>No files selected yet.</div>
+            <div style={{ ...placeholderBox, marginTop: 12 }}>No .zip solution file selected yet.</div>
           )}
         </div>
   );

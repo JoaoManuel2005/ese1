@@ -16,6 +16,7 @@ export type OutputFile = {
   createdAt: number;
   bytesBase64: string;
   htmlPreview?: string;
+  markdownContent?: string;
 };
 
 export type ChatMessage = {

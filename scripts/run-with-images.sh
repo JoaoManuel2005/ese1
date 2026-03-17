@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Run from repo root or from extracted CI artifact root. The script expects to find
 # docker-compose.images.yml in that directory. Image tars (dotnet-backend.tar,
-# documentation_generator.tar, pac_cli.tar) are loaded from the SAME directory when present.
+# documentation_generator.tar, pac_cli.tar, qdrant.tar) are loaded from the SAME directory
+# when the full release image set is present.
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
@@ -14,11 +15,36 @@ if [[ ! -f "$COMPOSE_FILE" ]]; then
 fi
 
 # Load image tars if present in ROOT (same directory as this script's parent and docker-compose.images.yml)
-if [[ -f "dotnet-backend.tar" ]] && [[ -f "documentation_generator.tar" ]] && [[ -f "pac_cli.tar" ]]; then
+tars=(
+  "dotnet-backend.tar"
+  "documentation_generator.tar"
+  "pac_cli.tar"
+  "qdrant.tar"
+)
+
+present_tars=()
+missing_tars=()
+for tar in "${tars[@]}"; do
+  if [[ -f "$tar" ]]; then
+    present_tars+=("$tar")
+  else
+    missing_tars+=("$tar")
+  fi
+done
+
+if [[ ${#present_tars[@]} -gt 0 && ${#missing_tars[@]} -gt 0 ]]; then
+  echo "ERROR: Incomplete Docker image set in $ROOT." >&2
+  echo "Missing image archives: ${missing_tars[*]}" >&2
+  echo "Expected release artifacts to include: ${tars[*]}" >&2
+  exit 1
+fi
+
+if [[ ${#missing_tars[@]} -eq 0 ]]; then
   echo "Loading Docker images from $ROOT ..."
   docker load -i dotnet-backend.tar
   docker load -i documentation_generator.tar
   docker load -i pac_cli.tar
+  docker load -i qdrant.tar
   mkdir -p pac-workspace documentation_generator/runtime-data
 fi
 
@@ -69,6 +95,7 @@ AZURE_OPENAI_API_KEY=$openai_key
 AZURE_OPENAI_ENDPOINT=$azure_endpoint
 OPENAI_MODEL=gpt4.1
 LLM_PROVIDER=cloud
+FEATURE_SHAREPOINT_ENRICHMENT=true
 NEXTAUTH_SECRET=$nextauth_secret
 AZURE_AD_CLIENT_ID=$azure_client_id
 AZURE_AD_CLIENT_SECRET=$azure_client_secret
@@ -81,12 +108,30 @@ echo "AZURE_OPENAI_API_KEY=$(mask_secret "$openai_key")"
 echo "AZURE_OPENAI_ENDPOINT=$(mask_secret "$azure_endpoint")"
 echo "OPENAI_MODEL=gpt4.1"
 echo "LLM_PROVIDER=cloud"
+echo "FEATURE_SHAREPOINT_ENRICHMENT=true"
 echo "NEXTAUTH_SECRET=$(mask_secret "$nextauth_secret")"
 echo "AZURE_AD_CLIENT_ID=$(mask_secret "$azure_client_id")"
 echo "AZURE_AD_CLIENT_SECRET=$(mask_secret "$azure_client_secret")"
 echo "AZURE_AD_TENANT_ID=$(mask_secret "$azure_tenant_id")"
 
 docker compose --env-file .env.generated -f "$COMPOSE_FILE" up -d --force-recreate
+
+required_containers=(
+  "qdrant"
+  "rag-backend-dotnet"
+  "documentation-generator"
+  "pac-cli"
+)
+
+echo "Verifying release containers are running:"
+for container in "${required_containers[@]}"; do
+  running="$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)"
+  if [[ "$running" != "true" ]]; then
+    echo "ERROR: Expected container '$container' to be running." >&2
+    exit 1
+  fi
+  echo "${container}=RUNNING"
+done
 
 required_vars=(
   "NEXTAUTH_SECRET"
@@ -117,4 +162,4 @@ if [[ ${#empty_vars[@]} -gt 0 ]]; then
   exit 1
 fi
 
-echo "Done. App is running (backend: port 8001, docs UI: port 3000)."
+echo "Done. App is running (backend: port 8001, docs UI: port 3000, qdrant: ports 6333/6334)."

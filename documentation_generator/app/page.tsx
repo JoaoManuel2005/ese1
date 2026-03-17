@@ -13,6 +13,20 @@ import OutputsList from "./components/OutputsList";
 import PreviewPanel from "./components/PreviewPanel";
 import SignInButton from "./components/SignInButton";
 import { useSession, getSession } from "next-auth/react";
+import {
+  buildSolutionForGeneration,
+  fetchSharePointEnrichmentWithUserToken,
+  hasDetectedSharePointReferences,
+  type ParsedSolutionResult,
+  type SharePointEnrichmentStatus,
+  type SharePointMetadata,
+  shouldAttemptSharePointUserEnrichment,
+  splitParsedSolutionData,
+} from "./utils/solutionSharePoint";
+import {
+  canGenerateSolutionDocs,
+  hasInvalidSelectedFiles as hasInvalidSelectedFilesInState,
+} from "./utils/solutionUploadValidation";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -52,6 +66,26 @@ type GenerateError = {
   hint?: string;
 };
 
+type ParseSolutionApiResponse = {
+  ok: true;
+  data: ParsedSolutionResult;
+  authenticationRequired: boolean;
+  sharePointUrls: string[];
+  sharePointEnrichmentStatus: SharePointEnrichmentStatus;
+  message?: string;
+  sharePointEnrichmentEnabled: boolean;
+};
+
+type BaseSolutionParseResult = {
+  parsedSolution: ParsedSolutionResult;
+  sharePointDetected: boolean;
+  sharePointUrls: string[];
+  sharePointEnrichmentStatus: SharePointEnrichmentStatus;
+  sharePointMetadata: SharePointMetadata[] | null;
+  activeDatasetId: string;
+  sharePointEnrichmentEnabled: boolean;
+};
+
 type ApiErrorPayload = {
   error?: string | { message?: string; code?: string; hint?: string };
   detail?: string | { message?: string };
@@ -68,9 +102,24 @@ type ApiOutput = {
   markdownContent?: string;
 };
 
+type OutputType = {
+  id: string;
+  title: string;
+  description: string;
+  prompt: string;
+  mime: string;
+  keywords: string[];
+};
+type PersistedDocument = {
+  filename: string;
+  markdown: string;
+  htmlPreview?: string | null;
+  bytesBase64?: string | null;
+  mime?: string | null;
+};
+
 const MAX_TEXT_CHARS = 200 * 1024; // ~200KB cap for in-memory text
-const TEXT_EXTS = ["txt", "md", "json", "csv", "js", "ts", "py"];
-const SOLUTION_EXT = "zip"; // Power Platform solution files
+const SOLUTION_EXT = "zip"; // Supported upload type for solution documentation
 const MAX_TOTAL_TEXT_CHARS = 400 * 1024; // overall cap we send to backend
 const DEFAULT_TEMP = 0.5;
 const DEFAULT_SOLUTION_SYSTEM_PROMPT =
@@ -81,6 +130,7 @@ export default function Page() {
   const { files, setFiles, updateFileText } = useFiles([]);
   const [outputs, setOutputs] = useState<OutputFile[]>([]);
   const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
+  const [previewRefreshing, setPreviewRefreshing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateProgress, setGenerateProgress] = useState<{ stage: string; percent: number; failed?: boolean } | null>(null);
   const [generateError, setGenerateError] = useState<GenerateError | null>(null);
@@ -98,10 +148,12 @@ export default function Page() {
   const [useCustomLocalModel, setUseCustomLocalModel] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState(false);
-  const [apiKey, setApiKey] = useState("");
-  const [endpoint, setEndpoint] = useState("");
+  const [sharePointToken, setSharePointToken] = useState<string | null>(null);
+  const [parsedSolution, setParsedSolution] = useState<ParsedSolutionResult | null>(null);
+  const [sharePointUrls, setSharePointUrls] = useState<string[]>([]);
+  const [sharePointEnrichmentStatus, setSharePointEnrichmentStatus] = useState<SharePointEnrichmentStatus>("not_needed");
+  const [sharePointMetadata, setSharePointMetadata] = useState<SharePointMetadata[] | null>(null);
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SOLUTION_SYSTEM_PROMPT);
-
   const [ragStatus, setRagStatus] = useState<{ status: string; chunks_indexed: number; provider?: string; model?: string; backend_online?: boolean } | null>(null);
   const [corpusType, setCorpusType] = useState<"solution_zip" | "docs" | "unknown" | null>(null);
   const [corpusReason, setCorpusReason] = useState<string | null>(null);
@@ -110,12 +162,45 @@ export default function Page() {
   const [solutionIngestSignature, setSolutionIngestSignature] = useState<string | null>(null);
   const [datasetId, setDatasetId] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
-  type ConversationListItem = { id: string; dataset_id: string | null; title: string | null; created_at: number; updated_at: number };
+  type ConversationListItem = {
+    id: string;
+    dataset_id: string | null;
+    customer_name: string | null;
+    title: string | null;
+    created_at: number;
+    updated_at: number;
+  };
   const [conversationList, setConversationList] = useState<ConversationListItem[]>([]);
+  const [customerName, setCustomerName] = useState("");
   const [isClient, setIsClient] = useState(false);
+  const [outputTypes, setOutputTypes] = useState<OutputType[]>([]);
+  const [selectedOutputTypeId, setSelectedOutputTypeId] = useState<string>("documentation");
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
+  const hasAttemptedInitialRestoreRef = useRef(false);
+  const activeConversationLoadRef = useRef(0);
+  const conversationIdRef = useRef<string | null>(null);
+  const creatingConversationRef = useRef<Promise<string> | null>(null);
   const { data: session, status } = useSession();
+
+  function applyConversationId(nextConversationId: string | null) {
+    conversationIdRef.current = nextConversationId;
+    setConversationId(nextConversationId);
+  }
+
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
+
+
+  // Load SharePoint token from sessionStorage on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const token = sessionStorage.getItem("sharepoint_access_token");
+      if (token) setSharePointToken(token);
+    } catch {}
+  }, []);
 
   function mapProviderError(msg: string, status?: number) {
     const lower = msg.toLowerCase();
@@ -124,7 +209,7 @@ export default function Page() {
       lower.includes("invalid api key") ||
       (lower.includes("api key") && (lower.includes("missing") || lower.includes("invalid")))
     ) {
-      return "Cloud unavailable (invalid API key/billing). Switch to Local or update Settings.";
+      return "Cloud unavailable (invalid API key/billing). Switch to Local or configure a valid server-side key.";
     }
     if (status === 429 || lower.includes("insufficient_quota") || lower.includes("quota") || lower.includes("billing")) {
       return "Cloud quota/billing required. Switch to Local or enable billing.";
@@ -171,6 +256,321 @@ export default function Page() {
       return { message: detail };
     }
     return { message: fallback };
+  }
+
+  async function readRouteError(response: Response, fallback: string) {
+    const payload = await response.json().catch(() => ({}));
+    if (typeof payload?.error === "string" && payload.error.trim().length > 0) {
+      return payload.error;
+    }
+    return fallback;
+  }
+
+  function buildRenderTitle(filename: string) {
+    const base = filename.replace(/\.pdf$/i, "").replace(/[_-]+/g, " ").trim();
+    return base || "Documentation";
+  }
+
+  function isLegacyPreviewHtml(htmlPreview: string) {
+    const trimmed = htmlPreview.trimStart().toLowerCase();
+    return (
+      trimmed.startsWith("<!doctype html") ||
+      trimmed.startsWith("<html") ||
+      trimmed.includes("<head>")
+    );
+  }
+
+  function resetParsedSolutionState() {
+    setParsedSolution(null);
+    setSharePointUrls([]);
+    setSharePointEnrichmentStatus("not_needed");
+    setSharePointMetadata(null);
+  }
+
+  async function enrichExistingParsedSolutionWithSharePoint(accessToken: string) {
+    if (!parsedSolution || sharePointUrls.length === 0) {
+      return { status: sharePointEnrichmentStatus, metadata: sharePointMetadata };
+    }
+
+    const enrichment = await fetchSharePointEnrichmentWithUserToken({
+      accessToken,
+      sharePointUrls,
+      fallbackMetadata: sharePointMetadata,
+    });
+
+    setSharePointMetadata(enrichment.metadata);
+    setSharePointEnrichmentStatus(enrichment.status);
+
+    return enrichment;
+  }
+
+  async function renderOutputFromMarkdown({
+    outputId,
+    filename,
+    markdownContent,
+    createdAt = Date.now(),
+  }: {
+    outputId: string;
+    filename: string;
+    markdownContent: string;
+    createdAt?: number;
+  }) {
+    const response = await fetch("/api/markdown-to-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        markdown: markdownContent,
+        title: buildRenderTitle(filename),
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error || "Failed to render document");
+    }
+
+    const nextOutput: OutputFile = {
+      id: outputId,
+      filename,
+      bytesBase64: data.pdfBase64 || "",
+      mime: "application/pdf",
+      createdAt,
+      htmlPreview: data.html || "",
+      markdownContent:
+        typeof data.normalizedMarkdown === "string" ? data.normalizedMarkdown : markdownContent,
+    };
+
+    return nextOutput;
+  }
+
+  async function refreshConversationList() {
+    if (status !== "authenticated" || !session?.user) return;
+    try {
+      const response = await fetch("/api/conversations");
+      if (!response.ok) return;
+      const data = await response.json();
+      setConversationList(data.conversations || []);
+    } catch {
+      // ignore refresh errors
+    }
+  }
+
+  async function createConversationSession(document?: PersistedDocument) {
+    if (status !== "authenticated" || !session?.user) {
+      throw new Error("Sign in to save document edits.");
+    }
+
+    if (conversationIdRef.current) return conversationIdRef.current;
+    if (creatingConversationRef.current) {
+      return creatingConversationRef.current;
+    }
+
+    const createPromise = (async () => {
+      const response = await fetch("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dataset_id: datasetId || null,
+          customer_name: customerName.trim() || null,
+          document_filename: document?.filename ?? null,
+          document_markdown: document?.markdown ?? null,
+          document_html: document?.htmlPreview ?? null,
+          document_pdf_base64: document?.bytesBase64 ?? null,
+          document_mime: document?.mime ?? "application/pdf",
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readRouteError(response, "Failed to create conversation."));
+      }
+
+      const data = await response.json().catch(() => ({}));
+      if (typeof data?.conversation_id !== "string" || !data.conversation_id) {
+        throw new Error("Failed to create conversation.");
+      }
+
+      applyConversationId(data.conversation_id);
+      void refreshConversationList();
+      return data.conversation_id as string;
+    })();
+
+    creatingConversationRef.current = createPromise;
+    try {
+      return await createPromise;
+    } finally {
+      if (creatingConversationRef.current === createPromise) {
+        creatingConversationRef.current = null;
+      }
+    }
+  }
+
+  async function syncConversationDataset(nextDatasetId: string, targetConversationId?: string | null) {
+    const activeConversationId = targetConversationId ?? conversationIdRef.current;
+    if (!activeConversationId || status !== "authenticated" || !session?.user) return;
+    await fetch(`/api/conversations/${activeConversationId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataset_id: nextDatasetId }),
+    }).catch(() => {});
+    void refreshConversationList();
+  }
+
+  async function persistConversationDocument(document: PersistedDocument, targetConversationId?: string | null) {
+    if (status !== "authenticated" || !session?.user) {
+      throw new Error("Sign in to save document edits.");
+    }
+
+    const activeConversationId = targetConversationId ?? conversationIdRef.current;
+    if (!activeConversationId) {
+      return createConversationSession(document);
+    }
+
+    const response = await fetch(`/api/conversations/${activeConversationId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        document_filename: document.filename,
+        document_markdown: document.markdown,
+        document_html: document.htmlPreview ?? null,
+        document_pdf_base64: document.bytesBase64 ?? null,
+        document_mime: document.mime ?? "application/pdf",
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await readRouteError(response, "Failed to save document."));
+    }
+
+    void refreshConversationList();
+    return activeConversationId;
+  }
+
+  async function restorePersistedOutput(
+    data: {
+    document_filename?: string | null;
+    document_markdown?: string | null;
+    updated_at?: number;
+    output?: {
+      id?: string;
+      filename?: string | null;
+      markdown_content?: string | null;
+      html_preview?: string | null;
+      pdf_base64?: string | null;
+      mime?: string | null;
+      updated_at?: number;
+    } | null;
+    },
+    targetConversationId?: string | null,
+    loadToken?: number
+  ) {
+    const isCurrentLoad = () => loadToken == null || loadToken === activeConversationLoadRef.current;
+    const persistedOutput = data.output && typeof data.output === "object" ? data.output : null;
+    const filename = typeof persistedOutput?.filename === "string"
+      ? persistedOutput.filename
+      : typeof data.document_filename === "string"
+        ? data.document_filename
+        : "";
+    const markdown = typeof persistedOutput?.markdown_content === "string"
+      ? persistedOutput.markdown_content
+      : typeof data.document_markdown === "string"
+        ? data.document_markdown
+        : null;
+
+    if (!filename || markdown == null) {
+      if (!isCurrentLoad()) return;
+      setOutputs([]);
+      setSelectedOutputId(null);
+      setPreviewRefreshing(false);
+      return;
+    }
+
+    const createdAt = typeof persistedOutput?.updated_at === "number"
+      ? persistedOutput.updated_at * 1000
+      : typeof data.updated_at === "number"
+        ? data.updated_at * 1000
+        : Date.now();
+    const hydratedOutput: OutputFile = {
+      id: typeof persistedOutput?.id === "string" && persistedOutput.id ? persistedOutput.id : `${filename}-${createdAt}`,
+      filename,
+      bytesBase64: typeof persistedOutput?.pdf_base64 === "string" ? persistedOutput.pdf_base64 : "",
+      mime: typeof persistedOutput?.mime === "string" && persistedOutput.mime ? persistedOutput.mime : "application/pdf",
+      createdAt,
+      htmlPreview: typeof persistedOutput?.html_preview === "string" ? persistedOutput.html_preview : "",
+      markdownContent: markdown,
+    };
+    if (!isCurrentLoad()) return;
+    setOutputs([hydratedOutput]);
+    setSelectedOutputId(hydratedOutput.id);
+
+    if (
+      hydratedOutput.htmlPreview &&
+      hydratedOutput.bytesBase64 &&
+      !isLegacyPreviewHtml(hydratedOutput.htmlPreview)
+    ) {
+      setPreviewRefreshing(false);
+      return;
+    }
+    setPreviewRefreshing(true);
+    try {
+      const refreshedOutput = await renderOutputFromMarkdown({
+        outputId: hydratedOutput.id,
+        filename: hydratedOutput.filename,
+        markdownContent: markdown,
+        createdAt,
+      });
+      if (!isCurrentLoad()) return;
+      setOutputs([refreshedOutput]);
+      setSelectedOutputId(refreshedOutput.id);
+      if (status === "authenticated" && session?.user) {
+        await persistConversationDocument(
+          {
+            filename: refreshedOutput.filename,
+            markdown: refreshedOutput.markdownContent || markdown,
+            htmlPreview: refreshedOutput.htmlPreview || "",
+            bytesBase64: refreshedOutput.bytesBase64 || "",
+            mime: refreshedOutput.mime,
+          },
+          targetConversationId
+        );
+      }
+    } catch {
+      // Keep fast hydrated output as fallback.
+    } finally {
+      if (isCurrentLoad()) {
+        setPreviewRefreshing(false);
+      }
+    }
+  }
+
+  async function saveQuickEditOutput(outputId: string, nextMarkdown: string) {
+    const currentOutput = outputs.find((output) => output.id === outputId);
+    if (!currentOutput) {
+      throw new Error("Document not found.");
+    }
+
+    if (typeof currentOutput.markdownContent !== "string") {
+      throw new Error("Document source unavailable.");
+    }
+
+    const renderedOutput = await renderOutputFromMarkdown({
+      outputId: currentOutput.id,
+      filename: currentOutput.filename,
+      markdownContent: nextMarkdown,
+      createdAt: Date.now(),
+    });
+
+    const savedConversationId = await persistConversationDocument({
+      filename: currentOutput.filename,
+      markdown: renderedOutput.markdownContent || nextMarkdown,
+      htmlPreview: renderedOutput.htmlPreview || "",
+      bytesBase64: renderedOutput.bytesBase64 || "",
+      mime: renderedOutput.mime,
+    });
+    if (savedConversationId !== conversationIdRef.current) {
+      applyConversationId(savedConversationId);
+    }
+
+    setOutputs((prev) => prev.map((output) => (output.id === outputId ? renderedOutput : output)));
   }
 
   function getFocusFiles(question: string, attached: AttachedFile[]) {
@@ -231,8 +631,6 @@ export default function Page() {
       setProvider(storedProvider);
     }
     if (storedLocalModel) setLocalModel(storedLocalModel);
-    // Clear any old API key from localStorage for security
-    localStorage.removeItem("openaiApiKey");
     if (storedDatasetId) {
       setDatasetId(storedDatasetId);
     } else {
@@ -246,6 +644,19 @@ export default function Page() {
     if (!isClient || !datasetId) return;
     localStorage.setItem("datasetId", datasetId);
   }, [datasetId, isClient]);
+
+  // Load output types from config
+  useEffect(() => {
+    fetch("/api/output-types")
+      .then((r) => r.json())
+      .then((data: OutputType[]) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setOutputTypes(data);
+          setSelectedOutputTypeId(data[0].id);
+        }
+      })
+      .catch(() => {/* keep defaults */});
+  }, []);
 
   // Load system prompt: from API when authenticated, from sessionStorage when not
   useEffect(() => {
@@ -282,11 +693,18 @@ export default function Page() {
 
   // Restore most recent conversation when user is signed in
   useEffect(() => {
-    if (status !== "authenticated" || !session?.user) return;
+    if (status !== "authenticated" || !session?.user) {
+      hasAttemptedInitialRestoreRef.current = false;
+      return;
+    }
+    if (hasAttemptedInitialRestoreRef.current) return;
+    if (files.length > 0 || chat.length > 0 || outputs.length > 0) return;
+    hasAttemptedInitialRestoreRef.current = true;
     let cancelled = false;
 
     (async () => {
       try {
+        const loadToken = ++activeConversationLoadRef.current;
         const listRes = await fetch("/api/conversations");
         if (!listRes.ok || cancelled) return;
         const listData = await listRes.json();
@@ -302,8 +720,6 @@ export default function Page() {
 
         if (cancelled) return;
 
-        if (files.length > 0 || chat.length > 0) return;
-        
         setChat(
           msgs.map((m: { id: string; role: string; content: string }) => ({
             id: m.id,
@@ -312,7 +728,9 @@ export default function Page() {
           }))
         );
         if (convData.dataset_id) setDatasetId(convData.dataset_id);
-        setConversationId(convData.id);
+        setCustomerName(convData.customer_name || "");
+        applyConversationId(convData.id);
+        void restorePersistedOutput(convData, firstId, loadToken);
       } catch {
         // ignore restore errors
       }
@@ -321,7 +739,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, [session?.user, status]);
+  }, [chat.length, files.length, outputs.length, session?.user, status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -490,7 +908,7 @@ export default function Page() {
           }
           return;
         }
-        
+
         const stored = data?.details?.chunks_stored ?? data?.chunks_stored ?? 0;
         if (stored <= 0) {
           if (!cancelled) {
@@ -499,7 +917,7 @@ export default function Page() {
           }
           return;
         }
-        
+
         if (!cancelled) {
           setSolutionIngestSignature(signature);
           setCorpusType(data?.corpus_type || "solution_zip");
@@ -618,12 +1036,6 @@ export default function Page() {
     return URL.createObjectURL(blob);
   }
 
-  function isTextFile(file: File) {
-    const ext = file.name.split(".").pop()?.toLowerCase();
-    if (!ext) return false;
-    return TEXT_EXTS.includes(ext);
-  }
-
   function isSolutionFile(file: File) {
     const ext = file.name.split(".").pop()?.toLowerCase();
     return ext === SOLUTION_EXT;
@@ -631,47 +1043,37 @@ export default function Page() {
 
   async function addFiles(fileList: FileList | File[] | null) {
     if (!fileList) return;
-    if (files.length === 0) {
-      setDatasetId(createDatasetId());
-      setDocsIngestSignature(null);
-      setConversationId(null);
+    const incoming = (Array.isArray(fileList) ? fileList : Array.from(fileList)).filter(isSolutionFile);
+    if (!incoming.length) return;
+    const [nextFile] = incoming;
+    if (!nextFile) return;
+    const nextDatasetId = createDatasetId();
+    const oldId = datasetId;
+    setDatasetId(nextDatasetId);
+    setDocsIngestSignature(null);
+    setSolutionIngestSignature(null);
+    setCorpusType(null);
+    setCorpusReason(null);
+    resetParsedSolutionState();
+    if (oldId) {
+      void resetDataset(oldId);
     }
-    const incoming = Array.isArray(fileList) ? fileList : Array.from(fileList);
+    void syncConversationDataset(nextDatasetId);
 
     const processed = await Promise.all(
-      incoming.map(async (file) => {
-        const base: AttachedFile = {
+      [nextFile].map(async (file) => {
+        return {
           name: file.name,
           type: file.type || "unknown",
           size: file.size,
           isText: false,
           file,
+          text: "[Power Platform Solution - will be parsed with PAC CLI]",
         };
-
-        // Handle .zip solution files - keep original File reference
-        if (isSolutionFile(file)) {
-          return { ...base, text: "[Power Platform Solution - will be parsed with PAC CLI]", isText: false };
-        }
-
-        if (!isTextFile(file)) {
-          return { ...base, text: undefined, truncated: false };
-        }
-
-        try {
-          let text = await file.text();
-          let truncated = false;
-          if (text.length > MAX_TEXT_CHARS) {
-            text = text.slice(0, MAX_TEXT_CHARS) + `\n\n[Truncated after ${MAX_TEXT_CHARS} characters]`;
-            truncated = true;
-          }
-          return { ...base, isText: true, text, truncated };
-        } catch {
-          return { ...base, error: "Failed to read file", isText: false };
-        }
       })
     );
 
-    setFiles((prev) => [...prev, ...processed]);
+    setFiles(processed);
   }
 
   function removeFile(index: number) {
@@ -683,6 +1085,7 @@ export default function Page() {
         setDatasetId(createDatasetId());
         setDocsIngestSignature(null);
         setSolutionIngestSignature(null);
+        resetParsedSolutionState();
         void resetDataset(oldId);
         return next;
       }
@@ -691,6 +1094,7 @@ export default function Page() {
         setDatasetId(createDatasetId());
         setDocsIngestSignature(null);
         setSolutionIngestSignature(null);
+        resetParsedSolutionState();
         void resetDataset(oldId);
         return next;
       }
@@ -726,7 +1130,31 @@ export default function Page() {
     setDocsIngestSignature(null);
     setSolutionIngestSignature(null);
     setDatasetId(createDatasetId());
+    resetParsedSolutionState();
     void resetDataset(oldId);
+  }
+
+  function startNewChat(options?: { clearCustomerName?: boolean }) {
+    activeConversationLoadRef.current += 1;
+    const nextDatasetId = createDatasetId();
+    setChat([]);
+    setMessage("");
+    applyConversationId(null);
+    setOutputs([]);
+    setSelectedOutputId(null);
+    setExpandedSources({});
+    setGenerateError(null);
+    setGenerateProgress(null);
+    setPreviewRefreshing(false);
+    setDatasetId(nextDatasetId);
+    setDocsIngestSignature(null);
+    setSolutionIngestSignature(null);
+    setCorpusType(null);
+    setCorpusReason(null);
+    resetParsedSolutionState();
+    if (options?.clearCustomerName) {
+      setCustomerName("");
+    }
   }
 
   function upsertOutput(output: OutputFile) {
@@ -746,8 +1174,8 @@ export default function Page() {
     return uploadClassification?.type === "power_platform_solution_zip";
   }
 
-  // Generate docs for Power Platform solution using PAC CLI + RAG
-  async function generateSolutionDocs(onProgress?: (stage: string, percent: number) => void) {
+  // Base parse path for Power Platform solution (ingest + parse).
+  async function runBaseSolutionParse(onProgress?: (stage: string, percent: number) => void): Promise<BaseSolutionParseResult> {
     const activeDatasetId = datasetId || createDatasetId();
     if (!datasetId) {
       setDatasetId(activeDatasetId);
@@ -759,7 +1187,7 @@ export default function Page() {
     const currentSignature = `${activeDatasetId}:${solutionFile.name}:${solutionFile.size}`;
     const alreadyIngested = solutionIngestSignature === currentSignature;
 
-    // Step 1: FIRST - Ingest the ZIP file into ChromaDB (parses ALL files, FREE with Sentence-BERT)
+    // Step 1: FIRST - Ingest the ZIP file into Qdrant (parses ALL files, FREE with Sentence-BERT)
     // This happens BEFORE doc generation so RAG chat can use the full solution content
     if (!alreadyIngested) {
       onProgress?.("Ingesting solution into RAG...", 15);
@@ -785,11 +1213,11 @@ export default function Page() {
         setCorpusType(type);
         setCorpusReason(reason);
         setSolutionIngestSignature(currentSignature);
-        console.log("Solution ingested into ChromaDB:", ingestData);
+        console.log("Solution ingested into Qdrant:", ingestData);
       } else if (ingestRes.status === 409) {
         console.warn("Ingest already in progress for this dataset. Continuing.");
       } else {
-        throw new Error("Failed to ingest solution into ChromaDB.");
+        throw new Error("Failed to ingest solution into Qdrant.");
       }
     }
 
@@ -805,31 +1233,112 @@ export default function Page() {
 
     const parsePayload = await parseRes.json().catch(() => ({}));
     if (!parseRes.ok) {
-      const parsed = parseApiError(parsePayload, "Failed to parse solution with PAC CLI");
+      const parsed = parseApiError(parsePayload as ApiErrorPayload, "Failed to parse solution with PAC CLI");
       const err = new Error(parsed.message) as AppError;
       err.code = parsed.code;
       err.hint = parsed.hint;
       throw err;
     }
 
-    const parsedSolution = parsePayload?.data || parsePayload;
+    const {
+      data: parsedSolutionPayload,
+      sharePointEnrichmentEnabled,
+      authenticationRequired,
+      sharePointUrls: detectedSharePointUrls,
+      sharePointEnrichmentStatus: initialSharePointEnrichmentStatus,
+    } = parsePayload as ParseSolutionApiResponse;
 
-    // Step 3: Generate documentation with RAG pipeline (API key from runtime settings)
+    const { parsedSolution: baseParsedSolution, sharePointMetadata: initialSharePointMetadata } =
+      splitParsedSolutionData(parsedSolutionPayload);
+    const hasDetectedSharePoint = hasDetectedSharePointReferences(
+      baseParsedSolution,
+      detectedSharePointUrls
+    );
+    let resolvedSharePointMetadata = initialSharePointMetadata;
+    let resolvedSharePointEnrichmentStatus = initialSharePointEnrichmentStatus;
+
+    if (
+      shouldAttemptSharePointUserEnrichment({
+        authenticationRequired,
+        detectedSharePointUrls,
+        sharePointToken,
+      })
+    ) {
+      const enrichment = await fetchSharePointEnrichmentWithUserToken({
+        accessToken: sharePointToken as string,
+        sharePointUrls: detectedSharePointUrls,
+        fallbackMetadata: initialSharePointMetadata,
+      });
+      resolvedSharePointMetadata = enrichment.metadata;
+      resolvedSharePointEnrichmentStatus = enrichment.status;
+    }
+
+    setParsedSolution(baseParsedSolution);
+    setSharePointUrls(detectedSharePointUrls);
+    setSharePointEnrichmentStatus(resolvedSharePointEnrichmentStatus);
+    setSharePointMetadata(resolvedSharePointMetadata);
+
+    return {
+      parsedSolution: baseParsedSolution,
+      sharePointDetected: hasDetectedSharePoint,
+      sharePointUrls: detectedSharePointUrls,
+      sharePointEnrichmentStatus: resolvedSharePointEnrichmentStatus,
+      sharePointMetadata: resolvedSharePointMetadata,
+      activeDatasetId,
+      sharePointEnrichmentEnabled,
+    };
+  }
+
+  useEffect(() => {
+    if (!sharePointToken || !parsedSolution || sharePointUrls.length === 0) return;
+    if (sharePointEnrichmentStatus !== "detected_requires_auth") return;
+
+    let cancelled = false;
+
+    void (async () => {
+      await enrichExistingParsedSolutionWithSharePoint(sharePointToken);
+      if (cancelled) return;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    parsedSolution,
+    sharePointEnrichmentStatus,
+    sharePointToken,
+    sharePointUrls,
+  ]);
+
+  async function generateDocumentationFromParsedSolution(
+    parsedSolution: ParsedSolutionResult,
+    activeDatasetId: string,
+    sharePointMetadataForGeneration: SharePointMetadata[] | null,
+    onProgress?: (stage: string, percent: number) => void
+  ) {
     onProgress?.("Generating documentation with AI...", 65);
     const modelForProvider = llmSelection.model;
+    const solutionForGeneration = buildSolutionForGeneration(parsedSolution, sharePointMetadataForGeneration);
 
     // Extract user preferences from chat history
     const userPreferences = chat
       .map(msg => `${msg.role}: ${msg.content}`)
       .join('\n');
 
+    // Append selected output type prompt to system prompt
+    const activeOutputType = outputTypes.find((t) => t.id === selectedOutputTypeId);
+    const baseSystemPrompt = (systemPrompt && systemPrompt.trim()) || undefined;
+    const effectiveSystemPrompt = activeOutputType
+      ? [baseSystemPrompt, activeOutputType.prompt].filter(Boolean).join("\n\n")
+      : baseSystemPrompt;
+
     const genRes = await fetch("/api/generate-solution-docs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        solution: parsedSolution,
+        solution: solutionForGeneration,
         doc_type: "markdown",
-        systemPrompt: (systemPrompt && systemPrompt.trim()) || undefined,
+        systemPrompt: effectiveSystemPrompt || undefined,
         provider: llmSelection.provider,
         model: modelForProvider,
         dataset_id: activeDatasetId,
@@ -848,73 +1357,116 @@ export default function Page() {
     }
 
     const docResult = await genRes.json();
-    
-    return { parsedSolution, documentation: docResult.documentation };
+    return docResult.documentation as string;
+  }
+
+  async function createSolutionOutput(parsedSolution: ParsedSolutionResult, documentation: string) {
+    const solutionName = parsedSolution.solution_name || "solution";
+    const componentsCount = Array.isArray(parsedSolution.components) ? parsedSolution.components.length : 0;
+    const activeOutputType = outputTypes.find((t) => t.id === selectedOutputTypeId);
+    const outputLabel = activeOutputType ? activeOutputType.id : "documentation";
+    const filename = `${solutionName}_${outputLabel}.pdf`;
+    const metadata = `Version: ${parsedSolution.version || "N/A"} | Publisher: ${parsedSolution.publisher || "Unknown"} | Components: ${componentsCount}`;
+
+    const pdfResponse = await fetch("/api/markdown-to-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        markdown: documentation,
+        title: `${solutionName} Documentation`,
+        metadata,
+      }),
+    });
+
+    if (!pdfResponse.ok) {
+      const errorData = await pdfResponse.json().catch(() => ({}));
+      throw new Error(errorData.error || "Failed to generate PDF");
+    }
+
+    const pdfData = await pdfResponse.json();
+    const normalizedDocumentation =
+      typeof pdfData.normalizedMarkdown === "string" ? pdfData.normalizedMarkdown : documentation;
+    const output: OutputFile = {
+      id: `${filename}-${Date.now()}`,
+      filename,
+      bytesBase64: pdfData.pdfBase64,
+      mime: "application/pdf",
+      createdAt: Date.now(),
+      htmlPreview: pdfData.html,
+      markdownContent: normalizedDocumentation,
+    };
+    upsertOutput(output);
+    setSelectedOutputId(output.id);
+
+    if (status === "authenticated" && session?.user) {
+      const savedConversationId = await persistConversationDocument({
+        filename: output.filename,
+        markdown: normalizedDocumentation,
+        htmlPreview: output.htmlPreview || "",
+        bytesBase64: output.bytesBase64 || "",
+        mime: output.mime,
+      });
+      if (savedConversationId !== conversationIdRef.current) {
+        applyConversationId(savedConversationId);
+      }
+    }
+
+    if (chat.length > 0) {
+      const successId = createMessageId();
+      setChat((c) => [
+        ...c,
+        {
+          id: successId,
+          role: "assistant",
+          content: `Document regenerated successfully as ${activeOutputType ? activeOutputType.title : "PDF"}. Your preferences have been applied. Check the Output Files panel to view the updated output.`,
+        },
+      ]);
+    }
   }
 
   async function generateDocs() {
-    if (generating || files.length === 0) return;
+    if (generating || files.length === 0 || !files.every((f) => f.name.toLowerCase().endsWith(".zip")) || !hasSolutionFile()) return;
     setGenerating(true);
     setGenerateError(null);
     setGenerateProgress(hasSolutionFile() ? { stage: "Starting...", percent: 0 } : { stage: "Generating...", percent: 0 });
 
     try {
-      // Check if we have a solution file - use PAC CLI + RAG pipeline
       if (hasSolutionFile()) {
-        const { parsedSolution, documentation } = await generateSolutionDocs((stage, percent) =>
+        const {
+          parsedSolution,
+          sharePointDetected: solutionSharePointDetected,
+          sharePointEnrichmentStatus: solutionSharePointEnrichmentStatus,
+          sharePointMetadata: parsedSharePointMetadata,
+          activeDatasetId,
+          sharePointEnrichmentEnabled,
+        } = await runBaseSolutionParse((stage, percent) =>
           setGenerateProgress({ stage, percent })
         );
-        
-        // Create output with the generated documentation
-        const createdAt = new Date().toISOString();
-        const filename = `${parsedSolution.solution_name || "solution"}_documentation.pdf`;
-        
-        // Generate PDF with Mermaid support using the markdown-to-pdf API
-        const metadata = `Version: ${parsedSolution.version} | Publisher: ${parsedSolution.publisher} | Components: ${parsedSolution.components?.length || 0}`;
-        const pdfResponse = await fetch("/api/markdown-to-pdf", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            markdown: documentation,
-            title: `${parsedSolution.solution_name} Documentation`,
-            metadata: metadata,
-          }),
-        });
 
-        if (!pdfResponse.ok) {
-          const errorData = await pdfResponse.json().catch(() => ({}));
-          throw new Error(errorData.error || "Failed to generate PDF");
+        const sharepointRefs = Array.isArray(parsedSolution?.sharepointRefs)
+          ? parsedSolution.sharepointRefs
+          : [];
+
+        if (
+          sharePointEnrichmentEnabled &&
+          solutionSharePointDetected &&
+          sharepointRefs.length > 0 &&
+          solutionSharePointEnrichmentStatus !== "available"
+        ) {
+          setGenerateProgress({
+            stage: "SharePoint references detected - continuing with base documentation",
+            percent: 55,
+          });
         }
 
-        const pdfData = await pdfResponse.json();
-        const pdfBase64 = pdfData.pdfBase64;
-        const htmlContent = pdfData.html;
 
-        const output: OutputFile = {
-          id: `${filename}-${Date.now()}`,
-          filename: filename,
-          bytesBase64: pdfBase64,
-          mime: "application/pdf",
-          createdAt: Date.now(),
-          htmlPreview: htmlContent,
-          markdownContent: documentation, // Store original markdown for Mermaid rendering
-        };
-        upsertOutput(output);
-        setSelectedOutputId(output.id);
-
-        // Add success message to chat if there are existing chat messages
-        if (chat.length > 0) {
-          const successId = createMessageId();
-          setChat((c) => [
-            ...c,
-            {
-              id: successId,
-              role: "assistant",
-              content: `✅ Document regenerated successfully! Your preferences have been applied. Check the Output Files panel to view the updated PDF.`,
-            },
-          ]);
-        }
-
+        const documentation = await generateDocumentationFromParsedSolution(
+          parsedSolution,
+          activeDatasetId,
+          parsedSharePointMetadata,
+          (stage, percent) => setGenerateProgress({ stage, percent })
+        );
+        await createSolutionOutput(parsedSolution, documentation);
         setGenerateProgress({ stage: "Complete", percent: 100 });
         return;
       }
@@ -1020,6 +1572,29 @@ export default function Page() {
     const text = (textParam ?? message).trim();
     if (!text || loading) return;
 
+    const hasSolutionPendingIngestion =
+      files.some((f) => !!f.file && f.name.toLowerCase().endsWith(".zip")) &&
+      !solutionIngestSignature &&
+      corpusType === null;
+    const hasDocsPendingIngestion =
+      files.some((f) => f.isText && typeof f.text === "string") &&
+      !docsIngestSignature &&
+      corpusType === null;
+    if (hasSolutionPendingIngestion || hasDocsPendingIngestion) {
+      setChat((c) => [
+        ...c,
+        { id: createMessageId(), role: "user", content: text },
+        {
+          id: createMessageId(),
+          role: "assistant",
+          content: "Files are still being ingested. Please wait a few seconds and try again.",
+          sources: [],
+        },
+      ]);
+      setMessage("");
+      return;
+    }
+
     // Check if user wants to clear the chat
     if (text.toLowerCase() === 'clear') {
       setChat([]);
@@ -1045,7 +1620,13 @@ export default function Page() {
     setLoading(true);
 
     try {
-      // Always use FREE RAG mode - queries ChromaDB for context
+      const currentSession = await getSession();
+      let activeConversationIdForSave: string | null = conversationIdRef.current;
+      if (currentSession?.user && !activeConversationIdForSave) {
+        activeConversationIdForSave = await createConversationSession();
+      }
+
+      // Always use FREE RAG mode - queries Qdrant for context
       const modelForProvider = llmSelection.model;
       const focusFiles = getFocusFiles(text, files);
 
@@ -1089,6 +1670,15 @@ export default function Page() {
 
       // Check if user wants to regenerate documentation BEFORE updating chat
       const lowerText = text.toLowerCase();
+
+      // Detect output type intent from chat message and switch if matched
+      const matchedOutputType = outputTypes.find((t) =>
+        t.keywords.some((kw) => lowerText.includes(kw.toLowerCase()))
+      );
+      if (matchedOutputType && matchedOutputType.id !== selectedOutputTypeId) {
+        setSelectedOutputTypeId(matchedOutputType.id);
+      }
+
       const regenerateKeywords = [
         'regenerate', 'generate', 're-generate',
         'update doc', 'update documentation', 'update the doc',
@@ -1142,7 +1732,6 @@ export default function Page() {
         )
       );
       // Persist this exchange when user is signed in
-      const currentSession = await getSession();
       if (currentSession?.user) {
         const toSave = [
           { role: "user" as const, content: text },
@@ -1153,14 +1742,22 @@ export default function Page() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              conversation_id: conversationId ?? undefined,
+              conversation_id: activeConversationIdForSave ?? undefined,
               dataset_id: activeDatasetId,
+              customer_name: customerName.trim() || undefined,
               messages: toSave,
             }),
           });
           if (res.ok) {
             const data = await res.json();
-            if (data.conversation_id) setConversationId(data.conversation_id);
+            if (data.conversation_id) {
+              applyConversationId(data.conversation_id);
+            }
+            const listRes = await fetch("/api/conversations");
+            if (listRes.ok) {
+              const listData = await listRes.json();
+              setConversationList(listData.conversations || []);
+            }
           }
         } catch {
           // ignore save errors
@@ -1191,9 +1788,11 @@ export default function Page() {
 
   async function loadConversation(id: string) {
     try {
+      const loadToken = ++activeConversationLoadRef.current;
       const res = await fetch(`/api/conversations/${id}`);
       if (!res.ok) return;
       const data = await res.json();
+      if (loadToken !== activeConversationLoadRef.current) return;
       const msgs = data.messages || [];
       setChat(
         msgs.map((m: { id: string; role: string; content: string }) => ({
@@ -1203,7 +1802,36 @@ export default function Page() {
         }))
       );
       if (data.dataset_id && files.length === 0) setDatasetId(data.dataset_id);
-      setConversationId(data.id);
+      setCustomerName(data.customer_name || "");
+      applyConversationId(data.id);
+      void restorePersistedOutput(data, id, loadToken);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function saveConversationName() {
+    if (!conversationId) return;
+    const trimmedCustomer = customerName.trim();
+    const dateLabel = new Date().toLocaleDateString("en-GB");
+    const nextTitle = trimmedCustomer ? `${trimmedCustomer} - ${dateLabel}` : `New chat - ${dateLabel}`;
+
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_name: trimmedCustomer || null,
+          title: nextTitle,
+        }),
+      });
+      if (!res.ok) return;
+
+      const listRes = await fetch("/api/conversations");
+      if (listRes.ok) {
+        const data = await listRes.json();
+        setConversationList(data.conversations || []);
+      }
     } catch {
       // ignore
     }
@@ -1215,9 +1843,7 @@ export default function Page() {
       if (!res.ok) return;
       setConversationList((prev) => prev.filter((c) => c.id !== id));
       if (conversationId === id) {
-        setChat([]);
-        setMessage("");
-        setConversationId(null);
+        startNewChat({ clearCustomerName: true });
       }
     } catch {
       // ignore
@@ -1231,11 +1857,17 @@ export default function Page() {
     model: provider === "cloud" ? selectedModel || undefined : localModel || undefined,
   };
   const hasFiles = files.length > 0;
+  const hasInvalidSelectedFiles = hasInvalidSelectedFilesInState(files);
+  const hasOnlyZipFiles = hasFiles && files.every((f) => f.name.toLowerCase().endsWith(".zip"));
   const hasSolution = hasSolutionFile();
-  const hasOnlyNonSolution = hasFiles && !hasSolution;
+  const hasOnlyNonSolution = hasFiles && (!hasOnlyZipFiles || !hasSolution);
   const uploadType = uploadClassification?.type || null;
   const uploadReason = uploadClassification?.reason || null;
   const hasInvalidZip = uploadType === "unsupported" && files.some((f) => f.name.toLowerCase().endsWith(".zip"));
+  const canGenerate = canGenerateSolutionDocs({ files, uploadClassification, generating });
+  const invalidStateMessage = hasInvalidSelectedFiles
+    ? "Remove the invalid file before uploading more files or generating documentation."
+    : null;
   const displayType = corpusType || uploadType;
   const displayReason = corpusReason || uploadReason;
 
@@ -1260,15 +1892,13 @@ export default function Page() {
             useCustomLocalModel={useCustomLocalModel}
             setUseCustomLocalModel={setUseCustomLocalModel}
             fetchLocalModels={fetchLocalModels}
-            apiKey={apiKey}
-            setApiKey={setApiKey}
-            endpoint={endpoint}
-            setEndpoint={setEndpoint}
+            sharePointToken={sharePointToken}
+            setSharePointToken={setSharePointToken}
             systemPrompt={systemPrompt}
             setSystemPrompt={setSystemPrompt}
             systemPromptDefault={DEFAULT_SOLUTION_SYSTEM_PROMPT}
           />
-          <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation Generator</h1>
+          <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation <h1 style={{ display:'inline', color:"var(--border)" }}>Generator</h1></h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {/* RAG Status Badge */}
@@ -1283,7 +1913,7 @@ export default function Page() {
             {ragStatus ? (
               <>
                 <span style={{ color: ragStatus.status === "ready" ? "#2e7d32" : "#e65100" }}>
-                  {ragStatus.status === "ready" ? "Online" : "Degraded"} • ChromaDB: {ragStatus.chunks_indexed} chunks • Provider: {statusProvider} ({statusModel})
+                  {ragStatus.status === "ready" ? "Online" : "Degraded"} • Qdrant: {ragStatus.chunks_indexed} chunks • Provider: {statusProvider} ({statusModel})
                 </span>
               </>
             ) : (
@@ -1310,6 +1940,8 @@ export default function Page() {
           clearFiles={clearFiles}
           displayType={corpusType}
           displayReason={corpusReason}
+          uploadDisabled={hasInvalidSelectedFiles}
+          disabledMessage={invalidStateMessage}
         />
         </section>
 
@@ -1341,8 +1973,16 @@ export default function Page() {
           {status === "authenticated" && conversationList.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#555" }}>Past conversations</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto", paddingRight: 8 }}>
                 {conversationList.map((conv) => (
+                  (() => {
+                    const customerLabel = conv.customer_name || "Unassigned customer";
+                    const titleLabel = conv.title || new Date(conv.updated_at * 1000).toLocaleDateString();
+                    const customerTrimmed = (conv.customer_name || "").trim();
+                    const isTitlePrefixedByCustomer =
+                      !!customerTrimmed &&
+                      titleLabel.toLowerCase().startsWith(`${customerTrimmed.toLowerCase()} - `);
+                    return (
                     <div
                       key={conv.id}
                       style={{
@@ -1359,13 +1999,18 @@ export default function Page() {
                           padding: "6px 10px",
                           textAlign: "left",
                           fontSize: 12,
-                          border: conversationId === conv.id ? "1px solid #1f7aec" : "1px solid #ddd",
+                          border: conversationId === conv.id ? "1px solid #1f7aec" : "1px solid var(--border)",
                           borderRadius: 6,
-                          background: conversationId === conv.id ? "#e8f0fe" : "#fafafa",
+                          background: conversationId === conv.id ? "var(--panel-bg)" : "var(--panel-bg)",
                           cursor: "pointer",
                         }}
                       >
-                        {conv.title || "Chat"} · {new Date(conv.updated_at * 1000).toLocaleDateString()}
+                        {!isTitlePrefixedByCustomer && (
+                          <div style={{ fontWeight: 600, color: "var(--foreground)" }}>{customerLabel}</div>
+                        )}
+                        <div style={{ fontSize: 11, color: "var(--foreground)" }}>
+                          {titleLabel}
+                        </div>
                       </button>
                       <button
                         type="button"
@@ -1374,17 +2019,80 @@ export default function Page() {
                         style={{
                           padding: "4px 8px",
                           fontSize: 12,
-                          border: "1px solid #ccc",
+                          minWidth: 28,
+                          flexShrink: 0,
+                          border: "1px solid var(--border)",
                           borderRadius: 6,
-                          background: "#fff",
+                          background: "var(--panel-bg)",
                           cursor: "pointer",
-                          color: "#666",
+                          color: "var(--foreground)",
                         }}
                       >
                         ×
                       </button>
                     </div>
-                  ))}
+                    );
+                  })()
+                ))}
+              </div>
+            </div>
+          )}
+
+          {status === "authenticated" && (
+            <div style={{ marginBottom: 12, display: "grid", gap: 6 }}>
+              <label htmlFor="customer-name" style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>
+                Customer name
+              </label>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  id="customer-name"
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="e.g. Acme Corp"
+                  style={{
+                    flex: 1,
+                    padding: "6px 8px",
+                    background: "var(--panel-bg)",
+                    color: "var(--foreground)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    fontSize: 12,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    startNewChat();
+                  }}
+                  style={{
+                    padding: "6px 10px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    background: "var(--panel-bg)",
+                    color: "var(--foreground)",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  }}
+                >
+                  New chat
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void saveConversationName(); }}
+                  disabled={!conversationId}
+                  style={{
+                    padding: "6px 10px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    background: conversationId ? "var(--panel-bg)" : "var(--panel-bg)",
+                    cursor: conversationId ? "pointer" : "not-allowed",
+                    fontSize: 12,
+                    color: conversationId ? "var(--foreground)" : "var(--foreground)",
+                  }}
+                >
+                  Save name
+                </button>
               </div>
             </div>
           )}
@@ -1405,9 +2113,7 @@ export default function Page() {
                   // ignore
                 }
               }
-              setChat([]);
-              setMessage("");
-              setConversationId(null);
+              startNewChat({ clearCustomerName: true });
             }}
             expandedSources={expandedSources}
             onToggleSources={(id) => setExpandedSources((prev) => ({ ...prev, [id]: !prev[id] }))}
@@ -1419,32 +2125,43 @@ export default function Page() {
         <section className="panel">
           <div className="panel-header">Output Files</div>
           <div style={{ marginBottom: 8 }}>
+            {outputTypes.length > 0 && (() => {
+              const active = outputTypes.find((t) => t.id === selectedOutputTypeId);
+              return active ? (
+                <div style={{ fontSize: 11, color: "#777", marginBottom: 6 }}>
+                  Output type: <strong style={{ color: "var(--foreground)" }}>{active.title}</strong>
+                  <span style={{ marginLeft: 6, color: "#aaa" }}>— change via chat (e.g. "generate a diagram")</span>
+                </div>
+              ) : null;
+            })()}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button
                 onClick={generateDocs}
-                disabled={!hasFiles || generating}
+                disabled={!canGenerate}
                 style={{
                   padding: "8px 12px",
                   borderRadius: 8,
-                  border: hasSolution ? "1px solid #0a6b3d" : "1px solid #1f7aec",
-                  background: generating ? "#9dc2f7" : hasSolution ? "#0a6b3d" : "#1f7aec",
-                  color: "#fff",
-                  cursor: !hasFiles || generating ? "not-allowed" : "pointer",
-                  opacity: !hasFiles || generating ? 0.7 : 1,
+                  border: hasSolution ? "1px solid var(--border)" : "1px solid var(--border)",
+                  background: generating ? "#727476" : hasSolution ? "var(--panel-bg)" : "var(--panel-bg)",
+                  color: "var(--foreground)",
+                  cursor: !canGenerate ? "not-allowed" : "pointer",
+                  opacity: !canGenerate ? 0.7 : 1,
                 }}
               >
                 {generating 
                   ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
-                  : (hasSolution ? "Parse & Generate Docs" : "Generate docs")}
+                  : (hasSolution ? "Parse & Generate Docs" : "Generate Documentation")}
               </button>
               <div style={{ fontSize: 12, color: "#555" }}>
               {hasInvalidZip
-                ? "Solution docs require a Power Platform solution (.zip export). For other files, use Chat/RAG mode."
+                ? "Only .zip solution files are supported for solution documentation."
+                : hasInvalidSelectedFiles
+                ? "Remove the invalid file before continuing."
                 : !hasFiles
-                ? "Select files to enable generation."
+                ? "Upload a .zip solution file to enable generation."
                 : hasSolution
                 ? "Will parse solution with PAC CLI, then generate docs with RAG pipeline."
-                : "Uses attached files with current model/system prompt/temperature."}
+                : "Upload a valid Power Platform solution .zip to enable generation."}
               </div>
             </div>
             {generateProgress && (
@@ -1476,7 +2193,9 @@ export default function Page() {
           </div>
           {hasOnlyNonSolution && (
             <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
-              Solution docs require a .zip export. For other files, use Chat/RAG mode or Generate docs.
+              {hasInvalidSelectedFiles
+                ? "Remove the invalid file before continuing."
+                : "Upload a valid Power Platform solution .zip to continue."}
             </div>
           )}
           {generateError && (
@@ -1504,10 +2223,11 @@ export default function Page() {
           <div className="panel-header">File Preview</div>
           <PreviewPanel
             out={getSelectedOutput()}
-            previewBlobUrl={previewBlobUrlRef.current}
+            isRefreshing={previewRefreshing}
             pdfRenderError={pdfRenderError}
             onDownload={(o) => downloadOutput(o)}
             onOpenPdf={() => { if (previewBlobUrlRef.current) window.open(previewBlobUrlRef.current, "_blank"); }}
+            onSaveQuickEdit={(outputId, markdown) => saveQuickEditOutput(outputId, markdown)}
           />
         </section>
       </div>
@@ -1523,3 +2243,4 @@ const placeholderBox: React.CSSProperties = {
   color: "#6b6b75",
   fontSize: 14,
 };
+

@@ -271,6 +271,15 @@ export default function Page() {
     return base || "Documentation";
   }
 
+  function isLegacyPreviewHtml(htmlPreview: string) {
+    const trimmed = htmlPreview.trimStart().toLowerCase();
+    return (
+      trimmed.startsWith("<!doctype html") ||
+      trimmed.startsWith("<html") ||
+      trimmed.includes("<head>")
+    );
+  }
+
   function resetParsedSolutionState() {
     setParsedSolution(null);
     setSharePointUrls([]);
@@ -327,7 +336,8 @@ export default function Page() {
       mime: "application/pdf",
       createdAt,
       htmlPreview: data.html || "",
-      markdownContent,
+      markdownContent:
+        typeof data.normalizedMarkdown === "string" ? data.normalizedMarkdown : markdownContent,
     };
 
     return nextOutput;
@@ -492,7 +502,11 @@ export default function Page() {
     setOutputs([hydratedOutput]);
     setSelectedOutputId(hydratedOutput.id);
 
-    if (hydratedOutput.htmlPreview && hydratedOutput.bytesBase64) {
+    if (
+      hydratedOutput.htmlPreview &&
+      hydratedOutput.bytesBase64 &&
+      !isLegacyPreviewHtml(hydratedOutput.htmlPreview)
+    ) {
       setPreviewRefreshing(false);
       return;
     }
@@ -511,7 +525,7 @@ export default function Page() {
         await persistConversationDocument(
           {
             filename: refreshedOutput.filename,
-            markdown,
+            markdown: refreshedOutput.markdownContent || markdown,
             htmlPreview: refreshedOutput.htmlPreview || "",
             bytesBase64: refreshedOutput.bytesBase64 || "",
             mime: refreshedOutput.mime,
@@ -547,7 +561,7 @@ export default function Page() {
 
     const savedConversationId = await persistConversationDocument({
       filename: currentOutput.filename,
-      markdown: nextMarkdown,
+      markdown: renderedOutput.markdownContent || nextMarkdown,
       htmlPreview: renderedOutput.htmlPreview || "",
       bytesBase64: renderedOutput.bytesBase64 || "",
       mime: renderedOutput.mime,
@@ -1370,6 +1384,8 @@ export default function Page() {
     }
 
     const pdfData = await pdfResponse.json();
+    const normalizedDocumentation =
+      typeof pdfData.normalizedMarkdown === "string" ? pdfData.normalizedMarkdown : documentation;
     const output: OutputFile = {
       id: `${filename}-${Date.now()}`,
       filename,
@@ -1377,7 +1393,7 @@ export default function Page() {
       mime: "application/pdf",
       createdAt: Date.now(),
       htmlPreview: pdfData.html,
-      markdownContent: documentation,
+      markdownContent: normalizedDocumentation,
     };
     upsertOutput(output);
     setSelectedOutputId(output.id);
@@ -1385,7 +1401,7 @@ export default function Page() {
     if (status === "authenticated" && session?.user) {
       const savedConversationId = await persistConversationDocument({
         filename: output.filename,
-        markdown: documentation,
+        markdown: normalizedDocumentation,
         htmlPreview: output.htmlPreview || "",
         bytesBase64: output.bytesBase64 || "",
         mime: output.mime,

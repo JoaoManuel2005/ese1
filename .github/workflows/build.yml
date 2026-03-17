@@ -39,6 +39,11 @@ jobs:
           docker build -t pac_cli:latest ./pac-cli
           docker save pac_cli:latest -o pac_cli.tar
 
+      - name: Pull qdrant release image
+        run: |
+          docker pull qdrant/qdrant:v1.9.0
+          docker save qdrant/qdrant:v1.9.0 -o qdrant.tar
+
       - name: Upload Docker image artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -47,6 +52,7 @@ jobs:
             dotnet-backend.tar
             documentation_generator.tar
             pac_cli.tar
+            qdrant.tar
             docker-compose.images.yml
             scripts/run-with-images.sh
             scripts/run-with-images.ps1

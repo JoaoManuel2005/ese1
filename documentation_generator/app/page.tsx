@@ -1328,12 +1328,14 @@ export default function Page() {
       .map(msg => `${msg.role}: ${msg.content}`)
       .join('\n');
 
-    // Append selected output type prompt to system prompt
+    // Use output type prompt directly when not documentation, otherwise append to base
     const activeOutputType = outputTypes.find((t) => t.id === (outputTypeId ?? selectedOutputTypeIdRef.current));
     const baseSystemPrompt = (systemPrompt && systemPrompt.trim()) || undefined;
-    const effectiveSystemPrompt = activeOutputType
-      ? [baseSystemPrompt, activeOutputType.prompt].filter(Boolean).join("\n\n")
-      : baseSystemPrompt;
+    const effectiveSystemPrompt = activeOutputType && activeOutputType.id !== "documentation"
+      ? activeOutputType.prompt
+      : activeOutputType
+        ? [baseSystemPrompt, activeOutputType.prompt].filter(Boolean).join("\n\n")
+        : baseSystemPrompt;
 
     const genRes = await fetch("/api/generate-solution-docs", {
       method: "POST",

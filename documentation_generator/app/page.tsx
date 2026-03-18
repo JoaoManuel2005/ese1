@@ -175,6 +175,7 @@ export default function Page() {
   const [isClient, setIsClient] = useState(false);
   const [outputTypes, setOutputTypes] = useState<OutputType[]>([]);
   const [selectedOutputTypeId, setSelectedOutputTypeId] = useState<string>("documentation");
+  const selectedOutputTypeIdRef = useRef<string>("documentation");
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
   const hasAttemptedInitialRestoreRef = useRef(false);
@@ -653,6 +654,7 @@ export default function Page() {
         if (Array.isArray(data) && data.length > 0) {
           setOutputTypes(data);
           setSelectedOutputTypeId(data[0].id);
+          selectedOutputTypeIdRef.current = data[0].id;
         }
       })
       .catch(() => {/* keep defaults */});
@@ -1327,7 +1329,7 @@ export default function Page() {
       .join('\n');
 
     // Append selected output type prompt to system prompt
-    const activeOutputType = outputTypes.find((t) => t.id === (outputTypeId ?? selectedOutputTypeId));
+    const activeOutputType = outputTypes.find((t) => t.id === (outputTypeId ?? selectedOutputTypeIdRef.current));
     const baseSystemPrompt = (systemPrompt && systemPrompt.trim()) || undefined;
     const effectiveSystemPrompt = activeOutputType
       ? [baseSystemPrompt, activeOutputType.prompt].filter(Boolean).join("\n\n")
@@ -1364,7 +1366,7 @@ export default function Page() {
   async function createSolutionOutput(parsedSolution: ParsedSolutionResult, documentation: string, outputTypeId?: string) {
     const solutionName = parsedSolution.solution_name || "solution";
     const componentsCount = Array.isArray(parsedSolution.components) ? parsedSolution.components.length : 0;
-    const activeOutputType = outputTypes.find((t) => t.id === (outputTypeId ?? selectedOutputTypeId));
+    const activeOutputType = outputTypes.find((t) => t.id === (outputTypeId ?? selectedOutputTypeIdRef.current));
     const outputLabel = activeOutputType ? activeOutputType.id : "documentation";
     const filename = `${solutionName}_${outputLabel}.pdf`;
     const metadata = `Version: ${parsedSolution.version || "N/A"} | Publisher: ${parsedSolution.publisher || "Unknown"} | Components: ${componentsCount}`;
@@ -1679,6 +1681,7 @@ export default function Page() {
       );
       if (matchedOutputType && matchedOutputType.id !== selectedOutputTypeId) {
         setSelectedOutputTypeId(matchedOutputType.id);
+        selectedOutputTypeIdRef.current = matchedOutputType.id;
       }
 
       const regenerateKeywords = [

@@ -175,7 +175,8 @@ public class SolutionController : ControllerBase
                 model      : model,
                 userPrefs  : userPrefs,
                 apiKey     : request.ApiKey,
-                endpoint   : request.Endpoint);
+                endpoint   : request.Endpoint,
+                outputType : request.OutputType);
 
             return Ok(new GenerateDocResponse { Documentation = doc, Format = request.DocType });
         }

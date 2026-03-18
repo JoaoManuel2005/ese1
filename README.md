@@ -119,7 +119,7 @@ After running the script you should see the containers up and running on docker 
 - pac-cli
 - documentation-generator
 
-The release scripts set the required authentication secrets and default to `FEATURE_SHAREPOINT_ENRICHMENT=false` for the released stack.
+
 
 You should be able to see `port 3000:3000` or similar next to the documentation-generator container, you can simply click that to start the app in your browser
 

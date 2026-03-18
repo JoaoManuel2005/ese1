@@ -1314,7 +1314,8 @@ export default function Page() {
     parsedSolution: ParsedSolutionResult,
     activeDatasetId: string,
     sharePointMetadataForGeneration: SharePointMetadata[] | null,
-    onProgress?: (stage: string, percent: number) => void
+    onProgress?: (stage: string, percent: number) => void,
+    outputTypeId?: string
   ) {
     onProgress?.("Generating documentation with AI...", 65);
     const modelForProvider = llmSelection.model;
@@ -1326,7 +1327,7 @@ export default function Page() {
       .join('\n');
 
     // Append selected output type prompt to system prompt
-    const activeOutputType = outputTypes.find((t) => t.id === selectedOutputTypeId);
+    const activeOutputType = outputTypes.find((t) => t.id === (outputTypeId ?? selectedOutputTypeId));
     const baseSystemPrompt = (systemPrompt && systemPrompt.trim()) || undefined;
     const effectiveSystemPrompt = activeOutputType
       ? [baseSystemPrompt, activeOutputType.prompt].filter(Boolean).join("\n\n")
@@ -1360,10 +1361,10 @@ export default function Page() {
     return docResult.documentation as string;
   }
 
-  async function createSolutionOutput(parsedSolution: ParsedSolutionResult, documentation: string) {
+  async function createSolutionOutput(parsedSolution: ParsedSolutionResult, documentation: string, outputTypeId?: string) {
     const solutionName = parsedSolution.solution_name || "solution";
     const componentsCount = Array.isArray(parsedSolution.components) ? parsedSolution.components.length : 0;
-    const activeOutputType = outputTypes.find((t) => t.id === selectedOutputTypeId);
+    const activeOutputType = outputTypes.find((t) => t.id === (outputTypeId ?? selectedOutputTypeId));
     const outputLabel = activeOutputType ? activeOutputType.id : "documentation";
     const filename = `${solutionName}_${outputLabel}.pdf`;
     const metadata = `Version: ${parsedSolution.version || "N/A"} | Publisher: ${parsedSolution.publisher || "Unknown"} | Components: ${componentsCount}`;
@@ -1424,7 +1425,7 @@ export default function Page() {
     }
   }
 
-  async function generateDocs() {
+  async function generateDocs(overrideOutputTypeId?: string) {
     if (generating || files.length === 0 || !files.every((f) => f.name.toLowerCase().endsWith(".zip")) || !hasSolutionFile()) return;
     setGenerating(true);
     setGenerateError(null);
@@ -1464,9 +1465,10 @@ export default function Page() {
           parsedSolution,
           activeDatasetId,
           parsedSharePointMetadata,
-          (stage, percent) => setGenerateProgress({ stage, percent })
+          (stage, percent) => setGenerateProgress({ stage, percent }),
+          overrideOutputTypeId
         );
-        await createSolutionOutput(parsedSolution, documentation);
+        await createSolutionOutput(parsedSolution, documentation, overrideOutputTypeId);
         setGenerateProgress({ stage: "Complete", percent: 100 });
         return;
       }
@@ -1766,7 +1768,7 @@ export default function Page() {
       if (shouldRegenerate && hasSolutionFile() && outputs.length > 0) {
         // Automatically regenerate documentation with current chat context
         setTimeout(() => {
-          void generateDocs();
+          void generateDocs(matchedOutputType?.id);
         }, 500); // Small delay to let chat update first
         // Don't set loading to false - generateDocs will handle it
         return;
@@ -2136,7 +2138,7 @@ export default function Page() {
             })()}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button
-                onClick={generateDocs}
+                onClick={() => void generateDocs()}
                 disabled={!canGenerate}
                 style={{
                   padding: "8px 12px",

@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import type { FC } from "react";
 import type { OutputFile } from "../types";
+import MarkdownWithMermaid from "./MarkdownWithMermaid";
 
 type Props = {
   out: OutputFile | null;
@@ -126,8 +127,12 @@ const PreviewPanel: FC<Props> = ({ out, isRefreshing = false, pdfRenderError, on
 
         <div
           style={{ border: "1px solid var(--border)", color: "var(--foreground)", borderRadius: 10, padding: 10, background: "var(--panel-bg)", flex: "1 1 auto", minHeight: 0, overflow: "auto" }}
-          dangerouslySetInnerHTML={{ __html: out.htmlPreview || "<p>Preview unavailable.</p>" }}
-        />
+        >
+          {out.markdownContent
+            ? <MarkdownWithMermaid content={out.markdownContent} />
+            : <p>Preview unavailable.</p>
+          }
+        </div>
       </div>
 
       {isQuickEditOpen && (

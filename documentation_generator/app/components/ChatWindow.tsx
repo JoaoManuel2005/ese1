@@ -1,11 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { FC } from "react";
 import type { ChatMessage } from "../types";
 import { normalizeMarkdownWhitespace } from "../../lib/markdown/normalization";
+import MarkdownWithMermaid from "./MarkdownWithMermaid";
 
 type Props = {
   chat: ChatMessage[];
@@ -47,9 +46,7 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
                 <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
                   <div className="chat-message" style={{ minWidth: 0, overflow: "hidden" }}>
                     <div className="rendered-markdown">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {normalizeMarkdownWhitespace(m.content, { context: "chat" })}
-                      </ReactMarkdown>
+                      <MarkdownWithMermaid content={normalizeMarkdownWhitespace(m.content, { context: "chat" })} />
                     </div>
                   </div>
                   {m.sources && m.sources.length > 0 && (

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import type { FC } from "react";
 import type { ChatMessage } from "../types";
 import { normalizeMarkdownWhitespace } from "../../lib/markdown/normalization";

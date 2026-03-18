@@ -5,6 +5,10 @@ import type { ComponentProps } from "react";
 import PreviewPanel from "./PreviewPanel";
 import type { OutputFile } from "../types";
 
+vi.mock("./MarkdownWithMermaid", () => ({
+  default: ({ content }: { content: string }) => <pre data-testid="markdown-preview">{content}</pre>,
+}));
+
 type PreviewPanelProps = ComponentProps<typeof PreviewPanel>;
 
 function makeOutput(overrides: Partial<OutputFile> = {}): OutputFile {
@@ -113,7 +117,7 @@ describe("PreviewPanel quick edit", () => {
     );
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByText("Updated preview")).toBeInTheDocument();
+    expect(screen.getByTestId("markdown-preview")).toHaveTextContent(updatedMarkdown);
   });
 
   it("disables save while a save request is in flight", async () => {

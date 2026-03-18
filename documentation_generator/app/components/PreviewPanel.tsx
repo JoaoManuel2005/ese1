@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FC } from "react";
 import type { OutputFile } from "../types";
 import MarkdownWithMermaid from "./MarkdownWithMermaid";
@@ -130,7 +130,9 @@ const PreviewPanel: FC<Props> = ({ out, isRefreshing = false, pdfRenderError, on
         >
           {out.markdownContent
             ? <MarkdownWithMermaid content={out.markdownContent} />
-            : <p>Preview unavailable.</p>
+            : out.htmlPreview
+              ? <div dangerouslySetInnerHTML={{ __html: out.htmlPreview }} />
+              : <p>Preview unavailable.</p>
           }
         </div>
       </div>

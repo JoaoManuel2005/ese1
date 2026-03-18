@@ -1344,6 +1344,7 @@ export default function Page() {
         solution: solutionForGeneration,
         doc_type: "markdown",
         systemPrompt: effectiveSystemPrompt || undefined,
+        output_type: outputTypeId ?? selectedOutputTypeIdRef.current,
         provider: llmSelection.provider,
         model: modelForProvider,
         dataset_id: activeDatasetId,

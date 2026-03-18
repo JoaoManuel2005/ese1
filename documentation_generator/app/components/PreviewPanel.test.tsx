@@ -117,7 +117,7 @@ describe("PreviewPanel quick edit", () => {
     );
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByTestId("markdown-preview")).toHaveTextContent(updatedMarkdown);
+    expect(screen.getByTestId("markdown-preview")).toHaveTextContent(updatedMarkdown, { normalizeWhitespace: false });
   });
 
   it("disables save while a save request is in flight", async () => {

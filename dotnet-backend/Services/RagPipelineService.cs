@@ -963,9 +963,7 @@ public class RagPipelineService
         {
             sb.AppendLine("## Architecture");
             sb.AppendLine();
-            sb.AppendLine("```mermaid");
             sb.AppendLine(arch);
-            sb.AppendLine("```");
             sb.AppendLine();
         }
 
@@ -974,9 +972,7 @@ public class RagPipelineService
         {
             sb.AppendLine("## Component Map");
             sb.AppendLine();
-            sb.AppendLine("```mermaid");
             sb.AppendLine(componentMap);
-            sb.AppendLine("```");
             sb.AppendLine();
         }
 
@@ -985,9 +981,7 @@ public class RagPipelineService
         {
             sb.AppendLine("## Data Model (ER Diagram)");
             sb.AppendLine();
-            sb.AppendLine("```mermaid");
             sb.AppendLine(er);
-            sb.AppendLine("```");
             sb.AppendLine();
         }
 
@@ -996,9 +990,7 @@ public class RagPipelineService
         {
             sb.AppendLine("## Flow Execution");
             sb.AppendLine();
-            sb.AppendLine("```mermaid");
             sb.AppendLine(flow);
-            sb.AppendLine("```");
             sb.AppendLine();
         }
 

@@ -17,13 +17,13 @@ export async function POST(req: Request) {
     const userId = session?.user?.email ?? null;
     const systemPromptFromDb = userId ? getUserSystemPrompt(userId) : null;
     const systemPrompt =
-      (systemPromptFromDb != null && systemPromptFromDb.length > 0)
-        ? systemPromptFromDb
-        : (typeof body?.systemPrompt === "string" && body.systemPrompt.trim().length > 0)
-          ? body.systemPrompt.trim()
+      (typeof body?.systemPrompt === "string" && body.systemPrompt.trim().length > 0)
+        ? body.systemPrompt.trim()
+        : (systemPromptFromDb != null && systemPromptFromDb.length > 0)
+          ? systemPromptFromDb
           : undefined;
 
-    const source = systemPromptFromDb != null && systemPromptFromDb.length > 0 ? "db" : (body?.systemPrompt ? "body" : "none");
+    const source = (typeof body?.systemPrompt === "string" && body.systemPrompt.trim().length > 0) ? "body" : (systemPromptFromDb ? "db" : "none");
     console.log("[generate-solution-docs] systemPrompt source=%s length=%s", source, systemPrompt != null ? systemPrompt.length : "null");
 
     const payload = {

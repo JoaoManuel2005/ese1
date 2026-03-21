@@ -443,7 +443,7 @@ const SettingsButton: FC<Props> = ({
                   disabled={saveState === "saving"}
                   style={{ border: `1px solid ${borderColor}`, background: inputBg, color: textColor, padding: "6px 10px", borderRadius: 8, cursor: saveState === "saving" ? "not-allowed" : "pointer" }}
                 >
-                  {saveState === "saving" ? "Saving..." : "Save"}
+                  {saveState === "saving" ? "Saving..." : "Save and Close"}
                 </button>
               </div>
             </div>

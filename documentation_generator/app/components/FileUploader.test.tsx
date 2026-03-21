@@ -174,8 +174,7 @@ describe("FileUploader", () => {
     const friendlyMessage =
       "This .zip file does not appear to be a valid Power Platform solution export. Please choose another file.";
     const rawJson = '{"ok":false,"error":{"code":"INVALID_SOLUTION_ZIP","message":"Zip does not look like a Power Platform solution export."}}';
-
-    render(
+    const { container } = render(
       <FileUploader
         files={[makeAttachedFile({ name: "solution.zip", error: friendlyMessage })]}
         onAdd={vi.fn()}
@@ -185,7 +184,11 @@ describe("FileUploader", () => {
       />
     );
 
-    expect(screen.getByText(friendlyMessage)).toBeInTheDocument();
+    const inputFileBox = container.querySelector("#input_file_box");
+    expect(inputFileBox).toBeTruthy();
+    expect(inputFileBox?.textContent).toContain(friendlyMessage);
+    expect(inputFileBox?.textContent).not.toContain(rawJson);
+
     expect(screen.queryByText(rawJson)).not.toBeInTheDocument();
   });
 

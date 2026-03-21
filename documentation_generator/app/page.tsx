@@ -6,7 +6,6 @@ import useModels from "./hooks/useModels";
 import useRag from "./hooks/useRag";
 import { classifyUploads, UploadClassification } from "../lib/classifyUploads";
 import FileUploader from "./components/FileUploader";
-import ModelProviderControls from "./components/ModelProviderControls";
 import SettingsButton from "./components/SettingsButton";
 import ChatWindow from "./components/ChatWindow";
 import OutputsList from "./components/OutputsList";
@@ -172,6 +171,7 @@ export default function Page() {
   };
   const [conversationList, setConversationList] = useState<ConversationListItem[]>([]);
   const [customerName, setCustomerName] = useState("");
+  const [loadedCustomerName, setLoadedCustomerName] = useState("");
   const [isClient, setIsClient] = useState(false);
   const [outputTypes, setOutputTypes] = useState<OutputType[]>([]);
   const [selectedOutputTypeId, setSelectedOutputTypeId] = useState<string>("documentation");
@@ -728,7 +728,8 @@ export default function Page() {
           }))
         );
         if (convData.dataset_id) setDatasetId(convData.dataset_id);
-        setCustomerName(convData.customer_name || "");
+        setLoadedCustomerName(convData.customer_name || "");
+        setCustomerName("");
         applyConversationId(convData.id);
         void restorePersistedOutput(convData, firstId, loadToken);
       } catch {
@@ -1152,6 +1153,8 @@ export default function Page() {
     setCorpusType(null);
     setCorpusReason(null);
     resetParsedSolutionState();
+    setCustomerName("");
+    setLoadedCustomerName("");
     if (options?.clearCustomerName) {
       setCustomerName("");
     }
@@ -1802,7 +1805,8 @@ export default function Page() {
         }))
       );
       if (data.dataset_id && files.length === 0) setDatasetId(data.dataset_id);
-      setCustomerName(data.customer_name || "");
+      setLoadedCustomerName(data.customer_name || "");
+      setCustomerName("");
       applyConversationId(data.id);
       void restorePersistedOutput(data, id, loadToken);
     } catch {
@@ -1832,6 +1836,9 @@ export default function Page() {
         const data = await listRes.json();
         setConversationList(data.conversations || []);
       }
+
+      setCustomerName("");
+      setLoadedCustomerName(trimmedCustomer || "");
     } catch {
       // ignore
     }
@@ -1948,33 +1955,12 @@ export default function Page() {
         <section className="panel">
           <div className="panel-header">Chat</div>
 
-          <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
-            <div style={{ display: "grid", gap: 6 }}>
-              <ModelProviderControls
-                provider={provider}
-                setProvider={setProvider}
-                models={models}
-                selectedModel={selectedModel}
-                setSelectedModel={setSelectedModel}
-                modelsLoading={modelsLoading}
-                modelsError={modelsError}
-                localModels={localModels}
-                localModel={localModel}
-                setLocalModel={setLocalModel}
-                localModelsLoading={localModelsLoading}
-                localModelsError={localModelsError}
-                useCustomLocalModel={useCustomLocalModel}
-                setUseCustomLocalModel={setUseCustomLocalModel}
-                fetchLocalModels={fetchLocalModels}
-              />
-            </div>
-          </div>
-
           {status === "authenticated" && conversationList.length > 0 && (
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#555" }}>Past conversations</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto", paddingRight: 8 }}>
-                {conversationList.map((conv) => (
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--muted)" }}>Past conversations</div>
+              <div style={{ overflowX: "hidden" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 120, overflowY: "auto", overflowX: "hidden" }}>
+                  {conversationList.map((conv) => (
                   (() => {
                     const customerLabel = conv.customer_name || "Unassigned customer";
                     const titleLabel = conv.title || new Date(conv.updated_at * 1000).toLocaleDateString();
@@ -2001,16 +1987,51 @@ export default function Page() {
                           fontSize: 12,
                           border: conversationId === conv.id ? "1px solid #1f7aec" : "1px solid var(--border)",
                           borderRadius: 6,
-                          background: conversationId === conv.id ? "var(--panel-bg)" : "var(--panel-bg)",
+                          background: "var(--panel-bg)",
                           cursor: "pointer",
+                          display: "flex",
+                          flexDirection: "column",
+                          minWidth: 0,
+                          maxHeight: 80,
+                          minHeight: 0,
                         }}
                       >
-                        {!isTitlePrefixedByCustomer && (
-                          <div style={{ fontWeight: 600, color: "var(--foreground)" }}>{customerLabel}</div>
-                        )}
-                        <div style={{ fontSize: 11, color: "var(--foreground)" }}>
-                          {titleLabel}
+                        <div
+                          style={{
+                            flex: 1,
+                            minHeight: 0,
+                            overflowY: "auto",
+                            overflowX: "hidden",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 2,
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 600,
+                              color: "var(--foreground)",
+                              wordBreak: "break-word",
+                              whiteSpace: "pre-wrap",
+                            }}
+                          >
+                            {isTitlePrefixedByCustomer ? titleLabel : customerLabel}
+                          </div>
                         </div>
+                        {!isTitlePrefixedByCustomer && (
+                          <div
+                            style={{
+                              fontSize: 11,
+                              color: "var(--foreground)",
+                              marginTop: 4,
+                              flexShrink: 0,
+                              wordBreak: "break-word",
+                              whiteSpace: "pre-wrap",
+                            }}
+                          >
+                            {titleLabel}
+                          </div>
+                        )}
                       </button>
                       <button
                         type="button"
@@ -2034,22 +2055,22 @@ export default function Page() {
                     );
                   })()
                 ))}
+                </div>
               </div>
             </div>
           )}
 
           {status === "authenticated" && (
             <div style={{ marginBottom: 12, display: "grid", gap: 6 }}>
-              <label htmlFor="customer-name" style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>
+              <label htmlFor="customer-name" style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)" }}>
                 Customer name
               </label>
               <div style={{ display: "flex", gap: 6 }}>
-                <input
+                <textarea
                   id="customer-name"
-                  type="text"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="e.g. Acme Corp"
+                  placeholder={loadedCustomerName || "e.g. Acme Corp"}
                   style={{
                     flex: 1,
                     padding: "6px 8px",
@@ -2058,12 +2079,28 @@ export default function Page() {
                     border: "1px solid var(--border)",
                     borderRadius: 6,
                     fontSize: 12,
+                    maxHeight: 60,
+                    overflowY: "auto",
+                    overflowX: "hidden",
+                    fontFamily: "inherit",
+                    resize: "none",
                   }}
                 />
                 <button
                   type="button"
-                  onClick={() => {
-                    startNewChat();
+                  onClick={async () => {
+                    if (status === "authenticated" && !conversationId) {
+                      // Create a new conversation with the customer name
+                      try {
+                        await createConversationSession();
+                      } catch {
+                        // If creation fails, fall back to starting a new chat
+                        startNewChat({ clearCustomerName: true });
+                      }
+                    } else {
+                      // If already in a conversation or not signed in, start a new chat
+                      startNewChat({ clearCustomerName: true });
+                    }
                   }}
                   style={{
                     padding: "6px 10px",
@@ -2113,7 +2150,12 @@ export default function Page() {
                   // ignore
                 }
               }
-              startNewChat({ clearCustomerName: true });
+              setChat([]);
+              setMessage("");
+              setCustomerName("");
+              setExpandedSources({});
+              setGenerateError(null);
+              setGenerateProgress(null);
             }}
             expandedSources={expandedSources}
             onToggleSources={(id) => setExpandedSources((prev) => ({ ...prev, [id]: !prev[id] }))}
@@ -2128,13 +2170,13 @@ export default function Page() {
             {outputTypes.length > 0 && (() => {
               const active = outputTypes.find((t) => t.id === selectedOutputTypeId);
               return active ? (
-                <div style={{ fontSize: 11, color: "#777", marginBottom: 6 }}>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>
                   Output type: <strong style={{ color: "var(--foreground)" }}>{active.title}</strong>
-                  <span style={{ marginLeft: 6, color: "#aaa" }}>— change via chat (e.g. "generate a diagram")</span>
+                  <span style={{ marginLeft: 6, color: "var(--muted)" }}>— change via chat (e.g. "generate a diagram")</span>
                 </div>
               ) : null;
             })()}
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", color: "var(--foreground)" }}>
               <button
                 onClick={generateDocs}
                 disabled={!canGenerate}
@@ -2148,11 +2190,11 @@ export default function Page() {
                   opacity: !canGenerate ? 0.7 : 1,
                 }}
               >
-                {generating 
-                  ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
-                  : (hasSolution ? "Parse & Generate Docs" : "Generate Documentation")}
+                  {generating 
+                    ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
+                    : (hasSolution ? "Parse & Generate Docs" : "Generate Documentation")}
               </button>
-              <div style={{ fontSize: 12, color: "#555" }}>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>
               {hasInvalidZip
                 ? "Only .zip solution files are supported for solution documentation."
                 : hasInvalidSelectedFiles
@@ -2166,7 +2208,7 @@ export default function Page() {
             </div>
             {generateProgress && (
               <div style={{ marginTop: 10, marginBottom: 0 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12, color: "#555" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 12, color: "var(--muted)" }}>
                   <span>{generateProgress.stage}</span>
                   <span>{generateProgress.percent}%</span>
                 </div>

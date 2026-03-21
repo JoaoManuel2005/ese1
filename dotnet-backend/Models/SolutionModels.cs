@@ -71,6 +71,9 @@ public class GenerateDocRequest
     [JsonPropertyName("user_preferences")]
     public string? UserPreferences { get; set; }
 
+    [JsonPropertyName("output_type")]
+    public string? OutputType { get; set; }
+
     public string? ApiKey { get; set; }
     public string? Endpoint { get; set; }
 }

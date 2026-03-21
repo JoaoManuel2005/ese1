@@ -867,8 +867,13 @@ public class RagPipelineService
         string? model         = null,
         string? userPrefs     = null,
         string? apiKey        = null,
-        string? endpoint      = null)
+        string? endpoint      = null,
+        string? outputType    = null)
     {
+        // For diagrams-only output type, return just the deterministic diagrams without LLM prose
+        if (string.Equals(outputType, "diagrams", StringComparison.OrdinalIgnoreCase))
+            return BuildDiagramsOnlyOutput(solution);
+
         // Default is now LLM with strict evidence guardrails.
         // Set DOC_GENERATION_MODE=deterministic to disable LLM.
         var generationMode = (_config["DOC_GENERATION_MODE"] ?? "llm").Trim().ToLowerInvariant();
@@ -939,6 +944,57 @@ public class RagPipelineService
         name = Regex.Replace(name, @"_(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{4,15}$", "").Trim('_').Trim();
         if (string.IsNullOrWhiteSpace(name)) name = c.Name;
         return name.Length > 35 ? name[..35] + "..." : name;
+    }
+
+    /// <summary>
+    /// Returns only the deterministic diagrams (architecture, component map, ER, flow)
+    /// without any LLM-generated prose. Used for the "diagrams" output type.
+    /// </summary>
+    private static string BuildDiagramsOnlyOutput(Models.ParsedSolution solution)
+    {
+        var sb = new System.Text.StringBuilder();
+        var solutionName = solution.SolutionName ?? "Solution";
+
+        sb.AppendLine($"# {solutionName} — Diagrams");
+        sb.AppendLine();
+
+        var arch = BuildArchitectureDiagramCode(solution);
+        if (!string.IsNullOrEmpty(arch))
+        {
+            sb.AppendLine("## Architecture");
+            sb.AppendLine();
+            sb.AppendLine(arch);
+            sb.AppendLine();
+        }
+
+        var componentMap = BuildComponentMapCode(solution);
+        if (!string.IsNullOrEmpty(componentMap))
+        {
+            sb.AppendLine("## Component Map");
+            sb.AppendLine();
+            sb.AppendLine(componentMap);
+            sb.AppendLine();
+        }
+
+        var er = BuildErDiagramCode(solution);
+        if (!string.IsNullOrEmpty(er))
+        {
+            sb.AppendLine("## Data Model (ER Diagram)");
+            sb.AppendLine();
+            sb.AppendLine(er);
+            sb.AppendLine();
+        }
+
+        var flow = BuildFlowDiagramCode(solution);
+        if (!string.IsNullOrEmpty(flow))
+        {
+            sb.AppendLine("## Flow Execution");
+            sb.AppendLine();
+            sb.AppendLine(flow);
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
     }
 
     /// <summary>

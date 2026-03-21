@@ -56,13 +56,6 @@ export default function SignInButton() {
             cursor: 'pointer',
             fontSize: '14px',
             fontWeight: 500,
-            transition: 'all 0.2s',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = '#f5f5f5';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = '#fff';
           }}
         >
           Sign Out

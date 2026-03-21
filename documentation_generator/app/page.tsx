@@ -27,6 +27,7 @@ import {
   canGenerateSolutionDocs,
   hasInvalidSelectedFiles as hasInvalidSelectedFilesInState,
 } from "./utils/solutionUploadValidation";
+import { mapUploadErrorMessage, parseApiError } from "./utils/helpers";
 // pdf.js worker (kept for completeness; not used in HTML preview flow)
 // eslint-disable-next-line import/no-unresolved
 import { GlobalWorkerOptions } from "pdfjs-dist";
@@ -905,8 +906,16 @@ export default function Page() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           if (!cancelled) {
+            const parsed = parseApiError(data as ApiErrorPayload, "Failed to ingest solution zip.");
             setCorpusType("unknown");
-            setCorpusReason(data?.error || "Failed to ingest solution zip.");
+            setCorpusReason(mapUploadErrorMessage(parsed));
+            if (parsed.code || parsed.hint) {
+              console.warn("Solution ZIP ingest failed:", {
+                code: parsed.code,
+                message: parsed.message,
+                hint: parsed.hint,
+              });
+            }
           }
           return;
         }

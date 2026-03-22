@@ -3,6 +3,7 @@ import {
   createDatasetId,
   createMessageId,
   mapProviderError,
+  mapUploadErrorMessage,
   parseApiError,
 } from "./helpers";
 
@@ -119,5 +120,31 @@ describe("parseApiError", () => {
   it("returns fallback for null payload", () => {
     const result = parseApiError(null, "Fallback");
     expect(result.message).toBe("Fallback");
+  });
+});
+
+describe("mapUploadErrorMessage", () => {
+  it("maps INVALID_SOLUTION_ZIP to a friendly message", () => {
+    const result = mapUploadErrorMessage({
+      code: "INVALID_SOLUTION_ZIP",
+      message: "Zip does not look like a Power Platform solution export.",
+    });
+
+    expect(result).toBe(
+      "This .zip file does not appear to be a valid Power Platform solution export. Please choose another file."
+    );
+  });
+
+  it("returns a safe fallback for json-like unknown messages", () => {
+    const result = mapUploadErrorMessage({
+      message: '{"ok":false,"error":{"code":"INVALID_SOLUTION_ZIP"}}',
+    });
+
+    expect(result).toBe("We couldn't validate this .zip file. Please choose another file.");
+  });
+
+  it("keeps plain human-readable unknown messages", () => {
+    const result = mapUploadErrorMessage({ message: "Service unavailable" });
+    expect(result).toBe("Service unavailable");
   });
 });

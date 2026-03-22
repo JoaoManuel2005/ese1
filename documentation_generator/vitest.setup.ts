@@ -9,4 +9,8 @@ vi.mock("better-sqlite3", () => ({
 
 afterEach(() => {
   resetMockBetterSqlite3();
+  if (typeof window !== "undefined") {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  }
 });

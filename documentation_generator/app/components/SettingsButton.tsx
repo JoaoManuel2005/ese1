@@ -1194,6 +1194,7 @@ const SettingsButton: FC<Props> = ({
                               type="button"
                               onClick={() => void handlePromptSelection(defaultChoice)}
                               disabled={promptDialogBusy}
+                              aria-label={defaultChoice.title}
                               style={{
                                 textAlign: "left",
                                 border: `1px solid ${borderColor}`,
@@ -1219,6 +1220,7 @@ const SettingsButton: FC<Props> = ({
                                 type="button"
                                 onClick={() => void handlePromptSelection(choice)}
                                 disabled={promptDialogBusy}
+                                aria-label={choice.title}
                                 style={{
                                   textAlign: "left",
                                   border: `1px solid ${borderColor}`,
@@ -1246,6 +1248,7 @@ const SettingsButton: FC<Props> = ({
                                     type="button"
                                     onClick={() => void handlePromptSelection(choice)}
                                     disabled={promptDialogBusy}
+                                    aria-label={choice.title}
                                     style={{
                                       flex: 1,
                                       textAlign: "left",

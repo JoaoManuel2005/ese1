@@ -166,8 +166,18 @@ export function createSavedPrompt(
   ensureUniquePromptName(userId, name);
 
   const db = getDb();
+  const currentSelection = db
+    .prepare(
+      `SELECT system_prompt, active_prompt_text_snapshot
+       FROM user_settings
+       WHERE user_id = ?`
+    )
+    .get(userId) as
+    | { system_prompt: string | null; active_prompt_text_snapshot: string | null }
+    | undefined;
   const id = randomUUID();
   const nameKey = normalizeNameKey(name);
+  const selectionSnapshot = normalizeOptionalString(currentSelection?.system_prompt);
 
   db.prepare(
     `INSERT INTO saved_prompts (
@@ -176,13 +186,14 @@ export function createSavedPrompt(
   ).run(id, userId, name, nameKey, promptText);
 
   db.prepare(
-    `INSERT INTO user_settings (user_id, system_prompt, active_prompt_id, updated_at)
-     VALUES (?, ?, ?, unixepoch())
+    `INSERT INTO user_settings (user_id, system_prompt, active_prompt_id, active_prompt_text_snapshot, updated_at)
+     VALUES (?, ?, ?, ?, unixepoch())
      ON CONFLICT(user_id) DO UPDATE SET
        system_prompt = excluded.system_prompt,
        active_prompt_id = excluded.active_prompt_id,
+       active_prompt_text_snapshot = excluded.active_prompt_text_snapshot,
        updated_at = unixepoch()`
-  ).run(userId, promptText, id);
+  ).run(userId, promptText, id, selectionSnapshot);
 
   const created = getSavedPrompt(userId, id);
   if (!created) {
@@ -226,15 +237,29 @@ export function updateSavedPrompt(
   ).run(nextName, normalizeNameKey(nextName), nextPromptText, promptId, userId);
 
   const activeSelection = db
-    .prepare(`SELECT active_prompt_id FROM user_settings WHERE user_id = ?`)
-    .get(userId) as { active_prompt_id: string | null } | undefined;
+    .prepare(
+      `SELECT system_prompt, active_prompt_id, active_prompt_text_snapshot
+       FROM user_settings
+       WHERE user_id = ?`
+    )
+    .get(userId) as
+    | {
+        system_prompt: string | null;
+        active_prompt_id: string | null;
+        active_prompt_text_snapshot: string | null;
+      }
+    | undefined;
   if (activeSelection?.active_prompt_id === promptId) {
+    const promptSnapshot =
+      normalizeOptionalString(activeSelection.active_prompt_text_snapshot) ??
+      normalizeOptionalString(activeSelection.system_prompt);
     db.prepare(
       `UPDATE user_settings
        SET system_prompt = ?,
+           active_prompt_text_snapshot = ?,
            updated_at = unixepoch()
        WHERE user_id = ? AND active_prompt_id = ?`
-    ).run(nextPromptText, userId, promptId);
+    ).run(nextPromptText, promptSnapshot, userId, promptId);
   }
 
   const updated = getSavedPrompt(userId, promptId);
@@ -251,6 +276,26 @@ export function deleteSavedPrompt(userId: string, promptId: string): void {
     throw new SavedPromptNotFoundError("Saved prompt not found.");
   }
 
+  const activeSelection = db
+    .prepare(
+      `SELECT system_prompt, active_prompt_id, active_prompt_text_snapshot
+       FROM user_settings
+       WHERE user_id = ?`
+    )
+    .get(userId) as
+    | {
+        system_prompt: string | null;
+        active_prompt_id: string | null;
+        active_prompt_text_snapshot: string | null;
+      }
+    | undefined;
+
+  const isActivePrompt = activeSelection?.active_prompt_id === promptId;
+  const restoredPromptText = isActivePrompt
+    ? normalizeOptionalString(activeSelection?.active_prompt_text_snapshot) ??
+      normalizeOptionalString(activeSelection?.system_prompt)
+    : null;
+
   db.prepare(
     `UPDATE saved_prompts
      SET deleted_at = unixepoch(),
@@ -258,12 +303,16 @@ export function deleteSavedPrompt(userId: string, promptId: string): void {
      WHERE id = ? AND user_id = ?`
   ).run(promptId, userId);
 
-  db.prepare(
-    `UPDATE user_settings
-     SET active_prompt_id = NULL,
-         updated_at = unixepoch()
-     WHERE user_id = ? AND active_prompt_id = ?`
-  ).run(userId, promptId);
+  if (isActivePrompt) {
+    db.prepare(
+      `UPDATE user_settings
+       SET system_prompt = ?,
+           active_prompt_id = NULL,
+           active_prompt_text_snapshot = NULL,
+           updated_at = unixepoch()
+       WHERE user_id = ? AND active_prompt_id = ?`
+    ).run(restoredPromptText, userId, promptId);
+  }
 }
 
 export function selectSavedPromptForUser(userId: string, promptId: string): SavedPrompt {
@@ -273,14 +322,25 @@ export function selectSavedPromptForUser(userId: string, promptId: string): Save
   }
 
   const db = getDb();
+  const currentSelection = db
+    .prepare(
+      `SELECT system_prompt, active_prompt_text_snapshot
+       FROM user_settings
+       WHERE user_id = ?`
+    )
+    .get(userId) as
+    | { system_prompt: string | null; active_prompt_text_snapshot: string | null }
+    | undefined;
+  const selectionSnapshot = normalizeOptionalString(currentSelection?.system_prompt);
   db.prepare(
-    `INSERT INTO user_settings (user_id, system_prompt, active_prompt_id, updated_at)
-     VALUES (?, ?, ?, unixepoch())
+    `INSERT INTO user_settings (user_id, system_prompt, active_prompt_id, active_prompt_text_snapshot, updated_at)
+     VALUES (?, ?, ?, ?, unixepoch())
      ON CONFLICT(user_id) DO UPDATE SET
        system_prompt = excluded.system_prompt,
        active_prompt_id = excluded.active_prompt_id,
+       active_prompt_text_snapshot = excluded.active_prompt_text_snapshot,
        updated_at = unixepoch()`
-  ).run(userId, prompt.promptText, prompt.id);
+  ).run(userId, prompt.promptText, prompt.id, selectionSnapshot);
 
   return prompt;
 }

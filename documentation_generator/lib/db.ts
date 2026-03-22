@@ -62,6 +62,7 @@ function getDb(): Database.Database {
       user_id TEXT PRIMARY KEY,
       system_prompt TEXT,
       active_prompt_id TEXT,
+      active_prompt_text_snapshot TEXT,
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
@@ -104,6 +105,12 @@ function getDb(): Database.Database {
   const hasActivePromptId = settingsColumns.some((col) => col.name === "active_prompt_id");
   if (!hasActivePromptId) {
     database.exec("ALTER TABLE user_settings ADD COLUMN active_prompt_id TEXT;");
+  }
+  const hasActivePromptTextSnapshot = settingsColumns.some(
+    (col) => col.name === "active_prompt_text_snapshot"
+  );
+  if (!hasActivePromptTextSnapshot) {
+    database.exec("ALTER TABLE user_settings ADD COLUMN active_prompt_text_snapshot TEXT;");
   }
 
   const outputColumns = database

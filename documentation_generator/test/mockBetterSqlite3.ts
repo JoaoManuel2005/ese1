@@ -42,6 +42,7 @@ type UserSettingsRow = {
   user_id: string;
   system_prompt: string | null;
   active_prompt_id: string | null;
+  active_prompt_text_snapshot: string | null;
   updated_at: number;
 };
 
@@ -95,7 +96,13 @@ const schemaColumns: Record<string, ColumnInfo[]> = {
     "created_at",
     "updated_at",
   ].map((name) => ({ name })),
-  user_settings: ["user_id", "system_prompt", "active_prompt_id", "updated_at"].map((name) => ({ name })),
+  user_settings: [
+    "user_id",
+    "system_prompt",
+    "active_prompt_id",
+    "active_prompt_text_snapshot",
+    "updated_at",
+  ].map((name) => ({ name })),
   saved_prompts: [
     "id",
     "user_id",
@@ -143,13 +150,15 @@ function upsertUserSettings(
   state: MockDbState,
   userId: string,
   systemPrompt: string | null,
-  activePromptId: string | null
+  activePromptId: string | null,
+  activePromptTextSnapshot: string | null
 ) {
   const existing = getUserSettingsRow(state, userId);
   const timestamp = nextTimestamp(state);
   if (existing) {
     existing.system_prompt = systemPrompt;
     existing.active_prompt_id = activePromptId;
+    existing.active_prompt_text_snapshot = activePromptTextSnapshot;
     existing.updated_at = timestamp;
     return;
   }
@@ -158,6 +167,7 @@ function upsertUserSettings(
     user_id: userId,
     system_prompt: systemPrompt,
     active_prompt_id: activePromptId,
+    active_prompt_text_snapshot: activePromptTextSnapshot,
     updated_at: timestamp,
   });
 }
@@ -333,6 +343,22 @@ class MockBetterSqliteDatabase {
       return row ? { active_prompt_id: row.active_prompt_id } : undefined;
     }
 
+    if (
+      sql.startsWith(
+        "select system_prompt, active_prompt_id, active_prompt_text_snapshot from user_settings where user_id = ?"
+      )
+    ) {
+      const [userId] = params as [string];
+      const row = getUserSettingsRow(state, userId);
+      return row
+        ? {
+            system_prompt: row.system_prompt,
+            active_prompt_id: row.active_prompt_id,
+            active_prompt_text_snapshot: row.active_prompt_text_snapshot,
+          }
+        : undefined;
+    }
+
     if (sql.startsWith("select system_prompt, active_prompt_id from user_settings where user_id = ?")) {
       const [userId] = params as [string];
       const row = getUserSettingsRow(state, userId);
@@ -479,8 +505,19 @@ class MockBetterSqliteDatabase {
     }
 
     if (sql.startsWith("insert into user_settings")) {
-      const [userId, systemPrompt, activePromptId] = params as [string, string | null, string | null];
-      upsertUserSettings(state, userId, systemPrompt ?? null, activePromptId ?? null);
+      const [userId, systemPrompt, activePromptId, activePromptTextSnapshot] = params as [
+        string,
+        string | null,
+        string | null,
+        string | null | undefined,
+      ];
+      upsertUserSettings(
+        state,
+        userId,
+        systemPrompt ?? null,
+        activePromptId ?? null,
+        activePromptTextSnapshot ?? null
+      );
       return { changes: 1, lastInsertRowid: userId };
     }
 
@@ -497,11 +534,21 @@ class MockBetterSqliteDatabase {
       return { changes: row ? 1 : 0 };
     }
 
-    if (sql.startsWith("update user_settings set system_prompt = ?, updated_at = unixepoch() where user_id = ? and active_prompt_id = ?")) {
-      const [systemPrompt, userId, activePromptId] = params as [string | null, string, string];
+    if (
+      sql.startsWith(
+        "update user_settings set system_prompt = ?, active_prompt_text_snapshot = ?, updated_at = unixepoch() where user_id = ? and active_prompt_id = ?"
+      )
+    ) {
+      const [systemPrompt, snapshot, userId, activePromptId] = params as [
+        string | null,
+        string | null,
+        string,
+        string,
+      ];
       const row = getUserSettingsRow(state, userId);
       if (row && row.active_prompt_id === activePromptId) {
         row.system_prompt = systemPrompt ?? null;
+        row.active_prompt_text_snapshot = snapshot ?? null;
         row.updated_at = nextTimestamp(state);
         return { changes: 1 };
       }
@@ -514,6 +561,14 @@ class MockBetterSqliteDatabase {
       if (row) {
         row.deleted_at = nextTimestamp(state);
         row.updated_at = nextTimestamp(state);
+        const activeRow = getUserSettingsRow(state, userId);
+        if (activeRow && activeRow.active_prompt_id === promptId) {
+          const restored = activeRow.active_prompt_text_snapshot ?? activeRow.system_prompt;
+          activeRow.system_prompt = restored;
+          activeRow.active_prompt_id = null;
+          activeRow.active_prompt_text_snapshot = null;
+          activeRow.updated_at = nextTimestamp(state);
+        }
         return { changes: 1 };
       }
       return { changes: 0 };
@@ -524,6 +579,7 @@ class MockBetterSqliteDatabase {
       const row = getUserSettingsRow(state, userId);
       if (row && row.active_prompt_id === activePromptId) {
         row.active_prompt_id = null;
+        row.active_prompt_text_snapshot = null;
         row.updated_at = nextTimestamp(state);
         return { changes: 1 };
       }
@@ -656,6 +712,17 @@ class MockBetterSqliteDatabase {
     }
 
     if (sql.startsWith("update user_settings set system_prompt = ?, active_prompt_id = ?, updated_at = unixepoch()")) {
+      return { changes: 0 };
+    }
+
+    if (
+      sql.startsWith(
+        "update user_settings set system_prompt = ?, active_prompt_text_snapshot = ?, active_prompt_id = ?, updated_at = unixepoch() where user_id = ? and active_prompt_id = ?"
+      ) ||
+      sql.startsWith(
+        "update user_settings set system_prompt = ?, active_prompt_text_snapshot = ?, active_prompt_id = ?, updated_at = unixepoch()"
+      )
+    ) {
       return { changes: 0 };
     }
 

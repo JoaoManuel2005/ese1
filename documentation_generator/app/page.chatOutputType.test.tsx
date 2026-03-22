@@ -211,7 +211,7 @@ describe("Page chat output type commands", () => {
   });
 
   it("changes a built-in output type from chat without regenerating", async () => {
-    setupCommonState();
+    const { fetchMock } = setupCommonState();
     const user = userEvent.setup();
 
     render(<Page />);

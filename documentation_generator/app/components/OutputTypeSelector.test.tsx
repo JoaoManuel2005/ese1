@@ -122,7 +122,7 @@ describe("OutputTypeSelector", () => {
     );
 
     expect(screen.getByRole("combobox")).toHaveValue("custom");
-    expect(screen.getByText("Custom")).toBeInTheDocument();
+    expect(screen.getAllByText("Custom")).toHaveLength(2);
   });
 
   it("shows an unavailable label when a historical custom prompt no longer exists", () => {
@@ -134,6 +134,6 @@ describe("OutputTypeSelector", () => {
       />
     );
 
-    expect(screen.getByText("Output type unavailable")).toBeInTheDocument();
+    expect(screen.getAllByText("Output type unavailable")).toHaveLength(2);
   });
 });

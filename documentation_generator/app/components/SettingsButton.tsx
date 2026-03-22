@@ -759,6 +759,7 @@ const SettingsButton: FC<Props> = ({
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(true)}
+        aria-label="Settings"
         title="Settings"
         style={{
           border: "1px solid var(--border)",

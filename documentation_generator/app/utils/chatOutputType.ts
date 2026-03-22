@@ -11,7 +11,6 @@ export type ResolvedChatOutputTypeChange = ChatOutputTypeChangeCommand & {
 };
 
 const COMMAND_PREFIX = "change output file type to ";
-const COMMAND_SUFFIXES = new Set(["and regenerate", "and regen", "and generate", "and gen"]);
 
 function normalizeWhitespace(value: string): string {
   return value.trim().replace(/\s+/g, " ");
@@ -38,19 +37,15 @@ export function parseChatOutputTypeChangeCommand(text: string): ChatOutputTypeCh
   const remainder = normalized.slice(commandStartIndex + COMMAND_PREFIX.length).trim();
   if (!remainder) return null;
 
-  const lowerRemainder = remainder.toLocaleLowerCase();
-  for (const suffix of COMMAND_SUFFIXES) {
-    if (!lowerRemainder.endsWith(` ${suffix}`)) {
-      continue;
-    }
-    const target = trimTrailingCommandPunctuation(
-      remainder.slice(0, remainder.length - suffix.length - 1)
-    );
+  const stripped = trimTrailingCommandPunctuation(remainder);
+  const generatedMatch = stripped.match(/^(.*?)(?:\s+and\s+(?:regenerate|regen|generate|gen))$/i);
+  if (generatedMatch) {
+    const target = trimTrailingCommandPunctuation(generatedMatch[1]);
     if (!target) return null;
     return { target, shouldGenerate: true };
   }
 
-  return { target: trimTrailingCommandPunctuation(remainder), shouldGenerate: false };
+  return { target: stripped, shouldGenerate: false };
 }
 
 export function resolveChatOutputTypeSelection(

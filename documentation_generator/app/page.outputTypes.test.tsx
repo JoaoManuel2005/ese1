@@ -194,6 +194,9 @@ describe("Page output type selection", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("Output type")).toBeInTheDocument();
     });
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "Concise release notes" })).toBeInTheDocument();
+    });
 
     expect(screen.getByText(/Selected output type:/)).toHaveTextContent("Documentation");
 
@@ -337,6 +340,9 @@ describe("Page output type selection", () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText("Output type")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "Concise release notes" })).toBeInTheDocument();
     });
 
     await user.selectOptions(screen.getByLabelText("Output type"), "custom:prompt-1");

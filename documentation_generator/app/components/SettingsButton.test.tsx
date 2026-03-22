@@ -457,8 +457,8 @@ describe("SettingsButton prompt UX", () => {
     await user.click(screen.getByRole("button", { name: "Load" }));
     expect(await screen.findByRole("button", { name: "Documentation" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Diagrams" })).toBeInTheDocument();
-    await screen.findByRole("button", { name: /Prompt two/ });
-    await user.click(screen.getByRole("button", { name: /Prompt two/ }));
+    await screen.findByRole("button", { name: "Prompt two" });
+    await user.click(screen.getByRole("button", { name: "Prompt two" }));
 
     await waitFor(() => {
       expect(screen.getByRole("textbox", { name: "System Prompt (Solution Docs)" })).toHaveValue("Prompt two text");
@@ -612,7 +612,7 @@ describe("SettingsButton prompt UX", () => {
 
     expect(await screen.findByRole("button", { name: "Documentation" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Diagrams" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Prompt one/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Prompt one" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete saved prompt Documentation" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete saved prompt Diagrams" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete saved prompt Prompt one" })).toBeInTheDocument();
@@ -652,7 +652,7 @@ describe("SettingsButton prompt UX", () => {
 
     await user.click(screen.getByRole("button", { name: "Load" }));
     expect(await screen.findByRole("button", { name: "Prompt one" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Prompt two/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Prompt two" })).not.toBeInTheDocument();
 
     confirmSpy.mockRestore();
   });

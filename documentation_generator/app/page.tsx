@@ -1419,9 +1419,11 @@ export default function Page() {
     const isCustomSelection =
       selectedOutputTypeSelectionId === "custom" ||
       selectedOutputTypeSelectionId.startsWith("custom:");
-    const effectiveSystemPrompt = activeOutputType?.id === "documentation" && isDefaultSystemPrompt
-      ? [baseSystemPrompt, activeOutputType.prompt].filter(Boolean).join("\n\n")
-      : baseSystemPrompt || activeOutputType?.promptText || activeOutputType?.prompt || undefined;
+    const effectiveSystemPrompt = activeOutputType?.kind === "custom"
+      ? activeOutputType.promptText || activeOutputType.prompt || baseSystemPrompt || undefined
+      : activeOutputType?.id === "documentation" && isDefaultSystemPrompt
+        ? [baseSystemPrompt, activeOutputType.prompt].filter(Boolean).join("\n\n")
+        : baseSystemPrompt || activeOutputType?.promptText || activeOutputType?.prompt || undefined;
     const generationSnapshot: GenerationSnapshot = {
       outputTypeId: activeOutputType?.id ?? selectedOutputTypeSelectionId,
       outputTypeTitle:

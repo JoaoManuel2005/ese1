@@ -377,6 +377,33 @@ describe("SettingsButton prompt UX", () => {
   it("loads saved prompts and built-in prompts into the system prompt textarea", async () => {
     const documentationPrompt = builtinPromptLibrary[0].prompt;
     const fetchMock = makeFetchMock({
+      outputTypes: [
+        ...builtinPromptLibrary,
+        {
+          id: "custom:prompt-1",
+          title: "Prompt one",
+          description: "Custom saved prompt",
+          prompt: "Prompt one text",
+          mime: "application/pdf",
+          keywords: ["prompt one"],
+          kind: "custom" as const,
+          promptId: "prompt-1",
+          promptName: "Prompt one",
+          promptText: "Prompt one text",
+        },
+        {
+          id: "custom:prompt-2",
+          title: "Prompt two",
+          description: "Custom saved prompt",
+          prompt: "Prompt two text",
+          mime: "application/pdf",
+          keywords: ["prompt two"],
+          kind: "custom" as const,
+          promptId: "prompt-2",
+          promptName: "Prompt two",
+          promptText: "Prompt two text",
+        },
+      ],
       settingsGet: {
         savedPrompts: [
           {
@@ -547,6 +574,21 @@ describe("SettingsButton prompt UX", () => {
 
   it("shows delete controls only for saved prompts and keeps built-ins non-deletable", async () => {
     mockSettingsLoad({
+      outputTypes: [
+        ...builtinPromptLibrary,
+        {
+          id: "custom:prompt-1",
+          title: "Prompt one",
+          description: "Custom saved prompt",
+          prompt: "Prompt one text",
+          mime: "application/pdf",
+          keywords: ["prompt one"],
+          kind: "custom" as const,
+          promptId: "prompt-1",
+          promptName: "Prompt one",
+          promptText: "Prompt one text",
+        },
+      ],
       settingsGet: {
         systemPrompt: "Doc prompt",
         activeSavedPromptId: null,

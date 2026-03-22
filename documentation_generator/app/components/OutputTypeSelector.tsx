@@ -27,8 +27,8 @@ const OutputTypeSelector: FC<Props> = ({
   const selectedLabel = getPromptChoiceLabel(promptChoices, selectedOutputTypeId, loading, "output");
 
   return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
         <label htmlFor="output-type-select" style={{ fontWeight: 600, fontSize: 13 }}>
           Output type
         </label>
@@ -39,12 +39,15 @@ const OutputTypeSelector: FC<Props> = ({
           aria-busy={loading}
           onChange={(e) => onSelect(e.target.value)}
           style={{
+            width: "100%",
+            maxWidth: "100%",
+            minWidth: 0,
+            boxSizing: "border-box",
             padding: "8px 10px",
             borderRadius: 8,
             border: "1px solid var(--border)",
             background: "var(--panel-bg)",
             color: "var(--foreground)",
-            minWidth: 280,
           }}
         >
           {!selectedExists && selectedOutputTypeId && (
@@ -71,7 +74,11 @@ const OutputTypeSelector: FC<Props> = ({
         </select>
       </div>
 
-      <div id="output-type-status" style={{ fontSize: 12, color: "var(--muted)" }} aria-live="polite">
+      <div
+        id="output-type-status"
+        style={{ fontSize: 12, color: "var(--muted)", minWidth: 0, overflowWrap: "anywhere" }}
+        aria-live="polite"
+      >
         Selected output type:{" "}
         <strong style={{ color: "var(--foreground)" }}>{selectedLabel}</strong>
       </div>

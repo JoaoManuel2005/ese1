@@ -1112,6 +1112,9 @@ export default function Page() {
   function makeBlobUrl(base64: string, mime: string) {
     const bytes = base64ToUint8(base64);
     const blob = new Blob([bytes], { type: mime || "application/pdf" });
+    if (typeof URL.createObjectURL !== "function") {
+      return "";
+    }
     return URL.createObjectURL(blob);
   }
 
@@ -1702,29 +1705,37 @@ export default function Page() {
   function downloadOutput(output: OutputFile) {
     if (!output.bytesBase64) return;
     const url = makeBlobUrl(output.bytesBase64, output.mime);
+    if (!url) return;
     const link = document.createElement("a");
     link.href = url;
     link.download = output.filename || "output.pdf";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    if (typeof URL.revokeObjectURL === "function") {
+      URL.revokeObjectURL(url);
+    }
   }
 
   useEffect(() => {
     const out = getSelectedOutput();
     if (previewBlobUrlRef.current) {
-      URL.revokeObjectURL(previewBlobUrlRef.current);
+      if (typeof URL.revokeObjectURL === "function") {
+        URL.revokeObjectURL(previewBlobUrlRef.current);
+      }
       previewBlobUrlRef.current = null;
     }
     setPdfRenderError(null);
     if (!out || !out.bytesBase64) return;
     const blobUrl = makeBlobUrl(out.bytesBase64, out.mime);
+    if (!blobUrl) return;
     previewBlobUrlRef.current = blobUrl;
 
     return () => {
       if (previewBlobUrlRef.current) {
-        URL.revokeObjectURL(previewBlobUrlRef.current);
+        if (typeof URL.revokeObjectURL === "function") {
+          URL.revokeObjectURL(previewBlobUrlRef.current);
+        }
         previewBlobUrlRef.current = null;
       }
     };
@@ -2139,7 +2150,9 @@ export default function Page() {
             setSystemPrompt={setSystemPrompt}
             systemPromptDefault={DEFAULT_SOLUTION_SYSTEM_PROMPT}
           />
-          <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation <h1 style={{ display:'inline', color:"var(--border)" }}>Generator</h1></h1>
+          <h1 style={{ fontSize: 28, fontWeight: 700 }}>
+            Documentation <span style={{ display: "inline", color: "var(--border)" }}>Generator</span>
+          </h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {/* RAG Status Badge */}
@@ -2378,11 +2391,12 @@ export default function Page() {
                 showEmptyState={status === "authenticated"}
               />
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
               <button
                 onClick={() => void generateDocs(selectedOutputTypeIdRef.current)}
                 disabled={!canGenerate}
                 style={{
+                  flex: "0 0 auto",
                   padding: "8px 12px",
                   borderRadius: 8,
                   border: hasSolution ? "1px solid var(--border)" : "1px solid var(--border)",
@@ -2396,7 +2410,7 @@ export default function Page() {
                   ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
                   : (hasSolution ? "Parse & Generate Docs" : "Generate Documentation")}
               </button>
-              <div style={{ fontSize: 12, color: "#555" }}>
+              <div style={{ fontSize: 12, color: "#555", flex: "1 1 180px", minWidth: 0, overflowWrap: "anywhere" }}>
               {hasInvalidZip
                 ? "Only .zip solution files are supported for solution documentation."
                 : hasInvalidSelectedFiles

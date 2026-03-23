@@ -49,3 +49,29 @@ export function parseApiError(payload: any, fallback: string) {
   }
   return { message: fallback };
 }
+
+const DEFAULT_UPLOAD_ERROR_MESSAGE =
+  "This .zip file does not appear to be a valid Power Platform solution export. Please choose another file.";
+const GENERIC_UPLOAD_ERROR_MESSAGE =
+  "We couldn't validate this .zip file. Please choose another file.";
+
+function looksLikeJsonish(message: string) {
+  const trimmed = message.trim();
+  return trimmed.startsWith("{") || trimmed.startsWith("[");
+}
+
+export function mapUploadErrorMessage(error: { code?: string; message?: string; hint?: string } | null | undefined) {
+  switch (error?.code) {
+    case "INVALID_SOLUTION_ZIP":
+      return DEFAULT_UPLOAD_ERROR_MESSAGE;
+    case "INVALID_INPUT":
+      return "Only .zip solution files are supported. Please choose a Power Platform solution export.";
+    default: {
+      const message = typeof error?.message === "string" ? error.message.trim() : "";
+      if (message && !looksLikeJsonish(message)) {
+        return message;
+      }
+      return GENERIC_UPLOAD_ERROR_MESSAGE;
+    }
+  }
+}

@@ -9,9 +9,19 @@ import FileUploader from "./components/FileUploader";
 import SettingsButton from "./components/SettingsButton";
 import ChatWindow from "./components/ChatWindow";
 import OutputsList from "./components/OutputsList";
+import OutputTypeSelector from "./components/OutputTypeSelector";
 import PreviewPanel from "./components/PreviewPanel";
 import SignInButton from "./components/SignInButton";
+import { useOutputTypes } from "./hooks/useOutputTypes";
 import { useSession, getSession } from "next-auth/react";
+import {
+  buildUnknownChatOutputTypeMessage,
+  resolveChatOutputTypeChange,
+} from "./utils/chatOutputType";
+import {
+  buildPromptChoices,
+  resolvePromptSelectionIdFromText,
+} from "./utils/promptLibrary";
 import {
   buildSolutionForGeneration,
   fetchSharePointEnrichmentWithUserToken,
@@ -51,6 +61,12 @@ type OutputFile = {
   bytesBase64: string;
   htmlPreview?: string;
   markdownContent?: string;
+  outputTypeId?: string | null;
+  outputTypeTitle?: string | null;
+  outputTypeKind?: string | null;
+  promptId?: string | null;
+  promptNameSnapshot?: string | null;
+  promptTextSnapshot?: string | null;
 };
 
 type ChatMessage = {
@@ -101,21 +117,21 @@ type ApiOutput = {
   htmlPreview?: string;
   markdownContent?: string;
 };
-
-type OutputType = {
-  id: string;
-  title: string;
-  description: string;
-  prompt: string;
-  mime: string;
-  keywords: string[];
-};
 type PersistedDocument = {
   filename: string;
   markdown: string;
   htmlPreview?: string | null;
   bytesBase64?: string | null;
   mime?: string | null;
+};
+
+type GenerationSnapshot = {
+  outputTypeId?: string | null;
+  outputTypeTitle?: string | null;
+  outputTypeKind?: string | null;
+  promptId?: string | null;
+  promptNameSnapshot?: string | null;
+  promptTextSnapshot?: string | null;
 };
 
 const MAX_TEXT_CHARS = 200 * 1024; // ~200KB cap for in-memory text
@@ -174,16 +190,20 @@ export default function Page() {
   const [customerName, setCustomerName] = useState("");
   const [loadedCustomerName, setLoadedCustomerName] = useState("");
   const [isClient, setIsClient] = useState(false);
-  const [outputTypes, setOutputTypes] = useState<OutputType[]>([]);
   const [selectedOutputTypeId, setSelectedOutputTypeId] = useState<string>("documentation");
   const selectedOutputTypeIdRef = useRef<string>("documentation");
+  const { data: session, status } = useSession();
+  const {
+    outputTypes,
+    loading: outputTypesLoading,
+    error: outputTypesError,
+  } = useOutputTypes(status);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const previewBlobUrlRef = useRef<string | null>(null);
   const hasAttemptedInitialRestoreRef = useRef(false);
   const activeConversationLoadRef = useRef(0);
   const conversationIdRef = useRef<string | null>(null);
   const creatingConversationRef = useRef<Promise<string> | null>(null);
-  const { data: session, status } = useSession();
 
   function applyConversationId(nextConversationId: string | null) {
     conversationIdRef.current = nextConversationId;
@@ -238,6 +258,23 @@ export default function Page() {
 
   function createMessageId() {
     return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function buildOutputLabel(value: string | null | undefined) {
+    const normalized = (value || "documentation")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    return normalized || "documentation";
+  }
+
+  function resolveGenerationOutputTypeId(overrideOutputTypeId?: string) {
+    const candidate = overrideOutputTypeId ?? selectedOutputTypeIdRef.current;
+    if (candidate === "custom" || outputTypes.some((entry) => entry.id === candidate)) {
+      return candidate;
+    }
+    return "documentation";
   }
 
   function parseApiError(payload: ApiErrorPayload | undefined, fallback: string): GenerateError {
@@ -357,7 +394,7 @@ export default function Page() {
     }
   }
 
-  async function createConversationSession(document?: PersistedDocument) {
+  async function createConversationSession(document?: PersistedDocument, generationSnapshot?: GenerationSnapshot) {
     if (status !== "authenticated" || !session?.user) {
       throw new Error("Sign in to save document edits.");
     }
@@ -379,6 +416,12 @@ export default function Page() {
           document_html: document?.htmlPreview ?? null,
           document_pdf_base64: document?.bytesBase64 ?? null,
           document_mime: document?.mime ?? "application/pdf",
+          output_type_id: generationSnapshot?.outputTypeId ?? null,
+          output_type_title: generationSnapshot?.outputTypeTitle ?? null,
+          output_type_kind: generationSnapshot?.outputTypeKind ?? null,
+          prompt_id: generationSnapshot?.promptId ?? null,
+          prompt_name_snapshot: generationSnapshot?.promptNameSnapshot ?? null,
+          prompt_text_snapshot: generationSnapshot?.promptTextSnapshot ?? null,
         }),
       });
 
@@ -417,14 +460,18 @@ export default function Page() {
     void refreshConversationList();
   }
 
-  async function persistConversationDocument(document: PersistedDocument, targetConversationId?: string | null) {
+  async function persistConversationDocument(
+    document: PersistedDocument,
+    targetConversationId?: string | null,
+    generationSnapshot?: GenerationSnapshot
+  ) {
     if (status !== "authenticated" || !session?.user) {
       throw new Error("Sign in to save document edits.");
     }
 
     const activeConversationId = targetConversationId ?? conversationIdRef.current;
     if (!activeConversationId) {
-      return createConversationSession(document);
+      return createConversationSession(document, generationSnapshot);
     }
 
     const response = await fetch(`/api/conversations/${activeConversationId}`, {
@@ -436,6 +483,12 @@ export default function Page() {
         document_html: document.htmlPreview ?? null,
         document_pdf_base64: document.bytesBase64 ?? null,
         document_mime: document.mime ?? "application/pdf",
+        output_type_id: generationSnapshot?.outputTypeId ?? null,
+        output_type_title: generationSnapshot?.outputTypeTitle ?? null,
+        output_type_kind: generationSnapshot?.outputTypeKind ?? null,
+        prompt_id: generationSnapshot?.promptId ?? null,
+        prompt_name_snapshot: generationSnapshot?.promptNameSnapshot ?? null,
+        prompt_text_snapshot: generationSnapshot?.promptTextSnapshot ?? null,
       }),
     });
 
@@ -459,6 +512,12 @@ export default function Page() {
       html_preview?: string | null;
       pdf_base64?: string | null;
       mime?: string | null;
+      output_type_id?: string | null;
+      output_type_title?: string | null;
+      output_type_kind?: string | null;
+      prompt_id?: string | null;
+      prompt_name_snapshot?: string | null;
+      prompt_text_snapshot?: string | null;
       updated_at?: number;
     } | null;
     },
@@ -499,10 +558,20 @@ export default function Page() {
       createdAt,
       htmlPreview: typeof persistedOutput?.html_preview === "string" ? persistedOutput.html_preview : "",
       markdownContent: markdown,
+      outputTypeId: typeof persistedOutput?.output_type_id === "string" ? persistedOutput.output_type_id : null,
+      outputTypeTitle: typeof persistedOutput?.output_type_title === "string" ? persistedOutput.output_type_title : null,
+      outputTypeKind: typeof persistedOutput?.output_type_kind === "string" ? persistedOutput.output_type_kind : null,
+      promptId: typeof persistedOutput?.prompt_id === "string" ? persistedOutput.prompt_id : null,
+      promptNameSnapshot: typeof persistedOutput?.prompt_name_snapshot === "string" ? persistedOutput.prompt_name_snapshot : null,
+      promptTextSnapshot: typeof persistedOutput?.prompt_text_snapshot === "string" ? persistedOutput.prompt_text_snapshot : null,
     };
     if (!isCurrentLoad()) return;
     setOutputs([hydratedOutput]);
     setSelectedOutputId(hydratedOutput.id);
+    if (hydratedOutput.outputTypeId) {
+      setSelectedOutputTypeId(hydratedOutput.outputTypeId);
+      selectedOutputTypeIdRef.current = hydratedOutput.outputTypeId;
+    }
 
     if (
       hydratedOutput.htmlPreview &&
@@ -532,7 +601,15 @@ export default function Page() {
             bytesBase64: refreshedOutput.bytesBase64 || "",
             mime: refreshedOutput.mime,
           },
-          targetConversationId
+          targetConversationId,
+          {
+            outputTypeId: hydratedOutput.outputTypeId,
+            outputTypeTitle: hydratedOutput.outputTypeTitle,
+            outputTypeKind: hydratedOutput.outputTypeKind,
+            promptId: hydratedOutput.promptId,
+            promptNameSnapshot: hydratedOutput.promptNameSnapshot,
+            promptTextSnapshot: hydratedOutput.promptTextSnapshot,
+          }
         );
       }
     } catch {
@@ -647,19 +724,19 @@ export default function Page() {
     localStorage.setItem("datasetId", datasetId);
   }, [datasetId, isClient]);
 
-  // Load output types from config
   useEffect(() => {
-    fetch("/api/output-types")
-      .then((r) => r.json())
-      .then((data: OutputType[]) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setOutputTypes(data);
-          setSelectedOutputTypeId(data[0].id);
-          selectedOutputTypeIdRef.current = data[0].id;
-        }
-      })
-      .catch(() => {/* keep defaults */});
-  }, []);
+    if (!outputTypes.length) return;
+    const promptChoices = buildPromptChoices(outputTypes, DEFAULT_SOLUTION_SYSTEM_PROMPT);
+    const resolvedSelectionId = resolvePromptSelectionIdFromText(promptChoices, systemPrompt);
+    const nextSelectionId = resolvedSelectionId === "default" ? "documentation" : resolvedSelectionId;
+    if (nextSelectionId !== selectedOutputTypeId) {
+      setSelectedOutputTypeId(nextSelectionId);
+    }
+  }, [outputTypes, selectedOutputTypeId, systemPrompt]);
+
+  useEffect(() => {
+    selectedOutputTypeIdRef.current = selectedOutputTypeId;
+  }, [selectedOutputTypeId]);
 
   // Load system prompt: from API when authenticated, from sessionStorage when not
   useEffect(() => {
@@ -1045,6 +1122,9 @@ export default function Page() {
   function makeBlobUrl(base64: string, mime: string) {
     const bytes = base64ToUint8(base64);
     const blob = new Blob([bytes], { type: mime || "application/pdf" });
+    if (typeof URL.createObjectURL !== "function") {
+      return "";
+    }
     return URL.createObjectURL(blob);
   }
 
@@ -1334,20 +1414,55 @@ export default function Page() {
     onProgress?.("Generating documentation with AI...", 65);
     const modelForProvider = llmSelection.model;
     const solutionForGeneration = buildSolutionForGeneration(parsedSolution, sharePointMetadataForGeneration);
+    const selectedOutputTypeSelectionId = resolveGenerationOutputTypeId(outputTypeId);
 
     // Extract user preferences from chat history
     const userPreferences = chat
       .map(msg => `${msg.role}: ${msg.content}`)
       .join('\n');
 
-    // Use output type prompt directly when not documentation, otherwise append to base
-    const activeOutputType = outputTypes.find((t) => t.id === (outputTypeId ?? selectedOutputTypeIdRef.current));
+    // Use the currently loaded prompt text as the primary source, while preserving
+    // the historical Documentation default composition for untouched default state.
+    const activeOutputType = outputTypes.find((t) => t.id === selectedOutputTypeSelectionId);
     const baseSystemPrompt = (systemPrompt && systemPrompt.trim()) || undefined;
-    const effectiveSystemPrompt = activeOutputType && activeOutputType.id !== "documentation"
-      ? activeOutputType.prompt
-      : activeOutputType
+    const isDefaultSystemPrompt =
+      baseSystemPrompt != null &&
+      baseSystemPrompt.trim() === DEFAULT_SOLUTION_SYSTEM_PROMPT.trim();
+    const isCustomSelection =
+      selectedOutputTypeSelectionId === "custom" ||
+      selectedOutputTypeSelectionId.startsWith("custom:");
+    const effectiveSystemPrompt = activeOutputType?.kind === "custom"
+      ? activeOutputType.promptText || activeOutputType.prompt || baseSystemPrompt || undefined
+      : activeOutputType?.id === "documentation" && isDefaultSystemPrompt
         ? [baseSystemPrompt, activeOutputType.prompt].filter(Boolean).join("\n\n")
-        : baseSystemPrompt;
+        : baseSystemPrompt || activeOutputType?.promptText || activeOutputType?.prompt || undefined;
+    const generationSnapshot: GenerationSnapshot = {
+      outputTypeId: activeOutputType?.id ?? selectedOutputTypeSelectionId,
+      outputTypeTitle:
+        activeOutputType?.title ??
+        (isCustomSelection
+          ? "Custom"
+          : selectedOutputTypeSelectionId === "documentation"
+            ? "Documentation"
+            : selectedOutputTypeSelectionId),
+      outputTypeKind:
+        activeOutputType?.kind ?? (isCustomSelection ? "custom" : "builtin"),
+      promptId:
+        activeOutputType?.kind === "custom"
+          ? activeOutputType.promptId ?? null
+          : selectedOutputTypeSelectionId.startsWith("custom:")
+            ? selectedOutputTypeSelectionId.slice("custom:".length)
+            : null,
+      promptNameSnapshot:
+        activeOutputType?.promptName ??
+        activeOutputType?.title ??
+        (isCustomSelection
+          ? "Custom"
+          : selectedOutputTypeSelectionId === "documentation"
+            ? "Documentation"
+            : selectedOutputTypeSelectionId),
+      promptTextSnapshot: effectiveSystemPrompt || null,
+    };
 
     const genRes = await fetch("/api/generate-solution-docs", {
       method: "POST",
@@ -1356,7 +1471,13 @@ export default function Page() {
         solution: solutionForGeneration,
         doc_type: "markdown",
         systemPrompt: effectiveSystemPrompt || undefined,
-        output_type: outputTypeId ?? selectedOutputTypeIdRef.current,
+        output_type: selectedOutputTypeSelectionId,
+        output_type_id: generationSnapshot.outputTypeId,
+        output_type_title: generationSnapshot.outputTypeTitle,
+        output_type_kind: generationSnapshot.outputTypeKind,
+        prompt_id: generationSnapshot.promptId,
+        prompt_name_snapshot: generationSnapshot.promptNameSnapshot,
+        prompt_text_snapshot: generationSnapshot.promptTextSnapshot,
         provider: llmSelection.provider,
         model: modelForProvider,
         dataset_id: activeDatasetId,
@@ -1375,14 +1496,37 @@ export default function Page() {
     }
 
     const docResult = await genRes.json();
-    return docResult.documentation as string;
+    return docResult as {
+      documentation: string;
+      output_type_id?: string | null;
+      output_type_title?: string | null;
+      output_type_kind?: string | null;
+      prompt_id?: string | null;
+      prompt_name_snapshot?: string | null;
+      prompt_text_snapshot?: string | null;
+    };
   }
 
-  async function createSolutionOutput(parsedSolution: ParsedSolutionResult, documentation: string, outputTypeId?: string) {
+  async function createSolutionOutput(
+    parsedSolution: ParsedSolutionResult,
+    generationResult: {
+      documentation: string;
+      output_type_id?: string | null;
+      output_type_title?: string | null;
+      output_type_kind?: string | null;
+      prompt_id?: string | null;
+      prompt_name_snapshot?: string | null;
+      prompt_text_snapshot?: string | null;
+    },
+    outputTypeId?: string
+  ) {
     const solutionName = parsedSolution.solution_name || "solution";
     const componentsCount = Array.isArray(parsedSolution.components) ? parsedSolution.components.length : 0;
-    const activeOutputType = outputTypes.find((t) => t.id === (outputTypeId ?? selectedOutputTypeIdRef.current));
-    const outputLabel = activeOutputType ? activeOutputType.id : "documentation";
+    const selectedOutputTypeSelectionId = resolveGenerationOutputTypeId(outputTypeId);
+    const activeOutputType = outputTypes.find((t) => t.id === selectedOutputTypeSelectionId);
+    const outputLabel = buildOutputLabel(
+      generationResult.output_type_title || activeOutputType?.title || activeOutputType?.id || "documentation"
+    );
     const filename = `${solutionName}_${outputLabel}.pdf`;
     const metadata = `Version: ${parsedSolution.version || "N/A"} | Publisher: ${parsedSolution.publisher || "Unknown"} | Components: ${componentsCount}`;
 
@@ -1390,7 +1534,7 @@ export default function Page() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        markdown: documentation,
+        markdown: generationResult.documentation,
         title: `${solutionName} Documentation`,
         metadata,
       }),
@@ -1403,7 +1547,7 @@ export default function Page() {
 
     const pdfData = await pdfResponse.json();
     const normalizedDocumentation =
-      typeof pdfData.normalizedMarkdown === "string" ? pdfData.normalizedMarkdown : documentation;
+      typeof pdfData.normalizedMarkdown === "string" ? pdfData.normalizedMarkdown : generationResult.documentation;
     const output: OutputFile = {
       id: `${filename}-${Date.now()}`,
       filename,
@@ -1412,18 +1556,35 @@ export default function Page() {
       createdAt: Date.now(),
       htmlPreview: pdfData.html,
       markdownContent: normalizedDocumentation,
+      outputTypeId: generationResult.output_type_id ?? selectedOutputTypeSelectionId,
+      outputTypeTitle: generationResult.output_type_title ?? activeOutputType?.title ?? null,
+      outputTypeKind: generationResult.output_type_kind ?? activeOutputType?.kind ?? null,
+      promptId: generationResult.prompt_id ?? activeOutputType?.promptId ?? null,
+      promptNameSnapshot: generationResult.prompt_name_snapshot ?? activeOutputType?.title ?? null,
+      promptTextSnapshot: generationResult.prompt_text_snapshot ?? null,
     };
     upsertOutput(output);
     setSelectedOutputId(output.id);
 
     if (status === "authenticated" && session?.user) {
-      const savedConversationId = await persistConversationDocument({
-        filename: output.filename,
-        markdown: normalizedDocumentation,
-        htmlPreview: output.htmlPreview || "",
-        bytesBase64: output.bytesBase64 || "",
-        mime: output.mime,
-      });
+      const savedConversationId = await persistConversationDocument(
+        {
+          filename: output.filename,
+          markdown: normalizedDocumentation,
+          htmlPreview: output.htmlPreview || "",
+          bytesBase64: output.bytesBase64 || "",
+          mime: output.mime,
+        },
+        undefined,
+        {
+          outputTypeId: output.outputTypeId,
+          outputTypeTitle: output.outputTypeTitle,
+          outputTypeKind: output.outputTypeKind,
+          promptId: output.promptId,
+          promptNameSnapshot: output.promptNameSnapshot,
+          promptTextSnapshot: output.promptTextSnapshot,
+        }
+      );
       if (savedConversationId !== conversationIdRef.current) {
         applyConversationId(savedConversationId);
       }
@@ -1478,14 +1639,14 @@ export default function Page() {
         }
 
 
-        const documentation = await generateDocumentationFromParsedSolution(
+        const generationResult = await generateDocumentationFromParsedSolution(
           parsedSolution,
           activeDatasetId,
           parsedSharePointMetadata,
           (stage, percent) => setGenerateProgress({ stage, percent }),
           overrideOutputTypeId
         );
-        await createSolutionOutput(parsedSolution, documentation, overrideOutputTypeId);
+        await createSolutionOutput(parsedSolution, generationResult, overrideOutputTypeId);
         setGenerateProgress({ stage: "Complete", percent: 100 });
         return;
       }
@@ -1558,29 +1719,37 @@ export default function Page() {
   function downloadOutput(output: OutputFile) {
     if (!output.bytesBase64) return;
     const url = makeBlobUrl(output.bytesBase64, output.mime);
+    if (!url) return;
     const link = document.createElement("a");
     link.href = url;
     link.download = output.filename || "output.pdf";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    if (typeof URL.revokeObjectURL === "function") {
+      URL.revokeObjectURL(url);
+    }
   }
 
   useEffect(() => {
     const out = getSelectedOutput();
     if (previewBlobUrlRef.current) {
-      URL.revokeObjectURL(previewBlobUrlRef.current);
+      if (typeof URL.revokeObjectURL === "function") {
+        URL.revokeObjectURL(previewBlobUrlRef.current);
+      }
       previewBlobUrlRef.current = null;
     }
     setPdfRenderError(null);
     if (!out || !out.bytesBase64) return;
     const blobUrl = makeBlobUrl(out.bytesBase64, out.mime);
+    if (!blobUrl) return;
     previewBlobUrlRef.current = blobUrl;
 
     return () => {
       if (previewBlobUrlRef.current) {
-        URL.revokeObjectURL(previewBlobUrlRef.current);
+        if (typeof URL.revokeObjectURL === "function") {
+          URL.revokeObjectURL(previewBlobUrlRef.current);
+        }
         previewBlobUrlRef.current = null;
       }
     };
@@ -1655,48 +1824,51 @@ export default function Page() {
         content: msg.content
       }));
 
-      const ragRes = await fetch("/api/rag-chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          provider: llmSelection.provider,
-          model: modelForProvider,
-          dataset_id: activeDatasetId,
-          focus_files: focusFiles.length ? focusFiles : undefined,
-          conversation_history: conversationHistory,
-        }),
-      });
+      const lowerText = text.toLowerCase();
+      const explicitOutputTypeChange = resolveChatOutputTypeChange(text, outputTypes);
 
-      if (!ragRes.ok) {
-        const errText = await ragRes.text();
-        let parsed: { error?: string; detail?: string } = {};
-        try {
-          parsed = JSON.parse(errText);
-        } catch {
-          parsed = {};
+      let ragData: { answer?: string; sources?: ChatMessage["sources"] } = { answer: "", sources: [] };
+      if (!explicitOutputTypeChange) {
+        const ragRes = await fetch("/api/rag-chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: text,
+            provider: llmSelection.provider,
+            model: modelForProvider,
+            dataset_id: activeDatasetId,
+            focus_files: focusFiles.length ? focusFiles : undefined,
+            conversation_history: conversationHistory,
+          }),
+        });
+
+        if (!ragRes.ok) {
+          const errText = await ragRes.text();
+          let parsed: { error?: string; detail?: string } = {};
+          try {
+            parsed = JSON.parse(errText);
+          } catch {
+            parsed = {};
+          }
+          const message = mapProviderError(
+            parsed?.error || parsed?.detail || errText || `HTTP ${ragRes.status}`,
+            ragRes.status
+          );
+          throw new Error(message);
         }
-        const message = mapProviderError(
-          parsed?.error || parsed?.detail || errText || `HTTP ${ragRes.status}`,
-          ragRes.status
-        );
-        throw new Error(message);
+
+        ragData = await ragRes.json();
       }
 
-      const ragData = await ragRes.json();
-
       const sources = Array.isArray(ragData.sources) ? ragData.sources : [];
-
-      // Check if user wants to regenerate documentation BEFORE updating chat
-      const lowerText = text.toLowerCase();
-
-      // Detect output type intent from chat message and switch if matched
-      const matchedOutputType = outputTypes.find((t) =>
-        t.keywords.some((kw) => lowerText.includes(kw.toLowerCase()))
-      );
+      const matchedOutputType = explicitOutputTypeChange
+        ? null
+        : outputTypes.find((t) => t.keywords.some((kw) => lowerText.includes(kw.toLowerCase())));
       if (matchedOutputType && matchedOutputType.id !== selectedOutputTypeId) {
-        setSelectedOutputTypeId(matchedOutputType.id);
-        selectedOutputTypeIdRef.current = matchedOutputType.id;
+        void persistSelectedOutputType(matchedOutputType.id);
+      }
+      if (explicitOutputTypeChange?.outputType && explicitOutputTypeChange.outputType.id !== selectedOutputTypeId) {
+        void persistSelectedOutputType(explicitOutputTypeChange.outputType.id);
       }
 
       const regenerateKeywords = [
@@ -1734,20 +1906,38 @@ export default function Page() {
       ];
 
       // Check if message contains regenerate keywords OR document modification patterns
-      const shouldRegenerate = regenerateKeywords.some(keyword => lowerText.includes(keyword)) ||
-                               documentModificationPatterns.some(pattern => pattern.test(lowerText));
+      const shouldRegenerate = explicitOutputTypeChange
+        ? explicitOutputTypeChange.shouldGenerate
+        : regenerateKeywords.some(keyword => lowerText.includes(keyword)) ||
+          documentModificationPatterns.some(pattern => pattern.test(lowerText));
 
       // If this is a regeneration request, override the assistant's response
       let assistantMessage = ragData.answer || "No response";
-      if (shouldRegenerate && hasSolutionFile() && outputs.length > 0) {
+      if (explicitOutputTypeChange && !explicitOutputTypeChange.outputType) {
+        assistantMessage =
+          explicitOutputTypeChange.errorMessage ||
+          buildUnknownChatOutputTypeMessage(explicitOutputTypeChange.target, outputTypes);
+      } else if (explicitOutputTypeChange?.outputType && shouldRegenerate && hasSolutionFile()) {
+        assistantMessage = `🔄 Changing output file type to ${explicitOutputTypeChange.outputType.title} and regenerating document... This will take a moment.`;
+      } else if (explicitOutputTypeChange?.outputType && shouldRegenerate && !hasSolutionFile()) {
+        assistantMessage = `I changed the output file type to ${explicitOutputTypeChange.outputType.title}, but I need a Power Platform solution .zip before I can generate the document.`;
+      } else if (shouldRegenerate && hasSolutionFile() && outputs.length > 0) {
         assistantMessage = "🔄 Regenerating document with your preferences... This will take a moment.";
+      } else if (explicitOutputTypeChange?.outputType) {
+        assistantMessage = `Changed output file type to ${explicitOutputTypeChange.outputType.title}.`;
       }
+
+      const assistantSources: ChatMessage["sources"] = explicitOutputTypeChange
+        ? []
+        : shouldRegenerate
+          ? []
+          : sources;
 
       // Update the assistant message with appropriate response
       setChat((c) =>
         c.map((m) =>
           m.id === assistantId
-            ? { ...m, content: assistantMessage, sources: shouldRegenerate ? [] : sources }
+            ? { ...m, content: assistantMessage, sources: assistantSources }
             : m
         )
       );
@@ -1783,7 +1973,15 @@ export default function Page() {
           // ignore save errors
         }
       }
-      if (shouldRegenerate && hasSolutionFile() && outputs.length > 0) {
+      if (explicitOutputTypeChange?.outputType && shouldRegenerate && hasSolutionFile()) {
+        // Automatically regenerate documentation with the selected output type from chat
+        setTimeout(() => {
+          void generateDocs(explicitOutputTypeChange.outputType?.id);
+        }, 500); // Small delay to let chat update first
+        // Don't set loading to false - generateDocs will handle it
+        return;
+      }
+      if (!explicitOutputTypeChange && shouldRegenerate && hasSolutionFile() && outputs.length > 0) {
         // Automatically regenerate documentation with current chat context
         setTimeout(() => {
           void generateDocs(matchedOutputType?.id);
@@ -1874,6 +2072,54 @@ export default function Page() {
     }
   }
 
+  async function persistSelectedOutputType(nextOutputTypeId: string) {
+    const selectedChoice = outputTypes.find((entry) => entry.id === nextOutputTypeId) || null;
+    setSelectedOutputTypeId(nextOutputTypeId);
+    selectedOutputTypeIdRef.current = nextOutputTypeId;
+
+    if (!selectedChoice) {
+      return;
+    }
+
+    const nextPromptText = selectedChoice.promptText || selectedChoice.prompt || "";
+    setSystemPrompt(nextPromptText);
+
+    if (typeof window !== "undefined" && status !== "authenticated") {
+      try {
+        sessionStorage.setItem("systemPrompt", nextPromptText);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    if (status === "authenticated" && session?.user) {
+      try {
+        const payload: Record<string, unknown> = {
+          provider,
+          model: selectedModel || null,
+        };
+        if (selectedChoice.kind === "custom" && selectedChoice.promptId) {
+          payload.selectedPromptId = selectedChoice.promptId;
+        } else {
+          payload.systemPrompt = nextPromptText;
+        }
+
+        const res = await fetch("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+      } catch {
+        // Keep the local selection in sync even if persistence fails.
+      }
+    }
+  }
+
   const statusProvider = provider === "cloud" ? "Cloud" : "Local";
   const statusModel = provider === "cloud" ? (selectedModel || "default") : (localModel || "default");
   const llmSelection = {
@@ -1922,7 +2168,9 @@ export default function Page() {
             setSystemPrompt={setSystemPrompt}
             systemPromptDefault={DEFAULT_SOLUTION_SYSTEM_PROMPT}
           />
-          <h1 style={{ fontSize: 28, fontWeight: 700 }}>Documentation <h1 style={{ display:'inline', color:"var(--border)" }}>Generator</h1></h1>
+          <h1 style={{ fontSize: 28, fontWeight: 700 }}>
+            Documentation <span style={{ display: "inline", color: "var(--border)" }}>Generator</span>
+          </h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {/* RAG Status Badge */}
@@ -2184,20 +2432,24 @@ export default function Page() {
         <section className="panel">
           <div className="panel-header">Output Files</div>
           <div style={{ marginBottom: 8 }}>
-            {outputTypes.length > 0 && (() => {
-              const active = outputTypes.find((t) => t.id === selectedOutputTypeId);
-              return active ? (
-                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>
-                  Output type: <strong style={{ color: "var(--foreground)" }}>{active.title}</strong>
-                  <span style={{ marginLeft: 6, color: "var(--muted)" }}>— change via chat (e.g. "generate a diagram")</span>
-                </div>
-              ) : null;
-            })()}
-            <div style={{ display: "flex", gap: 8, alignItems: "center", color: "var(--foreground)" }}>
+            <div style={{ marginBottom: 10 }}>
+              <OutputTypeSelector
+                outputTypes={outputTypes}
+                selectedOutputTypeId={selectedOutputTypeId}
+                onSelect={(nextOutputTypeId) => {
+                  void persistSelectedOutputType(nextOutputTypeId);
+                }}
+                loading={outputTypesLoading}
+                error={outputTypesError}
+                showEmptyState={status === "authenticated"}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
               <button
-                onClick={() => void generateDocs()}
+                onClick={() => void generateDocs(selectedOutputTypeIdRef.current)}
                 disabled={!canGenerate}
                 style={{
+                  flex: "0 0 auto",
                   padding: "8px 12px",
                   borderRadius: 8,
                   border: hasSolution ? "1px solid var(--border)" : "1px solid var(--border)",
@@ -2211,7 +2463,7 @@ export default function Page() {
                     ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
                     : (hasSolution ? "Parse & Generate Docs" : "Generate Documentation")}
               </button>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              <div style={{ fontSize: 12, color: "#555", flex: "1 1 180px", minWidth: 0, overflowWrap: "anywhere" }}>
               {hasInvalidZip
                 ? "Only .zip solution files are supported for solution documentation."
                 : hasInvalidSelectedFiles
@@ -2302,4 +2554,3 @@ const placeholderBox: React.CSSProperties = {
   color: "#6b6b75",
   fontSize: 14,
 };
-

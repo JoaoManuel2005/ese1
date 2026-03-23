@@ -6,6 +6,9 @@ const mockSetRuntimeConfig = vi.fn();
 const mockGetServerSession = vi.fn();
 const mockGetUserSystemPrompt = vi.fn();
 const mockUpsertUserSystemPrompt = vi.fn();
+const mockGetSavedPromptSelection = vi.fn();
+const mockSelectSavedPromptForUser = vi.fn();
+const mockListSavedPrompts = vi.fn();
 
 vi.mock("../../../lib/runtimeConfig", () => ({
   getRuntimeConfig: (...args: unknown[]) => mockGetRuntimeConfig(...args),
@@ -26,11 +29,21 @@ vi.mock("../../../lib/userSettings", () => ({
     mockUpsertUserSystemPrompt(userId, prompt),
 }));
 
+vi.mock("../../../lib/savedPrompts", () => ({
+  getSavedPromptSelection: (userId: string) => mockGetSavedPromptSelection(userId),
+  selectSavedPromptForUser: (userId: string, promptId: string) =>
+    mockSelectSavedPromptForUser(userId, promptId),
+  listSavedPrompts: (userId: string) => mockListSavedPrompts(userId),
+  SavedPromptNotFoundError: class SavedPromptNotFoundError extends Error {},
+}));
+
 describe("GET /api/settings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetServerSession.mockResolvedValue(null);
     mockGetUserSystemPrompt.mockReturnValue(null);
+    mockGetSavedPromptSelection.mockReturnValue({ systemPrompt: null, activePromptId: null });
+    mockListSavedPrompts.mockReturnValue([]);
   });
 
   it("returns public config from getRuntimeConfig", async () => {
@@ -65,6 +78,8 @@ describe("POST /api/settings", () => {
     vi.clearAllMocks();
     mockGetServerSession.mockResolvedValue(null);
     mockGetUserSystemPrompt.mockReturnValue(null);
+    mockGetSavedPromptSelection.mockReturnValue({ systemPrompt: null, activePromptId: null });
+    mockListSavedPrompts.mockReturnValue([]);
     mockUpsertUserSystemPrompt.mockImplementation((_, prompt: string | null) => prompt);
     mockSetRuntimeConfig.mockResolvedValue({
       provider: "local",
@@ -105,5 +120,36 @@ describe("POST /api/settings", () => {
     expect(data.provider).toBe("cloud");
     expect(data.model).toBe("gpt-4o");
     expect(mockSetRuntimeConfig).toHaveBeenCalled();
+  });
+
+  it("loads a selected saved prompt when requested", async () => {
+    mockGetServerSession.mockResolvedValue({ user: { email: "user@example.com" } });
+    mockGetSavedPromptSelection.mockReturnValue({ systemPrompt: "Current prompt", activePromptId: "prompt-1" });
+    mockListSavedPrompts.mockReturnValue([
+      { id: "prompt-1", name: "Prompt 1", promptText: "Prompt text", createdAt: 1, updatedAt: 1, deletedAt: null, userId: "user@example.com" },
+    ]);
+    mockSelectSavedPromptForUser.mockReturnValue({
+      id: "prompt-1",
+      name: "Prompt 1",
+      promptText: "Prompt text",
+      createdAt: 1,
+      updatedAt: 2,
+      deletedAt: null,
+      userId: "user@example.com",
+    });
+
+    const req = new Request("http://localhost/api/settings", {
+      method: "POST",
+      body: JSON.stringify({
+        selectedPromptId: "prompt-1",
+      }),
+    });
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.systemPrompt).toBe("Prompt text");
+    expect(data.activeSavedPromptId).toBe("prompt-1");
+    expect(mockSelectSavedPromptForUser).toHaveBeenCalledWith("user@example.com", "prompt-1");
   });
 });

@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 
 const RAG_BACKEND_URL = process.env.RAG_BACKEND_URL || "http://localhost:8001";
 
+type RouteError = {
+  code: string;
+  message: string;
+  hint?: string;
+};
+
 // Configure route for long-running operations
 export const maxDuration = 900; // 15 minutes
 
@@ -45,9 +51,9 @@ export async function POST(req: Request) {
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const error = await readRouteError(response, "Failed to ingest solution");
       return NextResponse.json(
-        { error: errorText || "Failed to ingest solution" },
+        { ok: false, error },
         { status: response.status }
       );
     }
@@ -63,4 +69,74 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
+}
+
+async function readRouteError(response: Response, fallbackMessage: string): Promise<RouteError> {
+  const fallback: RouteError = {
+    code: "PARSE_FAILED",
+    message: fallbackMessage,
+  };
+
+  const raw = await response.text();
+  if (!raw.trim()) {
+    return fallback;
+  }
+
+  try {
+    return normalizeRouteError(JSON.parse(raw), fallback);
+  } catch {
+    return {
+      ...fallback,
+      message: raw,
+    };
+  }
+}
+
+function normalizeRouteError(value: unknown, fallback: RouteError): RouteError {
+  if (typeof value === "string") {
+    return {
+      ...fallback,
+      message: value || fallback.message,
+    };
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return fallback;
+  }
+
+  const payload = value as Record<string, unknown>;
+  const nestedError = payload.error;
+
+  if (typeof nestedError === "object" && nestedError !== null) {
+    const nested = nestedError as Record<string, unknown>;
+    return {
+      code: typeof nested.code === "string" && nested.code ? nested.code : fallback.code,
+      message: typeof nested.message === "string" && nested.message ? nested.message : fallback.message,
+      hint: typeof nested.hint === "string" && nested.hint ? nested.hint : undefined,
+    };
+  }
+
+  if (typeof nestedError === "string" && nestedError.trim()) {
+    return {
+      ...fallback,
+      message: nestedError,
+    };
+  }
+
+  if (typeof payload.code === "string" && typeof payload.message === "string") {
+    return {
+      code: payload.code,
+      message: payload.message,
+      hint: typeof payload.hint === "string" && payload.hint ? payload.hint : undefined,
+    };
+  }
+
+  if (typeof payload.message === "string" && payload.message.trim()) {
+    return {
+      ...fallback,
+      message: payload.message,
+    };
+  }
+
+  return fallback;
 }

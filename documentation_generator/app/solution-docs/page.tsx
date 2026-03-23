@@ -235,7 +235,7 @@ export default function SolutionDocsPage() {
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
                 {file ? file.name : "Drop Power Platform solution here"}
               </div>
-              <div style={{ fontSize: 13, color: "#555" }}>
+              <div style={{ fontSize: 13, color: "var(--muted)" }}>
                 {file ? formatSize(file.size) : "or click to browse (.zip files only)"}
               </div>
             </div>

@@ -16,17 +16,22 @@ export function getUserSystemPrompt(userId: string): string | null {
   return normalizeOptionalString(row.system_prompt);
 }
 
-export function upsertUserSystemPrompt(userId: string, systemPrompt: string | null): string | null {
+export function upsertUserSystemPrompt(
+  userId: string,
+  systemPrompt: string | null,
+  activePromptId: string | null = null
+): string | null {
   const db = getDb();
   const normalized = normalizeOptionalString(systemPrompt);
 
   db.prepare(
-    `INSERT INTO user_settings (user_id, system_prompt, updated_at)
-     VALUES (?, ?, unixepoch())
+    `INSERT INTO user_settings (user_id, system_prompt, active_prompt_id, updated_at)
+     VALUES (?, ?, ?, unixepoch())
      ON CONFLICT(user_id) DO UPDATE SET
        system_prompt = excluded.system_prompt,
+       active_prompt_id = excluded.active_prompt_id,
        updated_at = unixepoch()`
-  ).run(userId, normalized);
+  ).run(userId, normalized, activePromptId);
 
   return normalized;
 }

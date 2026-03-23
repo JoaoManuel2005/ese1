@@ -60,6 +60,9 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json().catch(() => ({}));
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Invalid conversation payload." }, { status: 400 });
+    }
     const datasetId = typeof body?.dataset_id === "string" ? body.dataset_id.trim() : "";
     const customerName = typeof body?.customer_name === "string" ? body.customer_name.trim() : "";
     const documentFilename =
@@ -104,6 +107,62 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "document_mime must be a string or null" }, { status: 400 });
     }
 
+    const outputTypeId =
+      typeof body?.output_type_id === "string" && body.output_type_id.trim().length > 0
+        ? body.output_type_id.trim()
+        : body?.output_type_id == null
+          ? null
+          : undefined;
+    const outputTypeTitle =
+      typeof body?.output_type_title === "string" && body.output_type_title.trim().length > 0
+        ? body.output_type_title.trim()
+        : body?.output_type_title == null
+          ? null
+          : undefined;
+    const outputTypeKind =
+      typeof body?.output_type_kind === "string" && body.output_type_kind.trim().length > 0
+        ? body.output_type_kind.trim()
+        : body?.output_type_kind == null
+          ? null
+          : undefined;
+    const promptId =
+      typeof body?.prompt_id === "string" && body.prompt_id.trim().length > 0
+        ? body.prompt_id.trim()
+        : body?.prompt_id == null
+          ? null
+          : undefined;
+    const promptNameSnapshot =
+      typeof body?.prompt_name_snapshot === "string" && body.prompt_name_snapshot.trim().length > 0
+        ? body.prompt_name_snapshot.trim()
+        : body?.prompt_name_snapshot == null
+          ? null
+          : undefined;
+    const promptTextSnapshot =
+      typeof body?.prompt_text_snapshot === "string"
+        ? body.prompt_text_snapshot
+        : body?.prompt_text_snapshot == null
+          ? null
+          : undefined;
+
+    if (outputTypeId === undefined && "output_type_id" in body) {
+      return NextResponse.json({ error: "output_type_id must be a string or null" }, { status: 400 });
+    }
+    if (outputTypeTitle === undefined && "output_type_title" in body) {
+      return NextResponse.json({ error: "output_type_title must be a string or null" }, { status: 400 });
+    }
+    if (outputTypeKind === undefined && "output_type_kind" in body) {
+      return NextResponse.json({ error: "output_type_kind must be a string or null" }, { status: 400 });
+    }
+    if (promptId === undefined && "prompt_id" in body) {
+      return NextResponse.json({ error: "prompt_id must be a string or null" }, { status: 400 });
+    }
+    if (promptNameSnapshot === undefined && "prompt_name_snapshot" in body) {
+      return NextResponse.json({ error: "prompt_name_snapshot must be a string or null" }, { status: 400 });
+    }
+    if (promptTextSnapshot === undefined && "prompt_text_snapshot" in body) {
+      return NextResponse.json({ error: "prompt_text_snapshot must be a string or null" }, { status: 400 });
+    }
+
     const sessionId = randomUUID();
     const db = getDb();
     const title = buildConversationTitle(customerName || undefined);
@@ -123,9 +182,11 @@ export async function POST(req: Request) {
     );
     if (documentFilename && documentMarkdown != null) {
       db.prepare(
-        `INSERT INTO conversation_outputs (
-          id, session_id, filename, markdown_content, html_preview, pdf_base64, mime, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())`
+      `INSERT INTO conversation_outputs (
+          id, session_id, filename, markdown_content, html_preview, pdf_base64, mime,
+          output_type_id, output_type_title, output_type_kind, prompt_id, prompt_name_snapshot, prompt_text_snapshot,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())`
       ).run(
         randomUUID(),
         sessionId,
@@ -133,7 +194,13 @@ export async function POST(req: Request) {
         documentMarkdown,
         documentHtml,
         documentPdfBase64,
-        documentMime || "application/pdf"
+        documentMime || "application/pdf",
+        outputTypeId,
+        outputTypeTitle,
+        outputTypeKind,
+        promptId,
+        promptNameSnapshot,
+        promptTextSnapshot
       );
     }
 

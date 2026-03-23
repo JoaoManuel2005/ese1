@@ -54,7 +54,10 @@ export async function GET(
   }>;
   const latestOutput = db
     .prepare(
-      `SELECT id, filename, markdown_content, html_preview, pdf_base64, mime, created_at, updated_at
+      `SELECT id, filename, markdown_content, html_preview, pdf_base64, mime,
+              output_type_id, output_type_title, output_type_kind,
+              prompt_id, prompt_name_snapshot, prompt_text_snapshot,
+              created_at, updated_at
        FROM conversation_outputs
        WHERE session_id = ?
        ORDER BY updated_at DESC
@@ -68,6 +71,12 @@ export async function GET(
         html_preview: string | null;
         pdf_base64: string | null;
         mime: string | null;
+        output_type_id: string | null;
+        output_type_title: string | null;
+        output_type_kind: string | null;
+        prompt_id: string | null;
+        prompt_name_snapshot: string | null;
+        prompt_text_snapshot: string | null;
         created_at: number;
         updated_at: number;
       }
@@ -88,6 +97,12 @@ export async function GET(
           html_preview: latestOutput.html_preview,
           pdf_base64: latestOutput.pdf_base64,
           mime: latestOutput.mime ?? "application/pdf",
+          output_type_id: latestOutput.output_type_id,
+          output_type_title: latestOutput.output_type_title,
+          output_type_kind: latestOutput.output_type_kind,
+          prompt_id: latestOutput.prompt_id,
+          prompt_name_snapshot: latestOutput.prompt_name_snapshot,
+          prompt_text_snapshot: latestOutput.prompt_text_snapshot,
           created_at: latestOutput.created_at,
           updated_at: latestOutput.updated_at,
         }
@@ -136,7 +151,7 @@ export async function PATCH(
   const { id } = await params;
 
   try {
-    const body = (await req.json()) as {
+    const body = (await req.json().catch(() => ({}))) as {
       dataset_id?: string | null;
       customer_name?: string;
       title?: string;
@@ -145,7 +160,16 @@ export async function PATCH(
       document_html?: string | null;
       document_pdf_base64?: string | null;
       document_mime?: string | null;
+      output_type_id?: string | null;
+      output_type_title?: string | null;
+      output_type_kind?: string | null;
+      prompt_id?: string | null;
+      prompt_name_snapshot?: string | null;
+      prompt_text_snapshot?: string | null;
     };
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Invalid conversation payload." }, { status: 400 });
+    }
     const datasetId = "dataset_id" in body
       ? typeof body.dataset_id === "string"
         ? body.dataset_id.trim() || null
@@ -190,6 +214,48 @@ export async function PATCH(
           ? null
           : undefined
       : undefined;
+    const outputTypeId = "output_type_id" in body
+      ? typeof body.output_type_id === "string"
+        ? body.output_type_id.trim() || null
+        : body.output_type_id == null
+          ? null
+          : undefined
+      : undefined;
+    const outputTypeTitle = "output_type_title" in body
+      ? typeof body.output_type_title === "string"
+        ? body.output_type_title.trim() || null
+        : body.output_type_title == null
+          ? null
+          : undefined
+      : undefined;
+    const outputTypeKind = "output_type_kind" in body
+      ? typeof body.output_type_kind === "string"
+        ? body.output_type_kind.trim() || null
+        : body.output_type_kind == null
+          ? null
+          : undefined
+      : undefined;
+    const promptId = "prompt_id" in body
+      ? typeof body.prompt_id === "string"
+        ? body.prompt_id.trim() || null
+        : body.prompt_id == null
+          ? null
+          : undefined
+      : undefined;
+    const promptNameSnapshot = "prompt_name_snapshot" in body
+      ? typeof body.prompt_name_snapshot === "string"
+        ? body.prompt_name_snapshot.trim() || null
+        : body.prompt_name_snapshot == null
+          ? null
+          : undefined
+      : undefined;
+    const promptTextSnapshot = "prompt_text_snapshot" in body
+      ? typeof body.prompt_text_snapshot === "string"
+        ? body.prompt_text_snapshot
+        : body.prompt_text_snapshot == null
+          ? null
+          : undefined
+      : undefined;
     const hasOutputUpdate =
       documentFilename !== undefined ||
       documentMarkdown !== undefined ||
@@ -214,6 +280,24 @@ export async function PATCH(
     }
     if (documentMime === undefined && "document_mime" in body) {
       return NextResponse.json({ error: "document_mime must be a string or null" }, { status: 400 });
+    }
+    if (outputTypeId === undefined && "output_type_id" in body) {
+      return NextResponse.json({ error: "output_type_id must be a string or null" }, { status: 400 });
+    }
+    if (outputTypeTitle === undefined && "output_type_title" in body) {
+      return NextResponse.json({ error: "output_type_title must be a string or null" }, { status: 400 });
+    }
+    if (outputTypeKind === undefined && "output_type_kind" in body) {
+      return NextResponse.json({ error: "output_type_kind must be a string or null" }, { status: 400 });
+    }
+    if (promptId === undefined && "prompt_id" in body) {
+      return NextResponse.json({ error: "prompt_id must be a string or null" }, { status: 400 });
+    }
+    if (promptNameSnapshot === undefined && "prompt_name_snapshot" in body) {
+      return NextResponse.json({ error: "prompt_name_snapshot must be a string or null" }, { status: 400 });
+    }
+    if (promptTextSnapshot === undefined && "prompt_text_snapshot" in body) {
+      return NextResponse.json({ error: "prompt_text_snapshot must be a string or null" }, { status: 400 });
     }
 
     if (
@@ -260,7 +344,9 @@ export async function PATCH(
     if (hasOutputUpdate) {
       const previousOutput = db
         .prepare(
-          `SELECT filename, markdown_content, html_preview, pdf_base64, mime
+          `SELECT filename, markdown_content, html_preview, pdf_base64, mime,
+                  output_type_id, output_type_title, output_type_kind,
+                  prompt_id, prompt_name_snapshot, prompt_text_snapshot
            FROM conversation_outputs
            WHERE session_id = ?
            ORDER BY updated_at DESC
@@ -273,6 +359,12 @@ export async function PATCH(
             html_preview: string | null;
             pdf_base64: string | null;
             mime: string | null;
+            output_type_id: string | null;
+            output_type_title: string | null;
+            output_type_kind: string | null;
+            prompt_id: string | null;
+            prompt_name_snapshot: string | null;
+            prompt_text_snapshot: string | null;
           }
         | undefined;
 
@@ -289,11 +381,19 @@ export async function PATCH(
       const nextHtml = documentHtml ?? previousOutput?.html_preview ?? null;
       const nextPdfBase64 = documentPdfBase64 ?? previousOutput?.pdf_base64 ?? null;
       const nextMime = documentMime ?? previousOutput?.mime ?? "application/pdf";
+      const nextOutputTypeId = outputTypeId ?? previousOutput?.output_type_id ?? null;
+      const nextOutputTypeTitle = outputTypeTitle ?? previousOutput?.output_type_title ?? null;
+      const nextOutputTypeKind = outputTypeKind ?? previousOutput?.output_type_kind ?? null;
+      const nextPromptId = promptId ?? previousOutput?.prompt_id ?? null;
+      const nextPromptNameSnapshot = promptNameSnapshot ?? previousOutput?.prompt_name_snapshot ?? null;
+      const nextPromptTextSnapshot = promptTextSnapshot ?? previousOutput?.prompt_text_snapshot ?? null;
 
       db.prepare(
         `INSERT INTO conversation_outputs (
-          id, session_id, filename, markdown_content, html_preview, pdf_base64, mime, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())`
+          id, session_id, filename, markdown_content, html_preview, pdf_base64, mime,
+          output_type_id, output_type_title, output_type_kind, prompt_id, prompt_name_snapshot, prompt_text_snapshot,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())`
       ).run(
         randomUUID(),
         id,
@@ -301,7 +401,13 @@ export async function PATCH(
         nextMarkdown,
         nextHtml,
         nextPdfBase64,
-        nextMime
+        nextMime,
+        nextOutputTypeId,
+        nextOutputTypeTitle,
+        nextOutputTypeKind,
+        nextPromptId,
+        nextPromptNameSnapshot,
+        nextPromptTextSnapshot
       );
       db.prepare("UPDATE conversation_sessions SET document_filename = ?, document_markdown = ?, updated_at = unixepoch() WHERE id = ?")
         .run(nextFilename, nextMarkdown, id);

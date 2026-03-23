@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { readFile } from "fs/promises";
-import path from "path";
+import { getServerSession } from "next-auth";
+import { authOptions } from "../auth/[...nextauth]/route";
+import { getAvailableOutputTypes } from "../../../lib/outputTypes";
 
 export async function GET() {
   try {
-    const configPath = path.join(process.cwd(), "config", "output-types.json");
-    const raw = await readFile(configPath, "utf-8");
-    const outputTypes = JSON.parse(raw);
+    const session = await getServerSession(authOptions);
+    const userId = session?.user?.email ?? null;
+    const outputTypes = await getAvailableOutputTypes(userId);
     return NextResponse.json(outputTypes);
   } catch {
     return NextResponse.json(

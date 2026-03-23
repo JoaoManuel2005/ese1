@@ -1,11 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useState } from "react";
 import type { FC } from "react";
 import type { ChatMessage } from "../types";
 import { normalizeMarkdownWhitespace } from "../../lib/markdown/normalization";
+import MarkdownWithMermaid from "./MarkdownWithMermaid";
 
 type Props = {
   chat: ChatMessage[];
@@ -47,9 +46,7 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
                 <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
                   <div className="chat-message" style={{ minWidth: 0, overflow: "hidden" }}>
                     <div className="rendered-markdown">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {normalizeMarkdownWhitespace(m.content, { context: "chat" })}
-                      </ReactMarkdown>
+                      <MarkdownWithMermaid content={normalizeMarkdownWhitespace(m.content, { context: "chat" })} />
                     </div>
                   </div>
                   {m.sources && m.sources.length > 0 && (
@@ -98,7 +95,7 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
         />
 
         <button onClick={() => void send()} disabled={loading} style={{ padding: "12px 16px", borderRadius: 10, opacity: loading ? 0.6 : 1, cursor: loading ? "not-allowed" : "pointer", background: "var(--panel-bg)", color: "var(--foreground)", border: "1px solid var(--border)", flexShrink: 0, whiteSpace: "nowrap", width: "20%" }}>{loading ? "Sending..." : "Send"}</button>
-        <button onClick={onClear} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--panel-bg)", flexShrink: 0, whiteSpace: "nowrap", width: "20%" }}>Clear</button>
+        <button onClick={() => { setMessage(""); onClear(); }} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--panel-bg)", flexShrink: 0, whiteSpace: "nowrap", width: "20%" }}>Clear</button>
       </div>
     </div>
   );

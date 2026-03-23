@@ -181,7 +181,7 @@ export default function FileUploader({
                 )}
               </div>
 
-              <div style={{ overflowX: "hidden" }}>
+              <div>
                 <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 8, overflowX: "hidden" }}>
                   {files.map((file, index) => (
                     <li

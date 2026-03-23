@@ -108,7 +108,6 @@ describe("OutputTypeSelector", () => {
     expect(screen.getByRole("option", { name: "Documentation" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Diagrams" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Concise release notes" })).not.toBeInTheDocument();
-    expect(screen.getByText(/No saved output types yet/)).toBeInTheDocument();
   });
 
   it("keeps a missing custom selection visible while prompts load", () => {

@@ -94,12 +94,6 @@ const OutputTypeSelector: FC<Props> = ({
           {error} Built-in output types remain available.
         </div>
       )}
-
-      {!loading && !error && showEmptyState && saved.length === 0 && (
-        <div style={{ fontSize: 12, color: "var(--muted)" }} aria-live="polite">
-          No saved output types yet.
-        </div>
-      )}
     </div>
   );
 };

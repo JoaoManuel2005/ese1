@@ -95,7 +95,7 @@ const ChatWindow: FC<Props> = ({ chat, loading, onSend, onClear, expandedSources
         />
 
         <button onClick={() => void send()} disabled={loading} style={{ padding: "12px 16px", borderRadius: 10, opacity: loading ? 0.6 : 1, cursor: loading ? "not-allowed" : "pointer", background: "var(--panel-bg)", color: "var(--foreground)", border: "1px solid var(--border)", flexShrink: 0, whiteSpace: "nowrap", width: "20%" }}>{loading ? "Sending..." : "Send"}</button>
-        <button onClick={onClear} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--panel-bg)", flexShrink: 0, whiteSpace: "nowrap", width: "20%" }}>Clear</button>
+        <button onClick={() => { setMessage(""); onClear(); }} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--panel-bg)", flexShrink: 0, whiteSpace: "nowrap", width: "20%" }}>Clear</button>
       </div>
     </div>
   );

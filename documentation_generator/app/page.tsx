@@ -2463,7 +2463,7 @@ export default function Page() {
                     ? (hasSolution ? "Parsing & Generating..." : "Generating...") 
                     : (hasSolution ? "Parse & Generate Docs" : "Generate Documentation")}
               </button>
-              <div style={{ fontSize: 12, color: "#555", flex: "1 1 180px", minWidth: 0, overflowWrap: "anywhere" }}>
+              <div style={{ fontSize: 12, color: "var(--muted)", flex: "1 1 180px", minWidth: 0, overflowWrap: "anywhere" }}>
               {hasInvalidZip
                 ? "Only .zip solution files are supported for solution documentation."
                 : hasInvalidSelectedFiles

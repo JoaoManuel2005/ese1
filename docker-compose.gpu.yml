@@ -1,0 +1,36 @@
+# GPU Acceleration Override for Docker
+# This file enables GPU device access in Docker containers.
+#
+# IMPORTANT: This only works for NVIDIA GPUs in Docker
+# - CoreML (Apple Silicon): Not supported in Docker, only works natively on Mac
+# - DirectML (Windows AMD/Intel): Not supported in Docker, only works natively
+# - CUDA (NVIDIA): Fully supported in Docker with NVIDIA Container Toolkit
+#
+# Automatic Usage (Recommended):
+#   ./scripts/up.sh (Linux/Mac) or .\scripts\up.ps1 (Windows)
+#   Scripts auto-detect NVIDIA GPU and include this file only if available
+#
+# Manual Usage:
+#   docker compose -f docker-compose.dotnet.yml -f docker-compose.gpu.yml up
+#
+# Requirements:
+#   - NVIDIA GPU with drivers installed
+#   - NVIDIA Container Toolkit installed:
+#     https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+#
+# The C# application automatically detects and uses available GPU:
+#   - If CUDA available: Uses CUDA (5-10x speedup)
+#   - If CUDA unavailable: Gracefully falls back to optimized CPU mode
+#
+# Verify GPU usage after startup:
+#   docker logs rag-backend-dotnet | grep "execution provider"
+
+services:
+  rag-backend-dotnet:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: ['gpu']

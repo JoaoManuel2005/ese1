@@ -1,0 +1,322 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #000000;
+  --border: #FF0000;
+  --panel-bg: #fff;
+  --panel-bg-selected: #f0f6ff;
+  --input-bg: #fff;
+  --muted: #555;
+  --danger: #a00;
+  --primary: #1f7aec;
+  --success: #0a6;
+  --warning: #a60;
+  --markdown-code-bg: #f3f4f6;
+  --markdown-inline-code-bg: #eef1f4;
+  --markdown-code-border: #d6dbe3;
+  --markdown-table-header-bg: #eceff3;
+  --markdown-table-row-alt: #f7f8fa;
+}
+
+/* theme switching via data attribute */
+[data-theme="light"] {
+  --background: #FFFFFF;
+  --foreground: #000000;
+  --border: #FF0000;
+  --panel-bg: #E3E3E3;
+  --panel-bg-selected: #f0f6ff;
+  --input-bg: #fff;
+  --muted: #555;
+  --danger: #a00;
+  --markdown-code-bg: #f3f4f6;
+  --markdown-inline-code-bg: #eef1f4;
+  --markdown-code-border: #d6dbe3;
+  --markdown-table-header-bg: #eceff3;
+  --markdown-table-row-alt: #f7f8fa;
+}
+
+[data-theme="dark"] {
+  --background: #000000;
+  --foreground: #FFFFFF;
+  --border: #FF0000;
+  --panel-bg: #3A3939;
+  --panel-bg-selected: #1a2744;
+  --input-bg: #111;
+  --muted: #bbb;
+  --danger: #ff6b6b;
+  --markdown-code-bg: #151922;
+  --markdown-inline-code-bg: #1b2130;
+  --markdown-code-border: #2c3445;
+  --markdown-table-header-bg: #1b2130;
+  --markdown-table-row-alt: #121723;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  /* only apply system dark styles if the user hasn't explicitly chosen a theme */
+  :root:not([data-theme]) {
+    --background: #000000;
+    --foreground: #ffffff;
+    --border: #FF0000;
+    --panel-bg: #0f0f0f;
+    --panel-bg-selected: #1a2744;
+    --input-bg: #111;
+    --muted: #bbb;
+    --danger: #ff6b6b;
+    --markdown-code-bg: #151922;
+    --markdown-inline-code-bg: #1b2130;
+    --markdown-code-border: #2c3445;
+    --markdown-table-header-bg: #1b2130;
+    --markdown-table-row-alt: #121723;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+html {
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Layout: responsive 4/2/1 grid with stable panel sizing */
+.app-shell {
+  max-width: 100%;
+  height: calc(100vh - 32px);
+  margin: 16px auto;
+  padding: 0 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.2fr) minmax(240px, 1fr) minmax(280px, 1.2fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  grid-auto-rows: 1fr;
+}
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  min-height: 0;
+}
+
+.panel-header {
+  font-weight: 700;
+  margin-bottom: 10px;
+  color: var(--foreground);
+}
+
+/* Panel content should scroll internally, not the full page */
+.panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Utility: hide visible scrollbars but keep element scrollable */
+.hide-scrollbar {
+  -ms-overflow-style: none; /* IE, Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+/* Input File box styling */
+#input_file_box {
+  max-width: 80%;
+}
+
+.rendered-markdown {
+  color: var(--foreground);
+  line-height: 1.6;
+}
+
+.rendered-markdown > :first-child {
+  margin-top: 0;
+}
+
+.rendered-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.rendered-markdown h1,
+.rendered-markdown h2,
+.rendered-markdown h3,
+.rendered-markdown h4,
+.rendered-markdown h5,
+.rendered-markdown h6 {
+  color: var(--foreground);
+  line-height: 1.25;
+  margin: 1.2em 0 0.45em;
+}
+
+.rendered-markdown p,
+.rendered-markdown ul,
+.rendered-markdown ol,
+.rendered-markdown table,
+.rendered-markdown pre,
+.rendered-markdown blockquote {
+  margin: 0.85em 0;
+}
+
+.rendered-markdown ul,
+.rendered-markdown ol {
+  padding-left: 1.5rem;
+}
+
+.rendered-markdown a {
+  color: var(--primary);
+}
+
+.rendered-markdown blockquote {
+  border-left: 3px solid var(--markdown-code-border);
+  padding-left: 0.85rem;
+  color: var(--muted);
+}
+
+.rendered-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  word-break: break-word;
+}
+
+.rendered-markdown th {
+  background: var(--markdown-table-header-bg);
+  border: 1px solid var(--markdown-code-border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.rendered-markdown td {
+  border: 1px solid var(--markdown-code-border);
+  padding: 0.5rem 0.75rem;
+  vertical-align: top;
+}
+
+.rendered-markdown tr:nth-child(even) td {
+  background: var(--markdown-table-row-alt);
+}
+
+.rendered-markdown pre {
+  background: var(--markdown-code-bg);
+  border: 1px solid var(--markdown-code-border);
+  border-radius: 8px;
+  color: var(--foreground);
+  overflow-x: auto;
+  padding: 12px;
+  white-space: pre;
+}
+
+.rendered-markdown pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.rendered-markdown :not(pre) > code {
+  background: var(--markdown-inline-code-bg);
+  border: 1px solid var(--markdown-code-border);
+  border-radius: 6px;
+  color: var(--foreground);
+  padding: 0.1rem 0.35rem;
+  word-break: break-word;
+}
+
+.preview-markdown .doc-title {
+  margin-bottom: 0.35rem;
+}
+
+.preview-markdown .doc-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 0.75rem;
+}
+
+/* Chat wrapping: prevent long strings/paths from overflowing */
+.chat-message,
+.chat-message p,
+.chat-message li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* Code blocks may scroll horizontally, but are constrained locally */
+.chat-message pre {
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.chat-message code {
+  word-break: normal;
+}
+
+@media (max-width: 1200px) {
+  .app-grid {
+    grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr);
+  }
+}
+
+@media (max-width: 820px) {
+  .app-grid {
+    grid-template-columns: 1fr;
+  }
+  .panel {
+    min-height: 360px;
+  }
+}
+
+.dropzone {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  background: var(--panel-bg);
+  transition: border-color 0.15s ease, background 0.15s ease;
+  cursor: pointer;
+}
+
+.dropzone.dragging {
+  border-color: var(--primary);
+  background: var(--panel-bg);
+}
+
+/* Mermaid diagrams: force full-width rendering */
+.mermaid-container,
+.mermaid-diagram {
+  display: block;
+  width: 100%;
+}
+
+.mermaid-container svg,
+.mermaid-diagram svg {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+  max-width: none !important;
+}

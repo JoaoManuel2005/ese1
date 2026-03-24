@@ -6,7 +6,7 @@ You can find the steps to setting up and runing the app below, please make sure 
 
 ## 1. Prerequisites
 
-Before running locally, ensure you have:
+Before running locally ensure you have:
 
 - Docker Desktop installed and running  
 - Azure CLI installed  

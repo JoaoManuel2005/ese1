@@ -121,7 +121,7 @@ After running the script you should see the containers up and running on docker 
 
 
 
-You should be able to see `port 3000:3000` or similar next to the documentation-generator container, you can simply click that to start the app in your browser
+You should be able to see `port 3000:3000` or similar next to the documentation-generator container, you can simply click that to start the app in your browser.
 
 ---
 

@@ -37,11 +37,11 @@ public class PacParserDataverseSharePointTests
             Assert.Contains(parsed.Components, c => c.Type == "data_source" && c.Name == "SharePoint");
 
             var ksItem = parsed.Components.First(c => c.Type == "knowledge_source_item");
-            Assert.Contains("https://example.sharepoint.com/sites/Reply", ksItem.Description ?? "");
+            Assert.Contains("https://example.sharepoint.com/sites/DemoSite", ksItem.Description ?? "");
 
             Assert.NotEmpty(parsed.SharepointRefs);
             Assert.Contains(parsed.SharepointRefs, r =>
-                r.Url == "https://example.sharepoint.com/sites/Reply/Lists/Projects"
+                r.Url == "https://example.sharepoint.com/sites/DemoSite/Lists/Projects"
                 && r.Kind == "list"
                 && r.Source.Contains("knowledge_source_item:", StringComparison.OrdinalIgnoreCase));
         }
@@ -58,13 +58,13 @@ public class PacParserDataverseSharePointTests
         try
         {
             CreateSolutionXml(root);
-            CreateEnvironmentVariable(root, "wmreply_Replybrary_SP_Site");
-            CreateBotTopic(root, "cr6e9_replybraryAgent.topic.Greeting");
+            CreateEnvironmentVariable(root, "contoso_SampleApp_SP_Site");
+            CreateBotTopic(root, "cr6e9_sampleAgent.topic.Greeting");
 
             var parser = CreateParser();
             var parsed = parser.ParseExtractedDirectoryForTests(root);
 
-            Assert.Contains(parsed.Components, c => c.Type == "environment_variable" && c.Name == "wmreply_Replybrary_SP_Site");
+            Assert.Contains(parsed.Components, c => c.Type == "environment_variable" && c.Name == "contoso_SampleApp_SP_Site");
             Assert.Contains(parsed.Components, c => c.Type == "bot_topic" && c.Name == "Greeting");
             Assert.Empty(parsed.SharepointRefs);
         }
@@ -98,9 +98,9 @@ public class PacParserDataverseSharePointTests
         File.WriteAllText(Path.Combine(other, "Solution.xml"), """
 <ImportExportXml>
   <SolutionManifest>
-    <UniqueName>Replybrary</UniqueName>
+    <UniqueName>SampleApp</UniqueName>
     <Version>1.0.0.20</Version>
-    <Publisher><UniqueName>WMReply</UniqueName></Publisher>
+    <Publisher><UniqueName>Contoso</UniqueName></Publisher>
   </SolutionManifest>
 </ImportExportXml>
 """);
@@ -113,7 +113,7 @@ public class PacParserDataverseSharePointTests
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "dvtablesearch.xml"), """
 <dvtablesearch dvtablesearchid="search-123">
-  <name>ReplySearch</name>
+  <name>KnowledgeSearch</name>
   <searchtype>knowledge</searchtype>
   <connectionreference>
     <connectionreferencelogicalname>shared_sharepointonline</connectionreferencelogicalname>
@@ -122,12 +122,12 @@ public class PacParserDataverseSharePointTests
     "driveItems":[
       {
         "$kind":"list",
-        "displayName":"Replybrary project list",
-        "webUrl":"https://example.sharepoint.com/sites/Reply/Lists/Projects",
+        "displayName":"Sample project list",
+        "webUrl":"https://example.sharepoint.com/sites/DemoSite/Lists/Projects",
         "driveId":"drive-1",
         "itemId":"item-1",
         "sharepointIds":{
-          "siteUrl":"https://example.sharepoint.com/sites/Reply",
+          "siteUrl":"https://example.sharepoint.com/sites/DemoSite",
           "siteId":"site-1",
           "webId":"web-1",
           "listId":"list-1"
@@ -146,8 +146,8 @@ public class PacParserDataverseSharePointTests
         File.WriteAllText(Path.Combine(dir, "dvtablesearchentity.xml"), """
 <dvtablesearchentity dvtablesearchentityid="entity-search-1">
   <dvtablesearch><dvtablesearchid>search-123</dvtablesearchid></dvtablesearch>
-  <entitylogicalname>replybrary_project</entitylogicalname>
-  <name>Replybrary project list</name>
+  <entitylogicalname>sample_project</entitylogicalname>
+  <name>Sample project list</name>
 </dvtablesearchentity>
 """);
     }

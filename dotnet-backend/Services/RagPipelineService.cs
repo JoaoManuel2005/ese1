@@ -1405,7 +1405,7 @@ public class RagPipelineService
             var guidMatch = Regex.Match(name, @"-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}");
             if (guidMatch.Success) name = name[..guidMatch.Index].Trim('-').Trim();
 
-            // Strip publisher prefix (e.g. "wmreply_replybrary_b320d_" → look for 3+ segments before real name)
+            // Strip publisher prefix (e.g. "contoso_sampleapp_b320d_" → look for 3+ segments before real name)
             var segments = name.Split('_');
             if (segments.Length >= 4 && segments[0].Length <= 10)
                 name = string.Join("_", segments.Skip(3));
@@ -2337,7 +2337,7 @@ public class RagPipelineService
                      && pkObj?.ToString()?.Equals("table", StringComparison.OrdinalIgnoreCase) == true)
             .Select(c =>
             {
-                // Display name: strip publisher prefix (e.g. "wmreply_Replybrary_Project_List" → "Project List")
+                // Display name: strip publisher prefix (e.g. "contoso_SampleApp_Project_List" → "Project List")
                 var dn = (c.Metadata!.TryGetValue("display_name", out var d) && d is string ds && !string.IsNullOrWhiteSpace(ds)) ? ds : c.Name;
                 var segments = dn.Split('_');
                 var cleanName = segments.Length >= 3 ? string.Join(" ", segments.Skip(2)) : dn.Replace("_", " ");

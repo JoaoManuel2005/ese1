@@ -30,7 +30,7 @@ describe("POST /api/parse-solution", () => {
 
   it("normalizes the backend auth-required envelope so data is the real parsed solution", async () => {
     const parsedSolution = {
-      solutionName: "Reply",
+      solutionName: "ContosoSample",
       version: "1.0.0.0",
       components: [{ id: "comp-1" }],
     };
@@ -40,7 +40,7 @@ describe("POST /api/parse-solution", () => {
         JSON.stringify({
           data: parsedSolution,
           authenticationRequired: true,
-          sharePointUrls: ["https://contoso.sharepoint.com/sites/reply"],
+          sharePointUrls: ["https://contoso.sharepoint.com/sites/demo"],
           sharePointEnrichmentStatus: "detected_requires_auth",
           message: "SharePoint authentication required",
         }),
@@ -56,7 +56,7 @@ describe("POST /api/parse-solution", () => {
       ok: true,
       data: parsedSolution,
       authenticationRequired: true,
-      sharePointUrls: ["https://contoso.sharepoint.com/sites/reply"],
+      sharePointUrls: ["https://contoso.sharepoint.com/sites/demo"],
       sharePointEnrichmentStatus: "detected_requires_auth",
       message: "SharePoint authentication required",
       sharePointEnrichmentEnabled: true,
@@ -65,7 +65,7 @@ describe("POST /api/parse-solution", () => {
 
   it("keeps plain parsed solutions usable when no SharePoint wrapper is returned", async () => {
     const parsedSolution = {
-      solutionName: "Reply",
+      solutionName: "ContosoSample",
       version: "1.0.0.0",
       components: [{ id: "comp-1" }],
     };
@@ -97,11 +97,11 @@ describe("POST /api/parse-solution", () => {
       new Response(
         JSON.stringify({
           data: {
-            solutionName: "Reply",
+            solutionName: "ContosoSample",
             components: [{ id: "comp-1" }],
           },
           authenticationRequired: false,
-          sharePointUrls: ["https://contoso.sharepoint.com/sites/reply"],
+          sharePointUrls: ["https://contoso.sharepoint.com/sites/demo"],
           sharePointEnrichmentStatus: "disabled",
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
@@ -114,7 +114,7 @@ describe("POST /api/parse-solution", () => {
     expect(payload.sharePointEnrichmentEnabled).toBe(false);
     expect(payload.sharePointEnrichmentStatus).toBe("disabled");
     expect(payload.data).toEqual({
-      solutionName: "Reply",
+      solutionName: "ContosoSample",
       components: [{ id: "comp-1" }],
     });
   });

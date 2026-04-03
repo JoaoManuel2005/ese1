@@ -164,7 +164,7 @@ public sealed class DataverseMirrorParser
         // Other files (.msapp, .json, _DocumentUri, _identity) are artifacts.
         foreach (var file in Directory.GetFiles(dir, "*.meta.xml", SearchOption.TopDirectoryOnly))
         {
-            // Double-strip: "wmreply_replybrary_b320d.meta.xml" → "wmreply_replybrary_b320d"
+            // Double-strip: "contoso_sampleapp_b320d.meta.xml" → "contoso_sampleapp_b320d"
             var schemaName = Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(file));
             string displayName = schemaName;
             try

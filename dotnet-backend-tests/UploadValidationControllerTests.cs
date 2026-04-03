@@ -60,7 +60,7 @@ public class UploadValidationControllerTests
 <?xml version="1.0" encoding="utf-8"?>
 <ImportExportXml>
   <SolutionManifest>
-    <UniqueName>Reply</UniqueName>
+    <UniqueName>SampleSolution</UniqueName>
     <Version>1.0.0.0</Version>
     <Publisher>
       <UniqueName>Contoso</UniqueName>

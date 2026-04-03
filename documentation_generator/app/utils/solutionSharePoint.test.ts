@@ -11,9 +11,9 @@ import {
 
 const sampleSharePointMetadata: SharePointMetadata[] = [
   {
-    siteUrl: "https://contoso.sharepoint.com/sites/reply",
+    siteUrl: "https://contoso.sharepoint.com/sites/demo",
     siteId: "site-1",
-    siteName: "Reply Library",
+    siteName: "Demo Library",
     lists: [],
     libraries: [],
   },
@@ -22,7 +22,7 @@ const sampleSharePointMetadata: SharePointMetadata[] = [
 describe("splitParsedSolutionData", () => {
   it("separates base solution data from SharePoint metadata", () => {
     const solution: ParsedSolutionResult = {
-      solutionName: "Reply",
+      solutionName: "ContosoSample",
       components: [{ id: "comp-1" }],
       sharePointMetadata: sampleSharePointMetadata,
     };
@@ -30,7 +30,7 @@ describe("splitParsedSolutionData", () => {
     const result = splitParsedSolutionData(solution);
 
     expect(result.parsedSolution).toEqual({
-      solutionName: "Reply",
+      solutionName: "ContosoSample",
       components: [{ id: "comp-1" }],
     });
     expect(result.sharePointMetadata).toEqual(sampleSharePointMetadata);
@@ -40,7 +40,7 @@ describe("splitParsedSolutionData", () => {
 describe("buildSolutionForGeneration", () => {
   it("returns the base parsed solution unchanged when enrichment is unavailable", () => {
     const baseSolution: ParsedSolutionResult = {
-      solutionName: "Reply",
+      solutionName: "ContosoSample",
       components: [{ id: "comp-1" }],
     };
 
@@ -51,19 +51,19 @@ describe("buildSolutionForGeneration", () => {
 
   it("adds SharePoint metadata without mutating the base parsed solution", () => {
     const baseSolution: ParsedSolutionResult = {
-      solutionName: "Reply",
+      solutionName: "ContosoSample",
       components: [{ id: "comp-1" }],
     };
 
     const result = buildSolutionForGeneration(baseSolution, sampleSharePointMetadata);
 
     expect(result).toEqual({
-      solutionName: "Reply",
+      solutionName: "ContosoSample",
       components: [{ id: "comp-1" }],
       sharePointMetadata: sampleSharePointMetadata,
     });
     expect(baseSolution).toEqual({
-      solutionName: "Reply",
+      solutionName: "ContosoSample",
       components: [{ id: "comp-1" }],
     });
   });
@@ -74,7 +74,7 @@ describe("SharePoint detection and enrichment gating", () => {
     expect(
       hasDetectedSharePointReferences(
         {
-          solutionName: "Reply",
+          solutionName: "ContosoSample",
           components: [],
         },
         []
@@ -86,10 +86,10 @@ describe("SharePoint detection and enrichment gating", () => {
     expect(
       hasDetectedSharePointReferences(
         {
-          solutionName: "Reply",
+          solutionName: "ContosoSample",
           sharepointRefs: [
             {
-              url: "https://contoso.sharepoint.com/sites/reply",
+              url: "https://contoso.sharepoint.com/sites/demo",
               kind: "site",
               source: "knowledge_source_item",
             },
@@ -104,7 +104,7 @@ describe("SharePoint detection and enrichment gating", () => {
     expect(
       shouldAttemptSharePointUserEnrichment({
         authenticationRequired: true,
-        detectedSharePointUrls: ["https://contoso.sharepoint.com/sites/reply"],
+        detectedSharePointUrls: ["https://contoso.sharepoint.com/sites/demo"],
         sharePointToken: "token",
       })
     ).toBe(true);
@@ -112,7 +112,7 @@ describe("SharePoint detection and enrichment gating", () => {
     expect(
       shouldAttemptSharePointUserEnrichment({
         authenticationRequired: false,
-        detectedSharePointUrls: ["https://contoso.sharepoint.com/sites/reply"],
+        detectedSharePointUrls: ["https://contoso.sharepoint.com/sites/demo"],
         sharePointToken: "token",
       })
     ).toBe(false);
@@ -128,7 +128,7 @@ describe("SharePoint detection and enrichment gating", () => {
     expect(
       shouldAttemptSharePointUserEnrichment({
         authenticationRequired: true,
-        detectedSharePointUrls: ["https://contoso.sharepoint.com/sites/reply"],
+        detectedSharePointUrls: ["https://contoso.sharepoint.com/sites/demo"],
         sharePointToken: null,
       })
     ).toBe(false);
@@ -149,7 +149,7 @@ describe("fetchSharePointEnrichmentWithUserToken", () => {
 
     const result = await fetchSharePointEnrichmentWithUserToken({
       accessToken: "token",
-      sharePointUrls: ["https://contoso.sharepoint.com/sites/reply"],
+      sharePointUrls: ["https://contoso.sharepoint.com/sites/demo"],
       fallbackMetadata: null,
       fetchImpl,
     });
@@ -172,7 +172,7 @@ describe("fetchSharePointEnrichmentWithUserToken", () => {
 
     const result = await fetchSharePointEnrichmentWithUserToken({
       accessToken: "token",
-      sharePointUrls: ["https://contoso.sharepoint.com/sites/reply"],
+      sharePointUrls: ["https://contoso.sharepoint.com/sites/demo"],
       fallbackMetadata: null,
       fetchImpl,
     });
@@ -194,7 +194,7 @@ describe("fetchSharePointEnrichmentWithUserToken", () => {
 
     const result = await fetchSharePointEnrichmentWithUserToken({
       accessToken: "token",
-      sharePointUrls: ["https://contoso.sharepoint.com/sites/reply"],
+      sharePointUrls: ["https://contoso.sharepoint.com/sites/demo"],
       fallbackMetadata: sampleSharePointMetadata,
       fetchImpl,
     });
